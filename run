@@ -1,0 +1,16 @@
+#- b
+make shaders
+cargo build
+#/
+
+#- r
+test $1 '!=' '' && cargo run --example $1
+#/
+
+#doc b!
+cargo doc
+#/
+
+#doc
+cargo doc --open
+#/
