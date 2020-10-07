@@ -25,6 +25,7 @@ fn main() {
 			}
 			Event::MainEventsCleared => {
 				let mut frame = renderer.begin_frame();
+				frame.set_clear(Color { r: 128, g: 128, b: 128 });
 				frame.draw_shape(Shape::Colored {
 					vertices: vec![
 						ColorVertex { position: Vec2 { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0 }},

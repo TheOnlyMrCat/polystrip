@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 
+use crate::data::Color;
 use crate::vertex::{Vertex, Shape};
 
 use raw_window_handle::HasRawWindowHandle;
@@ -162,6 +163,7 @@ impl Renderer {
 		Frame {
 			renderer: self,
 			shapes: vec![],
+			clear_color: None,
 		}
 	}
 
@@ -182,6 +184,7 @@ impl Renderer {
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
 	shapes: Vec<Shape>,
+	clear_color: Option<Color>,
 }
 
 impl Frame<'_> {
@@ -189,6 +192,18 @@ impl Frame<'_> {
 	/// queued in.
 	pub fn draw_shape(&mut self, shape: Shape) {
 		self.shapes.push(shape);
+	}
+
+	/// Sets the clear color of the frame. The frame is cleared before any shapes are drawn.
+	/// 
+	/// Any shapes drawn before calling this method will still be drawn.
+	pub fn set_clear(&mut self, color: Color) {
+		self.clear_color = Some(color);
+	}
+
+	/// Resets the clear color of the frame, meaning the previous frame is underlayed beneath this one. This is the default.
+	pub fn reset_clear(&mut self) {
+		self.clear_color = None;
 	}
 
 	/// Reserve space for at least `additional` more shapes to be drawn. This increases the capacity of the internal `Vec`
@@ -247,12 +262,15 @@ impl Drop for Frame<'_> {
 					attachment: &frame.view,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color {
-							r: 0.0,
-							g: 0.0,
-							b: 0.0,
-							a: 1.0,
-						}),
+						load: match self.clear_color {
+							Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+								r: f64::from(c.r) / 255.0,
+								g: f64::from(c.g) / 255.0,
+								b: f64::from(c.b) / 255.0,
+								a: 1.0,
+							}),
+							None => wgpu::LoadOp::Load,
+						},
 						store: true,
 					}
 				}
