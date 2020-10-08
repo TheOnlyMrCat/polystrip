@@ -33,6 +33,7 @@
 
 pub mod data;
 pub mod renderer;
+pub mod texture;
 pub mod vertex;
 
 pub mod prelude {

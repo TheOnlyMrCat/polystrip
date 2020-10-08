@@ -1,7 +1,10 @@
+//! The core rendering context structures
+
 use std::convert::TryFrom;
 
 use crate::data::Color;
 use crate::vertex::{Vertex, Shape};
+use crate::texture::Texture;
 
 use raw_window_handle::HasRawWindowHandle;
 
@@ -30,11 +33,13 @@ use raw_window_handle::HasRawWindowHandle;
 /// ```
 pub struct Renderer {
 	surface: wgpu::Surface,
-	device: wgpu::Device,
-	queue: wgpu::Queue,
+	pub(crate) device: wgpu::Device, //TODO: Encapsulation?
+	pub(crate) queue: wgpu::Queue,
 	sc_desc: wgpu::SwapChainDescriptor,
 	swap_chain: wgpu::SwapChain,
 	render_pipeline: wgpu::RenderPipeline,
+
+	pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
 
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
@@ -87,8 +92,31 @@ impl Renderer {
         };
 		let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
-		let vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.vert.spv"));
-		let fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.frag.spv"));
+		let texture_bind_group_layout = device.create_bind_group_layout(
+			&wgpu::BindGroupLayoutDescriptor {
+				entries: &[
+					wgpu::BindGroupLayoutEntry {
+						binding: 0,
+						visibility: wgpu::ShaderStage::FRAGMENT,
+						ty: wgpu::BindingType::SampledTexture {
+							multisampled: false,
+							dimension: wgpu::TextureViewDimension::D2,
+							component_type: wgpu::TextureComponentType::Uint,
+						},
+						count: None,
+					},
+					wgpu::BindGroupLayoutEntry {
+						binding: 1,
+						visibility: wgpu::ShaderStage::FRAGMENT,
+						ty: wgpu::BindingType::Sampler {
+							comparison: false,
+						},
+						count: None,
+					},
+				],
+				label: Some("polystrip_texture_bind_group_layout"),
+			}
+		);
 		
 		let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("polystrip_vertex_buffer"),
@@ -103,6 +131,9 @@ impl Renderer {
 			usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::INDEX,
 			mapped_at_creation: false,
 		});
+
+		let vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.vert.spv"));
+		let fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.frag.spv"));
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("polystrip_render_pipeline_layout"),
@@ -150,6 +181,7 @@ impl Renderer {
 
 		Renderer {
 			surface, device, queue, sc_desc, swap_chain, render_pipeline,
+			texture_bind_group_layout,
 			vertex_buffer, index_buffer,
 		}
 	}
@@ -236,14 +268,14 @@ impl Drop for Frame<'_> {
 			match shape {
 				Shape::Colored { indices, vertices, .. } => {
 					let indices = indices.iter()
-						.flat_map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
 						.collect::<Vec<_>>();
 					index_offset += u16::try_from(vertices.len()).unwrap();
 					indices
 				},
 				Shape::Textured { indices, vertices, .. } => {
 					let indices = indices.iter()
-						.flat_map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
 						.collect::<Vec<_>>();
 					index_offset += u16::try_from(vertices.len()).unwrap();
 					indices
@@ -264,6 +296,7 @@ impl Drop for Frame<'_> {
 					ops: wgpu::Operations {
 						load: match self.clear_color {
 							Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+								//TODO: Convert srgb properly
 								r: f64::from(c.r) / 255.0,
 								g: f64::from(c.g) / 255.0,
 								b: f64::from(c.b) / 255.0,
@@ -283,8 +316,6 @@ impl Drop for Frame<'_> {
 		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
 		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
 		render_pass.draw_indexed(0..u32::try_from(index_len).unwrap(), 0, 0..1);
-
-		// Vertex and uniform buffers and rendering
 
 		std::mem::drop(render_pass);
 

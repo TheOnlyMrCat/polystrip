@@ -1,10 +1,10 @@
-use std::mem::size_of;
+//! Vertices and shapes, the core of the rendering process.
 
 use crate::data::*;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Vertex {
+pub(crate) struct Vertex {
 	position: [f32; 3],
 	color: [f32; 3],
 	tex_coords: [f32; 2],
@@ -27,6 +27,7 @@ impl Vertex {
 	pub fn from_color(vertex: ColorVertex, depth: f32) -> Vertex {
 		Vertex {
 			position: [vertex.position.x, vertex.position.y, depth],
+			//TODO: This is not how to convert srgb to linear colour
 			color: [f32::from(vertex.color.r) / 255.0, f32::from(vertex.color.g) / 255.0, f32::from(vertex.color.b) / 255.0],
 			tex_coords: [0.0; 2],
 			texture_index: u32::MAX,
