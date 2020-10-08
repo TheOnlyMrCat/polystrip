@@ -5,6 +5,10 @@
 Polystrip is a 2D hardware-accelerated rendering library, primarily targeted at game development, but which could
 probably be used in other applications as well. Polystrip intends to be a pure-rust replacement for the `sdl2` crate.
 
+**This crate should not be considered stable until the 1.0 release.** Following true semver spec, this crate will
+~~likely~~ definitely make breaking changes between development versions. The 1.0 release will come when I think this
+crate is fully-featured.
+
 ## Simple example with winit
 
 This example makes a window, a renderer, and only the boilerplate necessary to correctly interface with with polystrip.
