@@ -35,8 +35,10 @@ impl Vertex {
 	}
 
 	pub(crate) fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
+		use std::mem::size_of;
+		
 		wgpu::VertexBufferDescriptor {
-			stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+			stride: size_of::<Vertex>() as wgpu::BufferAddress,
 			step_mode: wgpu::InputStepMode::Vertex,
 			attributes: &[
 				wgpu::VertexAttributeDescriptor {

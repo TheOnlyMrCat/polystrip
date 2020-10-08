@@ -24,9 +24,9 @@ fn main() {
 				renderer.resize((window_size.width, window_size.height));
 			}
 			Event::MainEventsCleared => {
-				let mut frame = renderer.begin_frame();
+				let mut frame = Frame::new();
 				frame.set_clear(Color { r: 128, g: 128, b: 128 });
-				frame.draw_shape(Shape::Colored {
+				frame.push_shape(Shape::Colored {
 					vertices: vec![
 						ColorVertex { position: Vec2 { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0 }},
 						ColorVertex { position: Vec2 { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0 }},
@@ -34,7 +34,7 @@ fn main() {
 					],
 					indices: vec![(0, 1, 2)]
 				});
-				frame.draw_shape(Shape::Colored {
+				frame.push_shape(Shape::Colored {
 					vertices: vec![
 						ColorVertex { position: Vec2 { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0 }},
 						ColorVertex { position: Vec2 { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 0 }},
@@ -47,7 +47,8 @@ fn main() {
 						(1, 2, 4),
 						(2, 3, 4),
 					]
-				})
+				});
+				renderer.render_frame(&frame);
 			},
 			_ => {}
 		}

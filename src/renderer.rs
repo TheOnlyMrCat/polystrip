@@ -4,7 +4,6 @@ use std::convert::TryFrom;
 
 use crate::data::Color;
 use crate::vertex::{Vertex, Shape};
-use crate::texture::Texture;
 
 use raw_window_handle::HasRawWindowHandle;
 
@@ -186,19 +185,6 @@ impl Renderer {
 		}
 	}
 
-	/// Returns a frame to draw on. The returned [`Frame`](struct.Frame.html) will draw its contents to this
-	/// renderer when it is dropped. See its docs for information on how to draw.
-	/// 
-	/// The renderer cannot be modified or create another frame while there is already a frame alive, due to the
-	/// lifetime bounds on this method.
-	pub fn begin_frame<'a>(&'a mut self) -> Frame<'a> {
-		Frame {
-			renderer: self,
-			shapes: vec![],
-			clear_color: None,
-		}
-	}
-
 	/// This function should be called in your event loop whenever the window gets resized.
 	/// 
 	/// # Arguments
@@ -208,21 +194,104 @@ impl Renderer {
 		self.sc_desc.width = size.0;
 		self.sc_desc.height = size.1;
 		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
-	}	
+	}
+	
+	/// Renders a frame. 
+	pub fn render_frame(&mut self, frame: &Frame) {
+		let swap_chain_frame: wgpu::SwapChainTexture = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output.into();
+		let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("polystrip_render_encoder"),
+		}).into();
+
+		//TODO: Merge these two iterations into one which produces two vectors?
+		let vertex_data = frame.shapes.iter().enumerate().flat_map(|(i, shape)| {
+			let depth = i as f32;
+			match shape {
+				Shape::Colored { vertices, .. } => vertices.iter().map(move |v| Vertex::from_color(*v, depth)),
+				Shape::Textured { vertices, texture_index, .. } => todo!(),
+			}
+		}).collect::<Vec<_>>();
+		self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+
+		let mut index_offset: u16 = 0;
+		let mut index_data = frame.shapes.iter().flat_map(|shape| {
+			match shape {
+				Shape::Colored { indices, vertices, .. } => {
+					let indices = indices.iter()
+						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.collect::<Vec<_>>();
+					index_offset += u16::try_from(vertices.len()).unwrap();
+					indices
+				},
+				Shape::Textured { indices, vertices, .. } => {
+					let indices = indices.iter()
+						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.collect::<Vec<_>>();
+					index_offset += u16::try_from(vertices.len()).unwrap();
+					indices
+				},
+			}
+		}).flatten().collect::<Vec<u16>>();
+		let index_len = index_data.len();
+		if index_len % 2 == 1 {
+			index_data.push(0);
+		}
+		self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			color_attachments: &[
+				wgpu::RenderPassColorAttachmentDescriptor {
+					attachment: &swap_chain_frame.view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: match frame.clear_color {
+							Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+								//TODO: Convert srgb properly
+								r: f64::from(c.r) / 255.0,
+								g: f64::from(c.g) / 255.0,
+								b: f64::from(c.b) / 255.0,
+								a: 1.0,
+							}),
+							None => wgpu::LoadOp::Load,
+						},
+						store: true,
+					}
+				}
+			],
+			depth_stencil_attachment: None,
+		});
+
+		render_pass.set_pipeline(&self.render_pipeline);
+
+		render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+		render_pass.set_index_buffer(self.index_buffer.slice(..));
+		render_pass.draw_indexed(0..u32::try_from(index_len).unwrap(), 0, 0..1);
+
+		std::mem::drop(render_pass);
+
+		self.queue.submit(std::iter::once(encoder.finish()));
+	}
 }
 
-/// The data necessary for a single frame to be rendered. Stores [`Shape`](../vertex/enum.Shape.html)s and renders them
-/// when this struct is dropped.
-pub struct Frame<'a> {
-	renderer: &'a mut Renderer,
+/// The data necessary for a frame to be rendered. Stores [`Shape`](../vertex/enum.Shape.html)s and gets passed to
+/// [`Renderer`](struct.Renderer.html) to be rendered.
+pub struct Frame {
 	shapes: Vec<Shape>,
 	clear_color: Option<Color>,
 }
 
-impl Frame<'_> {
+impl Frame {
+	/// Creates a new frame with no shapes and no clear colour.
+	pub fn new() -> Frame {
+		Frame {
+			shapes: Vec::new(),
+			clear_color: None,
+		}
+	}
+
 	/// Queues up the passed [`Shape`](../vertex/enum.Shape.html) for rendering. Shapes are rendered in the order they are
 	/// queued in.
-	pub fn draw_shape(&mut self, shape: Shape) {
+	pub fn push_shape(&mut self, shape: Shape) {
 		self.shapes.push(shape);
 	}
 
@@ -243,82 +312,5 @@ impl Frame<'_> {
 	/// for more details.
 	pub fn reserve(&mut self, additional: usize) {
 		self.shapes.reserve(additional);
-	}
-}
-
-impl Drop for Frame<'_> {
-	fn drop(&mut self) {
-		let frame: wgpu::SwapChainTexture = self.renderer.swap_chain.get_current_frame().expect("Couldn't get the next frame").output.into();
-		let mut encoder: wgpu::CommandEncoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		}).into();
-
-		//TODO: Merge these two iterations into one which produces two vectors?
-		let vertex_data = self.shapes.iter().enumerate().flat_map(|(i, shape)| {
-			let depth = i as f32;
-			match shape {
-				Shape::Colored { vertices, .. } => vertices.iter().map(move |v| Vertex::from_color(*v, depth)),
-				Shape::Textured { vertices, texture_index, .. } => todo!(),
-			}
-		}).collect::<Vec<_>>();
-		self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
-		let mut index_offset: u16 = 0;
-		let mut index_data = self.shapes.iter().flat_map(|shape| {
-			match shape {
-				Shape::Colored { indices, vertices, .. } => {
-					let indices = indices.iter()
-						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
-						.collect::<Vec<_>>();
-					index_offset += u16::try_from(vertices.len()).unwrap();
-					indices
-				},
-				Shape::Textured { indices, vertices, .. } => {
-					let indices = indices.iter()
-						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
-						.collect::<Vec<_>>();
-					index_offset += u16::try_from(vertices.len()).unwrap();
-					indices
-				},
-			}
-		}).collect::<Vec<u16>>();
-		let index_len = index_data.len();
-		if index_len % 2 == 1 {
-			index_data.push(0);
-		}
-		self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &frame.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: match self.clear_color {
-							Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
-								//TODO: Convert srgb properly
-								r: f64::from(c.r) / 255.0,
-								g: f64::from(c.g) / 255.0,
-								b: f64::from(c.b) / 255.0,
-								a: 1.0,
-							}),
-							None => wgpu::LoadOp::Load,
-						},
-						store: true,
-					}
-				}
-			],
-			depth_stencil_attachment: None,
-		});
-
-		render_pass.set_pipeline(&self.renderer.render_pipeline);
-
-		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
-		render_pass.draw_indexed(0..u32::try_from(index_len).unwrap(), 0, 0..1);
-
-		std::mem::drop(render_pass);
-
-		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 }
