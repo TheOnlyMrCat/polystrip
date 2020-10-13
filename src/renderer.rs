@@ -39,6 +39,10 @@ pub struct Renderer {
 	render_pipeline: wgpu::RenderPipeline,
 
 	pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
+	texture_bind_group: wgpu::BindGroup,
+	pub(crate) textures: Vec<wgpu::Texture>,
+	pub(crate) texture_views: Vec<wgpu::TextureView>,
+	sampler: wgpu::Sampler,
 
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
@@ -74,21 +78,21 @@ impl Renderer {
 		}).await.unwrap();
 
 		let (device, queue) = adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                features: wgpu::Features::empty(),
-                limits: wgpu::Limits::default(), //TODO
-                shader_validation: true,
-            },
-            None, // Trace path
+			&wgpu::DeviceDescriptor {
+				features: wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+				limits: wgpu::Limits::default(), //TODO
+				shader_validation: true,
+			},
+			None, // Trace path
 		).await.unwrap();
 		
 		let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.0,
-            height: size.1,
-            present_mode: wgpu::PresentMode::Fifo,
-        };
+			usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+			format: wgpu::TextureFormat::Bgra8UnormSrgb,
+			width: size.0,
+			height: size.1,
+			present_mode: wgpu::PresentMode::Fifo,
+		};
 		let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
 		let texture_bind_group_layout = device.create_bind_group_layout(
@@ -97,25 +101,51 @@ impl Renderer {
 					wgpu::BindGroupLayoutEntry {
 						binding: 0,
 						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::SampledTexture {
-							multisampled: false,
-							dimension: wgpu::TextureViewDimension::D2,
-							component_type: wgpu::TextureComponentType::Uint,
+						ty: wgpu::BindingType::Sampler {
+							comparison: false,
 						},
 						count: None,
 					},
 					wgpu::BindGroupLayoutEntry {
 						binding: 1,
 						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::Sampler {
-							comparison: false,
+						ty: wgpu::BindingType::SampledTexture {
+							multisampled: false,
+							dimension: wgpu::TextureViewDimension::D2,
+							component_type: wgpu::TextureComponentType::Uint,
 						},
-						count: None,
+						count: Some(std::num::NonZeroU32::new(8).unwrap()), //* Make sure this matches the array size in shader.frag
 					},
 				],
 				label: Some("polystrip_texture_bind_group_layout"),
 			}
 		);
+
+		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+			label: None,
+			address_mode_u: wgpu::AddressMode::Repeat,
+			address_mode_v: wgpu::AddressMode::Repeat,
+			address_mode_w: wgpu::AddressMode::Repeat,
+			mag_filter: wgpu::FilterMode::Nearest,
+			min_filter: wgpu::FilterMode::Nearest,
+			mipmap_filter: wgpu::FilterMode::Nearest,
+			..Default::default()
+		});
+
+		let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: Some("polystrip_texture_bind_group"),
+			layout: &texture_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::Sampler(&sampler),
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::TextureViewArray(&[]),
+				}
+			]
+		});
 		
 		let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("polystrip_vertex_buffer"),
@@ -136,7 +166,7 @@ impl Renderer {
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("polystrip_render_pipeline_layout"),
-			bind_group_layouts: &[],
+			bind_group_layouts: &[&texture_bind_group_layout],
 			push_constant_ranges: &[],
 		});
 
@@ -144,23 +174,23 @@ impl Renderer {
 			label: Some("polystrip_render_pipeline"),
 			layout: Some(&render_pipeline_layout),
 			vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
-                entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::Back,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
-                clamp_depth: false,
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[
+				module: &vs_module,
+				entry_point: "main",
+			},
+			fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+				module: &fs_module,
+				entry_point: "main",
+			}),
+			rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: wgpu::CullMode::Back,
+				depth_bias: 0,
+				depth_bias_slope_scale: 0.0,
+				depth_bias_clamp: 0.0,
+				clamp_depth: false,
+			}),
+			primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+			color_states: &[
 				wgpu::ColorStateDescriptor {
 					format: sc_desc.format,
 					color_blend: wgpu::BlendDescriptor::REPLACE,
@@ -168,36 +198,26 @@ impl Renderer {
 					write_mask: wgpu::ColorWrite::ALL,
 				}
 			],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[Vertex::desc()],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+			depth_stencil_state: None,
+			vertex_state: wgpu::VertexStateDescriptor {
+				index_format: wgpu::IndexFormat::Uint16,
+				vertex_buffers: &[Vertex::desc()],
+			},
+			sample_count: 1,
+			sample_mask: !0,
+			alpha_to_coverage_enabled: false,
 		});
 
 		Renderer {
 			surface, device, queue, sc_desc, swap_chain, render_pipeline,
-			texture_bind_group_layout,
+			texture_bind_group_layout, sampler, texture_bind_group,
+			textures: Vec::new(), texture_views: Vec::new(),
 			vertex_buffer, index_buffer,
 		}
 	}
-
-	/// This function should be called in your event loop whenever the window gets resized.
-	/// 
-	/// # Arguments
-	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
-	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn resize(&mut self, size: (u32, u32)) {
-		self.sc_desc.width = size.0;
-		self.sc_desc.height = size.1;
-		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
-	}
 	
 	/// Renders a frame. 
-	pub fn render_frame(&mut self, frame: &Frame) {
+	pub fn render_frame(&mut self, frame: Frame) {
 		let swap_chain_frame: wgpu::SwapChainTexture = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output.into();
 		let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
@@ -207,8 +227,8 @@ impl Renderer {
 		let vertex_data = frame.shapes.iter().enumerate().flat_map(|(i, shape)| {
 			let depth = i as f32;
 			match shape {
-				Shape::Colored { vertices, .. } => vertices.iter().map(move |v| Vertex::from_color(*v, depth)),
-				Shape::Textured { vertices, texture_index, .. } => todo!(),
+				Shape::Colored { vertices, .. } => vertices.iter().map(move |&v| Vertex::from_color(v, depth)).collect::<Vec<_>>(),
+				Shape::Textured { vertices, texture_index, .. } => vertices.iter().map(move |&v| Vertex::from_texture(v, *texture_index, depth)).collect::<Vec<_>>(),
 			}
 		}).collect::<Vec<_>>();
 		self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
@@ -218,20 +238,22 @@ impl Renderer {
 			match shape {
 				Shape::Colored { indices, vertices, .. } => {
 					let indices = indices.iter()
-						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.flatten()
+						.map(|&index| index + index_offset)
 						.collect::<Vec<_>>();
 					index_offset += u16::try_from(vertices.len()).unwrap();
 					indices
 				},
 				Shape::Textured { indices, vertices, .. } => {
 					let indices = indices.iter()
-						.map(|&indices| vec![indices.0 + index_offset, indices.1 + index_offset, indices.2 + index_offset].into_iter())
+						.flatten()
+						.map(|&index| index + index_offset)
 						.collect::<Vec<_>>();
 					index_offset += u16::try_from(vertices.len()).unwrap();
 					indices
 				},
 			}
-		}).flatten().collect::<Vec<u16>>();
+		}).collect::<Vec<u16>>();
 		let index_len = index_data.len();
 		if index_len % 2 == 1 {
 			index_data.push(0);
@@ -263,6 +285,7 @@ impl Renderer {
 
 		render_pass.set_pipeline(&self.render_pipeline);
 
+		render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
 		render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 		render_pass.set_index_buffer(self.index_buffer.slice(..));
 		render_pass.draw_indexed(0..u32::try_from(index_len).unwrap(), 0, 0..1);
@@ -270,6 +293,34 @@ impl Renderer {
 		std::mem::drop(render_pass);
 
 		self.queue.submit(std::iter::once(encoder.finish()));
+	}
+
+	/// This function should be called in your event loop whenever the window gets resized.
+	/// 
+	/// # Arguments
+	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
+	///           differentiate between physical and logical size, this refers to the logical size
+	pub fn resize(&mut self, size: (u32, u32)) {
+		self.sc_desc.width = size.0;
+		self.sc_desc.height = size.1;
+		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+	}
+
+	pub(crate) fn recreate_bind_group(&mut self) {
+		self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: Some("polystrip_texture_bind_group"),
+			layout: &self.texture_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::Sampler(&self.sampler),
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::TextureViewArray(&self.texture_views),
+				}
+			]
+		});
 	}
 }
 

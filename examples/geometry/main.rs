@@ -32,7 +32,7 @@ fn main() {
 						ColorVertex { position: Vec2 { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0 }},
 						ColorVertex { position: Vec2 { x: -0.25, y: -0.5 }, color: Color { r: 0, g: 0, b: 255 }},
 					],
-					indices: vec![(0, 1, 2)]
+					indices: vec![[0, 1, 2]]
 				});
 				frame.push_shape(Shape::Colored {
 					vertices: vec![
@@ -43,12 +43,12 @@ fn main() {
 						ColorVertex { position: Vec2 { x: 0.875, y: 0.125 }, color: Color { r: 255, g: 0, b: 255 }},
 					],
 					indices: vec![
-						(0, 1, 4),
-						(1, 2, 4),
-						(2, 3, 4),
+						[0, 1, 4],
+						[1, 2, 4],
+						[2, 3, 4],
 					]
 				});
-				renderer.render_frame(&frame);
+				renderer.render_frame(frame);
 			},
 			_ => {}
 		}

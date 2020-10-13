@@ -93,12 +93,12 @@ pub enum Shape {
 	/// A shape whose color is determined by interpolating the colours at each vertex.
 	Colored {
 		vertices: Vec<ColorVertex>,
-		indices: Vec<(u16, u16, u16)>,
+		indices: Vec<[u16; 3]>,
 	},
 	/// A shape whose color is determined by sampling a texture at specified points.
 	Textured {
 		vertices: Vec<TextureVertex>,
-		indices: Vec<(u16, u16, u16)>,
+		indices: Vec<[u16; 3]>,
 		texture_index: u32,
 	},
 }
