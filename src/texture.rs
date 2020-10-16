@@ -2,8 +2,13 @@ use crate::renderer::Renderer;
 
 /// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html). It should be used
 /// only with the renderer which created it. (It is not known what happens otherwise, but it is not undefined)
-#[repr(transparent)]
-pub struct Texture(u32);
+#[derive(Debug)]
+pub struct Texture {
+	texture: wgpu::Texture,
+	view: wgpu::TextureView,
+	sampler: wgpu::Sampler,
+	pub(crate) bind_group: wgpu::BindGroup,
+}
 
 impl Texture {
 	pub fn new_from_rgba(renderer: &mut Renderer, data: impl AsRef<[u8]>, size: (u32, u32)) -> Texture {
@@ -39,15 +44,34 @@ impl Texture {
 		);
 
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-		
-		let idx = renderer.textures.len();
-		if idx != renderer.texture_views.len() {
-			panic!("Renderer texture state not self-consistent. This is a bug in polystrip; please contact the developer");
+		let sampler = renderer.device.create_sampler(&wgpu::SamplerDescriptor {
+			label: None,
+			address_mode_u: wgpu::AddressMode::Repeat,
+			address_mode_v: wgpu::AddressMode::Repeat,
+			address_mode_w: wgpu::AddressMode::Repeat,
+			mag_filter: wgpu::FilterMode::Nearest,
+			min_filter: wgpu::FilterMode::Nearest,
+			mipmap_filter: wgpu::FilterMode::Nearest,
+			..Default::default()
+		});
+
+		let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: None,
+			layout: &renderer.texture_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::TextureView(&view),
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::Sampler(&sampler),
+				}
+			]
+		});
+
+		Texture {
+			texture, view, sampler, bind_group
 		}
-
-		renderer.textures.push(texture);
-		renderer.texture_views.push(view);
-
-		Texture(idx as u32)
 	}
 }

@@ -3,7 +3,7 @@
 use std::convert::TryFrom;
 
 use crate::data::Color;
-use crate::vertex::{Vertex, Shape};
+use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
 
@@ -36,13 +36,10 @@ pub struct Renderer {
 	pub(crate) queue: wgpu::Queue,
 	sc_desc: wgpu::SwapChainDescriptor,
 	swap_chain: wgpu::SwapChain,
-	render_pipeline: wgpu::RenderPipeline,
+	colour_render_pipeline: wgpu::RenderPipeline,
+	texture_render_pipeline: wgpu::RenderPipeline,
 
 	pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
-	texture_bind_group: wgpu::BindGroup,
-	pub(crate) textures: Vec<wgpu::Texture>,
-	pub(crate) texture_views: Vec<wgpu::TextureView>,
-	sampler: wgpu::Sampler,
 
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
@@ -69,6 +66,7 @@ impl Renderer {
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
 	pub async fn new_async(window: &impl HasRawWindowHandle, size: (u32, u32)) -> Renderer {
+		//MARK: New Renderer
 		let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
 		let surface = unsafe { instance.create_surface(window) };
 
@@ -79,7 +77,7 @@ impl Renderer {
 
 		let (device, queue) = adapter.request_device(
 			&wgpu::DeviceDescriptor {
-				features: wgpu::Features::SAMPLED_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+				features: wgpu::Features::empty(),
 				limits: wgpu::Limits::default(), //TODO
 				shader_validation: true,
 			},
@@ -101,55 +99,29 @@ impl Renderer {
 					wgpu::BindGroupLayoutEntry {
 						binding: 0,
 						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::Sampler {
-							comparison: false,
+						ty: wgpu::BindingType::SampledTexture {
+							multisampled: false,
+							dimension: wgpu::TextureViewDimension::D2,
+							component_type: wgpu::TextureComponentType::Uint,
 						},
 						count: None,
 					},
 					wgpu::BindGroupLayoutEntry {
 						binding: 1,
 						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::SampledTexture {
-							multisampled: false,
-							dimension: wgpu::TextureViewDimension::D2,
-							component_type: wgpu::TextureComponentType::Uint,
+						ty: wgpu::BindingType::Sampler {
+							comparison: false,
 						},
-						count: Some(std::num::NonZeroU32::new(8).unwrap()), //* Make sure this matches the array size in shader.frag
+						count: None,
 					},
 				],
 				label: Some("polystrip_texture_bind_group_layout"),
 			}
 		);
-
-		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-			label: None,
-			address_mode_u: wgpu::AddressMode::Repeat,
-			address_mode_v: wgpu::AddressMode::Repeat,
-			address_mode_w: wgpu::AddressMode::Repeat,
-			mag_filter: wgpu::FilterMode::Nearest,
-			min_filter: wgpu::FilterMode::Nearest,
-			mipmap_filter: wgpu::FilterMode::Nearest,
-			..Default::default()
-		});
-
-		let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-			label: Some("polystrip_texture_bind_group"),
-			layout: &texture_bind_group_layout,
-			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::Sampler(&sampler),
-				},
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: wgpu::BindingResource::TextureViewArray(&[]),
-				}
-			]
-		});
 		
 		let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("polystrip_vertex_buffer"),
-			size: (1024 * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress, //TODO: Figure out how big this should be
+			size: (1024 * std::mem::size_of::<TextureVertex>()) as wgpu::BufferAddress, //TODO: Figure out how big this should be
 			usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::VERTEX,
 			mapped_at_creation: false,
 		});
@@ -161,24 +133,24 @@ impl Renderer {
 			mapped_at_creation: false,
 		});
 
-		let vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.vert.spv"));
-		let fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/shader.frag.spv"));
+		let colour_vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/coloured.vert.spv"));
+		let colour_fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/coloured.frag.spv"));
 
-		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("polystrip_render_pipeline_layout"),
-			bind_group_layouts: &[&texture_bind_group_layout],
+		let colour_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("polystrip_render_pipeline_layout_color"),
+			bind_group_layouts: &[],
 			push_constant_ranges: &[],
 		});
 
-		let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("polystrip_render_pipeline"),
-			layout: Some(&render_pipeline_layout),
+		let colour_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("polystrip_render_pipeline_color"),
+			layout: Some(&colour_render_pipeline_layout),
 			vertex_stage: wgpu::ProgrammableStageDescriptor {
-				module: &vs_module,
+				module: &colour_vs_module,
 				entry_point: "main",
 			},
 			fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-				module: &fs_module,
+				module: &colour_fs_module,
 				entry_point: "main",
 			}),
 			rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -193,7 +165,7 @@ impl Renderer {
 			color_states: &[
 				wgpu::ColorStateDescriptor {
 					format: sc_desc.format,
-					color_blend: wgpu::BlendDescriptor::REPLACE,
+					color_blend: wgpu::BlendDescriptor::REPLACE, //TODO: Choose suitable descriptors
 					alpha_blend: wgpu::BlendDescriptor::REPLACE,
 					write_mask: wgpu::ColorWrite::ALL,
 				}
@@ -201,7 +173,54 @@ impl Renderer {
 			depth_stencil_state: None,
 			vertex_state: wgpu::VertexStateDescriptor {
 				index_format: wgpu::IndexFormat::Uint16,
-				vertex_buffers: &[Vertex::desc()],
+				vertex_buffers: &[ColorVertex::desc()],
+			},
+			sample_count: 1,
+			sample_mask: !0,
+			alpha_to_coverage_enabled: false,
+		});
+
+		let texture_vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/textured.vert.spv"));
+		let texture_fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/textured.frag.spv"));
+
+		let texture_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("polystrip_render_pipeline_layout_texture"),
+			bind_group_layouts: &[&texture_bind_group_layout],
+			push_constant_ranges: &[],
+		});
+
+		let texture_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("polystrip_render_pipeline_texture"),
+			layout: Some(&texture_render_pipeline_layout),
+			vertex_stage: wgpu::ProgrammableStageDescriptor {
+				module: &texture_vs_module,
+				entry_point: "main",
+			},
+			fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+				module: &texture_fs_module,
+				entry_point: "main",
+			}),
+			rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: wgpu::CullMode::Back,
+				depth_bias: 0,
+				depth_bias_slope_scale: 0.0,
+				depth_bias_clamp: 0.0,
+				clamp_depth: false,
+			}),
+			primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+			color_states: &[
+				wgpu::ColorStateDescriptor {
+					format: sc_desc.format,
+					color_blend: wgpu::BlendDescriptor::REPLACE, //TODO: As above
+					alpha_blend: wgpu::BlendDescriptor::REPLACE,
+					write_mask: wgpu::ColorWrite::ALL,
+				}
+			],
+			depth_stencil_state: None,
+			vertex_state: wgpu::VertexStateDescriptor {
+				index_format: wgpu::IndexFormat::Uint16,
+				vertex_buffers: &[TextureVertex::desc()],
 			},
 			sample_count: 1,
 			sample_mask: !0,
@@ -209,90 +228,136 @@ impl Renderer {
 		});
 
 		Renderer {
-			surface, device, queue, sc_desc, swap_chain, render_pipeline,
-			texture_bind_group_layout, sampler, texture_bind_group,
-			textures: Vec::new(), texture_views: Vec::new(),
+			surface, device, queue, sc_desc, swap_chain, colour_render_pipeline, texture_render_pipeline,
+			texture_bind_group_layout,
 			vertex_buffer, index_buffer,
 		}
 	}
 	
 	/// Renders a frame. 
 	pub fn render_frame(&mut self, frame: Frame) {
+		//MARK: Render frame
 		let swap_chain_frame: wgpu::SwapChainTexture = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output.into();
-		let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		}).into();
-
-		//TODO: Merge these two iterations into one which produces two vectors?
-		let vertex_data = frame.shapes.iter().enumerate().flat_map(|(i, shape)| {
-			let depth = i as f32;
-			match shape {
-				Shape::Colored { vertices, .. } => vertices.iter().map(move |&v| Vertex::from_color(v, depth)).collect::<Vec<_>>(),
-				Shape::Textured { vertices, texture_index, .. } => vertices.iter().map(move |&v| Vertex::from_texture(v, *texture_index, depth)).collect::<Vec<_>>(),
-			}
-		}).collect::<Vec<_>>();
-		self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
-		let mut index_offset: u16 = 0;
-		let mut index_data = frame.shapes.iter().flat_map(|shape| {
-			match shape {
-				Shape::Colored { indices, vertices, .. } => {
-					let indices = indices.iter()
-						.flatten()
-						.map(|&index| index + index_offset)
-						.collect::<Vec<_>>();
-					index_offset += u16::try_from(vertices.len()).unwrap();
-					indices
-				},
-				Shape::Textured { indices, vertices, .. } => {
-					let indices = indices.iter()
-						.flatten()
-						.map(|&index| index + index_offset)
-						.collect::<Vec<_>>();
-					index_offset += u16::try_from(vertices.len()).unwrap();
-					indices
-				},
-			}
-		}).collect::<Vec<u16>>();
-		let index_len = index_data.len();
-		if index_len % 2 == 1 {
-			index_data.push(0);
-		}
-		self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &swap_chain_frame.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: match frame.clear_color {
-							Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
-								//TODO: Convert srgb properly
-								r: f64::from(c.r) / 255.0,
-								g: f64::from(c.g) / 255.0,
-								b: f64::from(c.b) / 255.0,
-								a: 1.0,
-							}),
-							None => wgpu::LoadOp::Load,
-						},
-						store: true,
+		
+		let mut is_first_set = true;
+		for set in &frame.shape_sets {
+			let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+				label: Some("polystrip_render_encoder"),
+			}).into();
+	
+			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				color_attachments: &[
+					wgpu::RenderPassColorAttachmentDescriptor {
+						attachment: &swap_chain_frame.view,
+						resolve_target: None,
+						ops: wgpu::Operations {
+							load: 
+								if is_first_set {
+									match frame.clear_color {
+										Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+											//TODO: Convert srgb properly
+											r: f64::from(c.r) / 255.0,
+											g: f64::from(c.g) / 255.0,
+											b: f64::from(c.b) / 255.0,
+											a: 1.0,
+										}),
+										None => wgpu::LoadOp::Load,
+									}
+								} else {
+									wgpu::LoadOp::Load
+								},
+							store: true,
+						}
 					}
+				],
+				depth_stencil_attachment: None,
+			});
+			is_first_set = false;
+
+			// * This match block is expected to set the render pipeline and write the vertex and index buffers
+			let index_count;
+			match &set {
+				ShapeSet::SingleColored(shape) => {
+					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
+					let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+					index_count = index_data.len();
+					if index_count % 2 == 1 {
+						index_data.push(0); // Align the data to u32 for the upcoming buffer write
+					}
+					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+					render_pass.set_pipeline(&self.colour_render_pipeline);
+				},
+				ShapeSet::SingleTextured(shape, texture) => {
+					// ! Duplicated code from above branch
+					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
+					let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+					index_count = index_data.len();
+					if index_count % 2 == 1 {
+						index_data.push(0); // Align the data to u32 for the upcoming buffer write
+					}
+					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
+					// ! End of duplicated code
+
+					render_pass.set_pipeline(&self.texture_render_pipeline);
+					render_pass.set_bind_group(0, &texture.bind_group, &[]);
+				},
+				ShapeSet::MultiColored(shapes) => {
+					//TODO: Merge these two iterations into one which produces two vectors?
+					let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
+					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+
+					let mut index_offset: u16 = 0;
+					let mut index_data = shapes.iter().flat_map(|shape| {
+						let indices = shape.indices.iter()
+							.flatten()
+							.map(|&index| index + index_offset)
+							.collect::<Vec<_>>();
+						index_offset += u16::try_from(shape.vertices.len()).unwrap();
+						indices
+					}).collect::<Vec<u16>>();
+					index_count = index_data.len();
+					if index_count % 2 == 1 {
+						index_data.push(0); // Align the data to u32 for the upcoming buffer write
+					}
+					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+					render_pass.set_pipeline(&self.colour_render_pipeline);
+				},
+				ShapeSet::MultiTextured(shapes, texture) => {
+					// ! Duplicated code from above branch
+					let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
+					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+
+					let mut index_offset: u16 = 0;
+					let mut index_data = shapes.iter().flat_map(|shape| {
+						let indices = shape.indices.iter()
+							.flatten()
+							.map(|&index| index + index_offset)
+							.collect::<Vec<_>>();
+						index_offset += u16::try_from(shape.vertices.len()).unwrap();
+						indices
+					}).collect::<Vec<u16>>();
+					index_count = index_data.len();
+					if index_count % 2 == 1 {
+						index_data.push(0); // Align the data to u32 for the upcoming buffer write
+					}
+					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
+					// ! End of duplicated code
+
+					render_pass.set_pipeline(&self.texture_render_pipeline);
+					render_pass.set_bind_group(0, &texture.bind_group, &[]);
 				}
-			],
-			depth_stencil_attachment: None,
-		});
+			};
+	
+			render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+			render_pass.set_index_buffer(self.index_buffer.slice(..));
+			render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
 
-		render_pass.set_pipeline(&self.render_pipeline);
-
-		render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
-		render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.index_buffer.slice(..));
-		render_pass.draw_indexed(0..u32::try_from(index_len).unwrap(), 0, 0..1);
-
-		std::mem::drop(render_pass);
-
-		self.queue.submit(std::iter::once(encoder.finish()));
+			std::mem::drop(render_pass);
+	
+			self.queue.submit(std::iter::once(encoder.finish()));
+		}
 	}
 
 	/// This function should be called in your event loop whenever the window gets resized.
@@ -305,45 +370,41 @@ impl Renderer {
 		self.sc_desc.height = size.1;
 		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
 	}
-
-	pub(crate) fn recreate_bind_group(&mut self) {
-		self.texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-			label: Some("polystrip_texture_bind_group"),
-			layout: &self.texture_bind_group_layout,
-			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::Sampler(&self.sampler),
-				},
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: wgpu::BindingResource::TextureViewArray(&self.texture_views),
-				}
-			]
-		});
-	}
 }
 
-/// The data necessary for a frame to be rendered. Stores [`Shape`](../vertex/enum.Shape.html)s and gets passed to
+/// The data necessary for a frame to be rendered. Stores [`ShapeSet`](../vertex/enum.ShapeSet.html)s and gets passed to
 /// [`Renderer`](struct.Renderer.html) to be rendered.
 pub struct Frame {
-	shapes: Vec<Shape>,
+	shape_sets: Vec<ShapeSet>,
 	clear_color: Option<Color>,
 }
 
+//MARK: Frame API
 impl Frame {
-	/// Creates a new frame with no shapes and no clear colour.
+	/// Creates a new frame with no shape sets and no clear colour.
 	pub fn new() -> Frame {
 		Frame {
-			shapes: Vec::new(),
+			shape_sets: Vec::new(),
 			clear_color: None,
 		}
 	}
 
-	/// Queues up the passed [`Shape`](../vertex/enum.Shape.html) for rendering. Shapes are rendered in the order they are
-	/// queued in.
-	pub fn push_shape(&mut self, shape: Shape) {
-		self.shapes.push(shape);
+	/// Queues the passed [`ColoredShape`](../vertex/struct.ColoredShape.html) for rendering. Shapes are rendered in the order
+	/// they are queued in.
+	pub fn push_colored(&mut self, shape: ColoredShape) {
+		self.shape_sets.push(ShapeSet::SingleColored(shape));
+	}
+
+	/// Queues the passed [`TexturedShape`](../vertex/struct.TexturedShape.html) for rendering. The shape will be rendered with
+	/// the passed texture. Shapes are rendered in the order they are queued in.
+	pub fn push_textured(&mut self, shape: TexturedShape, texture: crate::texture::Texture) {
+		self.shape_sets.push(ShapeSet::SingleTextured(shape, texture));
+	}
+
+	/// Queues the passed [`ShapeSet`](../vertex/enum.ShapeSet.html) for rendering. Shapes and shape sets are rendered in the
+	/// order they are queued in.
+	pub fn push_shape_set(&mut self, set: ShapeSet) {
+		self.shape_sets.push(set);
 	}
 
 	/// Sets the clear color of the frame. The frame is cleared before any shapes are drawn.
@@ -358,10 +419,10 @@ impl Frame {
 		self.clear_color = None;
 	}
 
-	/// Reserve space for at least `additional` more shapes to be drawn. This increases the capacity of the internal `Vec`
+	/// Reserve space for at least `additional` more shape sets to be drawn. This increases the capacity of the internal `Vec`
 	/// used to store shapes before rendering. See [`Vec`'s documentation](https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.reserve)
 	/// for more details.
 	pub fn reserve(&mut self, additional: usize) {
-		self.shapes.reserve(additional);
+		self.shape_sets.reserve(additional);
 	}
 }
