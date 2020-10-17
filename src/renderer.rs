@@ -374,15 +374,15 @@ impl Renderer {
 
 /// The data necessary for a frame to be rendered. Stores [`ShapeSet`](../vertex/enum.ShapeSet.html)s and gets passed to
 /// [`Renderer`](struct.Renderer.html) to be rendered.
-pub struct Frame {
-	shape_sets: Vec<ShapeSet>,
+pub struct Frame<'a> {
+	shape_sets: Vec<ShapeSet<'a>>,
 	clear_color: Option<Color>,
 }
 
 //MARK: Frame API
-impl Frame {
+impl<'a> Frame<'a> {
 	/// Creates a new frame with no shape sets and no clear colour.
-	pub fn new() -> Frame {
+	pub fn new() -> Frame<'a> {
 		Frame {
 			shape_sets: Vec::new(),
 			clear_color: None,
@@ -397,13 +397,13 @@ impl Frame {
 
 	/// Queues the passed [`TexturedShape`](../vertex/struct.TexturedShape.html) for rendering. The shape will be rendered with
 	/// the passed texture. Shapes are rendered in the order they are queued in.
-	pub fn push_textured(&mut self, shape: TexturedShape, texture: crate::texture::Texture) {
+	pub fn push_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
 		self.shape_sets.push(ShapeSet::SingleTextured(shape, texture));
 	}
 
 	/// Queues the passed [`ShapeSet`](../vertex/enum.ShapeSet.html) for rendering. Shapes and shape sets are rendered in the
 	/// order they are queued in.
-	pub fn push_shape_set(&mut self, set: ShapeSet) {
+	pub fn push_shape_set(&mut self, set: ShapeSet<'a>) {
 		self.shape_sets.push(set);
 	}
 

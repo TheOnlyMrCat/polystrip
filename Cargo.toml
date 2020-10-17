@@ -17,3 +17,4 @@ raw-window-handle = "0.3"
 
 [dev-dependencies]
 winit = "0.23"
+image = "0.23"

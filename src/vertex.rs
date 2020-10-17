@@ -103,9 +103,9 @@ pub struct TexturedShape {
 
 /// A set of [`ColoredShape`](struct.ColoredShape)s or [`TexturedShape`](struct.TexturedShape)s.
 #[derive(Debug)]
-pub enum ShapeSet {
+pub enum ShapeSet<'a> {
 	SingleColored(ColoredShape),
-	SingleTextured(TexturedShape, Texture),
+	SingleTextured(TexturedShape, &'a Texture),
 	MultiColored(Vec<ColoredShape>),
-	MultiTextured(Vec<TexturedShape>, Texture),
+	MultiTextured(Vec<TexturedShape>, &'a Texture),
 }
