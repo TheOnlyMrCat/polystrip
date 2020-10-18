@@ -2,7 +2,7 @@
 
 use std::convert::TryFrom;
 
-use crate::data::Color;
+use crate::data::{GpuPos, Color};
 use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
@@ -43,6 +43,9 @@ pub struct Renderer {
 
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
+
+	width: u32,
+	height: u32,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -231,19 +234,21 @@ impl Renderer {
 			surface, device, queue, sc_desc, swap_chain, colour_render_pipeline, texture_render_pipeline,
 			texture_bind_group_layout,
 			vertex_buffer, index_buffer,
+
+			width: size.0, height: size.1,
 		}
 	}
 	
 	/// Renders a frame. 
 	pub fn render_frame(&mut self, frame: Frame) {
 		//MARK: Render frame
-		let swap_chain_frame: wgpu::SwapChainTexture = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output.into();
+		let swap_chain_frame = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output;
 		
 		let mut is_first_set = true;
 		for set in &frame.shape_sets {
-			let mut encoder: wgpu::CommandEncoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 				label: Some("polystrip_render_encoder"),
-			}).into();
+			});
 	
 			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 				color_attachments: &[
@@ -369,6 +374,14 @@ impl Renderer {
 		self.sc_desc.width = size.0;
 		self.sc_desc.height = size.1;
 		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+	}
+
+	/// Converts pixel coordinates to Gpu coordinates
+	pub fn pixel(&self, x: u32, y: u32) -> GpuPos {
+		GpuPos {
+			x: (x * 2) as f32 / self.width as f32 - 1.0,
+			y: -((y * 2) as f32 / self.height as f32 - 1.0),
+		}
 	}
 }
 
