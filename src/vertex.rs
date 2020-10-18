@@ -9,8 +9,8 @@ use crate::texture::Texture;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct TextureVertex {
-	pub position: Vec2,
-	pub tex_coords: Vec2,
+	pub position: GpuPos,
+	pub tex_coords: GpuPos,
 }
 
 unsafe impl bytemuck::Pod for TextureVertex {}
@@ -45,7 +45,7 @@ impl TextureVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct ColorVertex {
-	pub position: Vec2,
+	pub position: GpuPos,
 	pub color: Color,
 }
 
@@ -93,6 +93,9 @@ pub struct ColoredShape {
 /// The color of the shape is determined by interpolating the texture coordinates at each
 /// [`TextureVertex`](struct.TextureVertex).
 /// 
+/// A `TexturedShape` does not store the texture it is to draw. This must be specified in the [`ShapeSet`](struct.ShapeSet)
+/// or in the arguments to [`Frame::add_textured`](../renderer/struct.Frame#method.add_textured)
+/// 
 /// See also [`ColoredShape`](struct.ColoredShape)
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct TexturedShape {
@@ -104,8 +107,12 @@ pub struct TexturedShape {
 /// A set of [`ColoredShape`](struct.ColoredShape)s or [`TexturedShape`](struct.TexturedShape)s.
 #[derive(Debug)]
 pub enum ShapeSet<'a> {
+	/// One [`ColoredShape`](struct.ColoredShape).
 	SingleColored(ColoredShape),
+	/// One [`TexturedShape`](struct.ColoredShape), with a reference to the texture to draw to it.
 	SingleTextured(TexturedShape, &'a Texture),
+	/// Multiple [`ColoredShape`](struct.ColoredShape)s.
 	MultiColored(Vec<ColoredShape>),
+	/// One [`TexturedShape`](struct.ColoredShape), with a reference to the texture to draw to them.
 	MultiTextured(Vec<TexturedShape>, &'a Texture),
 }

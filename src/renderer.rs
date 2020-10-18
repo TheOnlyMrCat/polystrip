@@ -391,19 +391,19 @@ impl<'a> Frame<'a> {
 
 	/// Queues the passed [`ColoredShape`](../vertex/struct.ColoredShape.html) for rendering. Shapes are rendered in the order
 	/// they are queued in.
-	pub fn push_colored(&mut self, shape: ColoredShape) {
+	pub fn add_colored(&mut self, shape: ColoredShape) {
 		self.shape_sets.push(ShapeSet::SingleColored(shape));
 	}
 
 	/// Queues the passed [`TexturedShape`](../vertex/struct.TexturedShape.html) for rendering. The shape will be rendered with
 	/// the passed texture. Shapes are rendered in the order they are queued in.
-	pub fn push_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
+	pub fn add_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
 		self.shape_sets.push(ShapeSet::SingleTextured(shape, texture));
 	}
 
 	/// Queues the passed [`ShapeSet`](../vertex/enum.ShapeSet.html) for rendering. Shapes and shape sets are rendered in the
 	/// order they are queued in.
-	pub fn push_shape_set(&mut self, set: ShapeSet<'a>) {
+	pub fn add_shape_set(&mut self, set: ShapeSet<'a>) {
 		self.shape_sets.push(set);
 	}
 

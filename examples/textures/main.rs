@@ -9,7 +9,7 @@ use winit::window::WindowBuilder;
 fn main() {
 	let el = EventLoop::new();
 	let window = WindowBuilder::new()
-		.with_title("Geometry")
+		.with_title("Textures")
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
@@ -30,12 +30,12 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = Frame::new();
 				frame.set_clear(Color { r: 128, g: 128, b: 128, a: 255 });
-				frame.push_textured(TexturedShape {
+				frame.add_textured(TexturedShape {
 					vertices: vec![
-						TextureVertex { position: Vec2 { x: -0.5, y:  0.5 }, tex_coords: Vec2 { x: 0.0, y: 0.0 } },
-						TextureVertex { position: Vec2 { x: -0.5, y: -0.5 }, tex_coords: Vec2 { x: 0.0, y: 1.0 } },
-						TextureVertex { position: Vec2 { x:  0.5, y: -0.5 }, tex_coords: Vec2 { x: 1.0, y: 1.0 } },
-						TextureVertex { position: Vec2 { x:  0.5, y:  0.5 }, tex_coords: Vec2 { x: 1.0, y: 0.0 } },
+						TextureVertex { position: GpuPos { x: -0.5, y:  0.5 }, tex_coords: GpuPos { x: 0.0, y: 0.0 } },
+						TextureVertex { position: GpuPos { x: -0.5, y: -0.5 }, tex_coords: GpuPos { x: 0.0, y: 1.0 } },
+						TextureVertex { position: GpuPos { x:  0.5, y: -0.5 }, tex_coords: GpuPos { x: 1.0, y: 1.0 } },
+						TextureVertex { position: GpuPos { x:  0.5, y:  0.5 }, tex_coords: GpuPos { x: 1.0, y: 0.0 } },
 					],
 					indices: vec![
 						[0, 1, 3],

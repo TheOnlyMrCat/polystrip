@@ -1,7 +1,10 @@
+//! Images to be rendered onto shapes
+
 use crate::renderer::Renderer;
 
-/// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html). It should be used
-/// only with the renderer which created it. (It is not known what happens otherwise, but it is not undefined)
+/// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html).
+/// 
+/// It must be used only with the `Renderer` which created it.
 #[derive(Debug)]
 pub struct Texture {
 	texture: wgpu::Texture,
@@ -11,7 +14,14 @@ pub struct Texture {
 }
 
 impl Texture {
-	pub fn new_from_rgba(renderer: &mut Renderer, data: impl AsRef<[u8]>, size: (u32, u32)) -> Texture {
+	/// Create a new texture from the given rgba data, associated with the given `Renderer`.
+	/// 
+	/// # Arguments
+	/// * `renderer`: The `Renderer` to create this texture for. 
+	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
+	///           the sRGB color space.
+	/// * `size`: The size of the texture, in pixels, in (width, height) order.
+	pub fn new_from_rgba(renderer: &Renderer, data: &[u8], size: (u32, u32)) -> Texture {
 		let extent = wgpu::Extent3d {
 			width: size.0,
 			height: size.1,

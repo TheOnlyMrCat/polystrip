@@ -26,13 +26,13 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = Frame::new();
 				frame.set_clear(Color { r: 128, g: 128, b: 128, a: 255 });
-				frame.push_colored(ColoredShape {
+				frame.add_colored(ColoredShape {
 					vertices: vec![
-						ColorVertex { position: Vec2 { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: Vec2 { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vec2 { x: 0.25, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vec2 { x: 0.75, y: -0.5 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
-						ColorVertex { position: Vec2 { x: 0.875, y: 0.125 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.25, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.75, y: -0.5 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.875, y: 0.125 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
 					],
 					// Note the vertices are specified going counter-clockwise
 					indices: vec![
@@ -41,11 +41,11 @@ fn main() {
 						[2, 3, 4],
 					]
 				});
-				frame.push_colored(ColoredShape {
+				frame.add_colored(ColoredShape {
 					vertices: vec![
-						ColorVertex { position: Vec2 { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: Vec2 { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vec2 { x: -0.25, y: -0.5 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
+						ColorVertex { position: GpuPos { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: GpuPos { x: -0.25, y: -0.5 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
 					],
 					indices: vec![[0, 1, 2]]
 				});

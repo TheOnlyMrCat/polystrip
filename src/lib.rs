@@ -38,5 +38,5 @@ pub mod vertex;
 
 pub mod prelude {
 	pub use crate::renderer::{Renderer, Frame};
-	pub use crate::data::{Vec2, Color};
+	pub use crate::data::{GpuPos, Color};
 }
