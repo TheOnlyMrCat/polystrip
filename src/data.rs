@@ -22,3 +22,11 @@ pub struct Color {
 	pub b: u8,
 	pub a: u8,
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+pub struct Rect {
+	pub x: i32,
+	pub y: i32,
+	pub w: i32,
+	pub h: i32,
+}

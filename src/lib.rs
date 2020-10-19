@@ -32,11 +32,13 @@
 //! ```
 
 pub mod data;
+pub mod geometry;
 pub mod renderer;
 pub mod texture;
 pub mod vertex;
 
 pub mod prelude {
 	pub use crate::renderer::{Renderer, Frame};
-	pub use crate::data::{GpuPos, Color};
+	pub use crate::data::{Color, Rect};
+	pub use crate::geometry::FrameGeometryExt;
 }

@@ -1,3 +1,4 @@
+use polystrip::data::GpuPos;
 use polystrip::prelude::*;
 use polystrip::texture::Texture;
 use polystrip::vertex::{TexturedShape, TextureVertex};

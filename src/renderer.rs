@@ -239,7 +239,7 @@ impl Renderer {
 		}
 	}
 
-	pub fn get_next_frame<'a>(&'a mut self) -> Frame<'a> {
+	pub fn get_next_frame(&mut self) -> Frame<'_> {
 		Frame {
 			swap_chain_frame: self.swap_chain.get_current_frame().unwrap(),
 			renderer: self,
@@ -258,7 +258,7 @@ impl Renderer {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: u32, y: u32) -> GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
 		GpuPos {
 			x: (x * 2) as f32 / self.width as f32 - 1.0,
 			y: -((y * 2) as f32 / self.height as f32 - 1.0),
@@ -277,7 +277,7 @@ pub struct Frame<'a> {
 impl<'a> Frame<'a> {
 	/// Queues the passed [`ColoredShape`](../vertex/struct.ColoredShape.html) for rendering. Shapes are rendered in the order
 	/// they are queued in.
-	pub fn add_colored(&mut self, shape: ColoredShape) {
+	pub fn draw_colored(&mut self, shape: ColoredShape) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
 		});

@@ -1,3 +1,4 @@
+use polystrip::data::GpuPos;
 use polystrip::prelude::*;
 use polystrip::vertex::{ColoredShape, ColorVertex};
 
@@ -26,7 +27,7 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = renderer.get_next_frame();
 				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
-				frame.add_colored(ColoredShape {
+				frame.draw_colored(ColoredShape {
 					vertices: vec![
 						ColorVertex { position: GpuPos { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
@@ -41,7 +42,7 @@ fn main() {
 						[2, 3, 4],
 					]
 				});
-				frame.add_colored(ColoredShape {
+				frame.draw_colored(ColoredShape {
 					vertices: vec![
 						ColorVertex { position: GpuPos { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
