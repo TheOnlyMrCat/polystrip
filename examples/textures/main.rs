@@ -32,13 +32,13 @@ fn main() {
 				let mut frame = renderer.get_next_frame();
 				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(TexturedShape {
-					vertices: vec![
+					vertices: &[
 						TextureVertex { position: frame.pixel(50, 50), tex_coords: GpuPos { x: 0.0, y: 0.0 } },
 						TextureVertex { position: frame.pixel(50, 150), tex_coords: GpuPos { x: 0.0, y: 1.0 } },
 						TextureVertex { position: frame.pixel(150, 150), tex_coords: GpuPos { x: 1.0, y: 1.0 } },
 						TextureVertex { position: frame.pixel(150, 50), tex_coords: GpuPos { x: 1.0, y: 0.0 } },
 					],
-					indices: vec![
+					indices: &[
 						[0, 1, 3],
 						[1, 2, 3],
 					]

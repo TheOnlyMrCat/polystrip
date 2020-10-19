@@ -14,13 +14,13 @@ pub trait FrameGeometryExt {
 impl FrameGeometryExt for Frame<'_> {
 	fn draw_rect(&mut self, bounds: Rect, color: Color) {
 		self.draw_colored(ColoredShape {
-			vertices: vec![
+			vertices: &[
 				ColorVertex { position: self.pixel(bounds.x, bounds.y), color },
 				ColorVertex { position: self.pixel(bounds.x, bounds.y + bounds.h), color },
 				ColorVertex { position: self.pixel(bounds.x + bounds.w, bounds.y + bounds.h), color },
 				ColorVertex { position: self.pixel(bounds.x + bounds.w, bounds.y), color }
 			],
-			indices: vec![
+			indices: &[
 				[0, 1, 3],
 				[1, 2, 3],
 			]

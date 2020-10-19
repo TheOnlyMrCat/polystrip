@@ -82,10 +82,10 @@ impl ColorVertex {
 /// 
 /// See also [`TexturedShape`](struct.TexturedShape)
 #[derive(Clone, Debug)]
-pub struct ColoredShape {
-	pub vertices: Vec<ColorVertex>,
+pub struct ColoredShape<'a> {
+	pub vertices: &'a [ColorVertex],
 	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: Vec<[u16; 3]>, //TODO: Work out if it needs to be CCW or not
+	pub indices: &'a [[u16; 3]], //TODO: Work out if it needs to be CCW or not
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
@@ -98,17 +98,17 @@ pub struct ColoredShape {
 /// 
 /// See also [`ColoredShape`](struct.ColoredShape)
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct TexturedShape {
-	pub vertices: Vec<TextureVertex>,
+pub struct TexturedShape<'a> {
+	pub vertices: &'a [TextureVertex],
 	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: Vec<[u16; 3]>, //TODO: As above
+	pub indices: &'a [[u16; 3]], //TODO: As above
 }
 
 /// A set of [`ColoredShape`](struct.ColoredShape)s or [`TexturedShape`](struct.TexturedShape)s.
 #[derive(Debug)]
 pub enum ShapeSet<'a> {
 	/// Multiple [`ColoredShape`](struct.ColoredShape)s.
-	Colored(Vec<ColoredShape>),
+	Colored(&'a [ColoredShape<'a>]),
 	/// Multiple [`TexturedShape`](struct.TexturedShape)s, with a reference to the texture to draw to them.
-	Textured(Vec<TexturedShape>, &'a Texture),
+	Textured(&'a [TexturedShape<'a>], &'a Texture),
 }

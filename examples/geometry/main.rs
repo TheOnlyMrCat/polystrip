@@ -28,7 +28,7 @@ fn main() {
 				let mut frame = renderer.get_next_frame();
 				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_colored(ColoredShape {
-					vertices: vec![
+					vertices: &[
 						ColorVertex { position: GpuPos { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: 0.25, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
@@ -36,19 +36,19 @@ fn main() {
 						ColorVertex { position: GpuPos { x: 0.875, y: 0.125 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
 					],
 					// Note the vertices are specified going counter-clockwise
-					indices: vec![
+					indices: &[
 						[0, 1, 4],
 						[1, 2, 4],
 						[2, 3, 4],
 					]
 				});
 				frame.draw_colored(ColoredShape {
-					vertices: vec![
+					vertices: &[
 						ColorVertex { position: GpuPos { x: -0.5, y: 0.5 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: -0.75, y: -0.5 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
 						ColorVertex { position: GpuPos { x: -0.25, y: -0.5 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
 					],
-					indices: vec![[0, 1, 2]]
+					indices: &[[0, 1, 2]]
 				});
 			},
 			_ => {}
