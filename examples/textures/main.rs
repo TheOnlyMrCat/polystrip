@@ -13,10 +13,10 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut r = Renderer::new(&window, (size.width, size.height));
+	let mut renderer = Renderer::new(&window, (size.width, size.height));
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = Texture::new_from_rgba(&mut r, &*sandstone_img, sandstone_img.dimensions());
+	let sandstone = Texture::new_from_rgba(&mut renderer, &*sandstone_img, sandstone_img.dimensions());
 
 	el.run(move |event, _, control_flow| {
 		match event {
@@ -25,24 +25,23 @@ fn main() {
 			},
 			Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
 				let window_size = new_size.to_logical(window.scale_factor());
-				r.resize((window_size.width, window_size.height));
+				renderer.resize((window_size.width, window_size.height));
 			},
 			Event::MainEventsCleared => {
-				let mut frame = Frame::new();
-				frame.set_clear(Color { r: 128, g: 128, b: 128, a: 255 });
-				frame.add_textured(TexturedShape {
+				let mut frame = renderer.get_next_frame();
+				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
+				frame.draw_textured(TexturedShape {
 					vertices: vec![
-						TextureVertex { position: r.pixel(50, 50), tex_coords: GpuPos { x: 0.0, y: 0.0 } },
-						TextureVertex { position: r.pixel(50, 150), tex_coords: GpuPos { x: 0.0, y: 1.0 } },
-						TextureVertex { position: r.pixel(150, 150), tex_coords: GpuPos { x: 1.0, y: 1.0 } },
-						TextureVertex { position: r.pixel(150, 50), tex_coords: GpuPos { x: 1.0, y: 0.0 } },
+						TextureVertex { position: frame.pixel(50, 50), tex_coords: GpuPos { x: 0.0, y: 0.0 } },
+						TextureVertex { position: frame.pixel(50, 150), tex_coords: GpuPos { x: 0.0, y: 1.0 } },
+						TextureVertex { position: frame.pixel(150, 150), tex_coords: GpuPos { x: 1.0, y: 1.0 } },
+						TextureVertex { position: frame.pixel(150, 50), tex_coords: GpuPos { x: 1.0, y: 0.0 } },
 					],
 					indices: vec![
 						[0, 1, 3],
 						[1, 2, 3],
 					]
 				}, &sandstone);
-				r.render_frame(frame);
 			},
 			_ => {}
 		}

@@ -107,12 +107,8 @@ pub struct TexturedShape {
 /// A set of [`ColoredShape`](struct.ColoredShape)s or [`TexturedShape`](struct.TexturedShape)s.
 #[derive(Debug)]
 pub enum ShapeSet<'a> {
-	/// One [`ColoredShape`](struct.ColoredShape).
-	SingleColored(ColoredShape),
-	/// One [`TexturedShape`](struct.ColoredShape), with a reference to the texture to draw to it.
-	SingleTextured(TexturedShape, &'a Texture),
 	/// Multiple [`ColoredShape`](struct.ColoredShape)s.
-	MultiColored(Vec<ColoredShape>),
-	/// One [`TexturedShape`](struct.ColoredShape), with a reference to the texture to draw to them.
-	MultiTextured(Vec<TexturedShape>, &'a Texture),
+	Colored(Vec<ColoredShape>),
+	/// Multiple [`TexturedShape`](struct.TexturedShape)s, with a reference to the texture to draw to them.
+	Textured(Vec<TexturedShape>, &'a Texture),
 }

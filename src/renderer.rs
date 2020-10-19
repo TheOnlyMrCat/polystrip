@@ -238,133 +238,14 @@ impl Renderer {
 			width: size.0, height: size.1,
 		}
 	}
-	
-	/// Renders a frame. 
-	pub fn render_frame(&mut self, frame: Frame) {
-		//MARK: Render frame
-		let swap_chain_frame = self.swap_chain.get_current_frame().expect("Couldn't get the next frame").output;
-		
-		let mut is_first_set = true;
-		for set in &frame.shape_sets {
-			let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-				label: Some("polystrip_render_encoder"),
-			});
-	
-			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				color_attachments: &[
-					wgpu::RenderPassColorAttachmentDescriptor {
-						attachment: &swap_chain_frame.view,
-						resolve_target: None,
-						ops: wgpu::Operations {
-							load: 
-								if is_first_set {
-									match frame.clear_color {
-										Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
-											//TODO: Convert srgb properly
-											r: f64::from(c.r) / 255.0,
-											g: f64::from(c.g) / 255.0,
-											b: f64::from(c.b) / 255.0,
-											a: 1.0,
-										}),
-										None => wgpu::LoadOp::Load,
-									}
-								} else {
-									wgpu::LoadOp::Load
-								},
-							store: true,
-						}
-					}
-				],
-				depth_stencil_attachment: None,
-			});
-			is_first_set = false;
 
-			// * This match block is expected to set the render pipeline and write the vertex and index buffers
-			let index_count;
-			match &set {
-				ShapeSet::SingleColored(shape) => {
-					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
-					let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
-					index_count = index_data.len();
-					if index_count % 2 == 1 {
-						index_data.push(0); // Align the data to u32 for the upcoming buffer write
-					}
-					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
-
-					render_pass.set_pipeline(&self.colour_render_pipeline);
-				},
-				ShapeSet::SingleTextured(shape, texture) => {
-					// ! Duplicated code from above branch
-					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
-					let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
-					index_count = index_data.len();
-					if index_count % 2 == 1 {
-						index_data.push(0); // Align the data to u32 for the upcoming buffer write
-					}
-					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
-					// ! End of duplicated code
-
-					render_pass.set_pipeline(&self.texture_render_pipeline);
-					render_pass.set_bind_group(0, &texture.bind_group, &[]);
-				},
-				ShapeSet::MultiColored(shapes) => {
-					//TODO: Merge these two iterations into one which produces two vectors?
-					let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
-					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
-					let mut index_offset: u16 = 0;
-					let mut index_data = shapes.iter().flat_map(|shape| {
-						let indices = shape.indices.iter()
-							.flatten()
-							.map(|&index| index + index_offset)
-							.collect::<Vec<_>>();
-						index_offset += u16::try_from(shape.vertices.len()).unwrap();
-						indices
-					}).collect::<Vec<u16>>();
-					index_count = index_data.len();
-					if index_count % 2 == 1 {
-						index_data.push(0); // Align the data to u32 for the upcoming buffer write
-					}
-					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
-
-					render_pass.set_pipeline(&self.colour_render_pipeline);
-				},
-				ShapeSet::MultiTextured(shapes, texture) => {
-					// ! Duplicated code from above branch
-					let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
-					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
-					let mut index_offset: u16 = 0;
-					let mut index_data = shapes.iter().flat_map(|shape| {
-						let indices = shape.indices.iter()
-							.flatten()
-							.map(|&index| index + index_offset)
-							.collect::<Vec<_>>();
-						index_offset += u16::try_from(shape.vertices.len()).unwrap();
-						indices
-					}).collect::<Vec<u16>>();
-					index_count = index_data.len();
-					if index_count % 2 == 1 {
-						index_data.push(0); // Align the data to u32 for the upcoming buffer write
-					}
-					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&index_data));
-					// ! End of duplicated code
-
-					render_pass.set_pipeline(&self.texture_render_pipeline);
-					render_pass.set_bind_group(0, &texture.bind_group, &[]);
-				}
-			};
-	
-			render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-			render_pass.set_index_buffer(self.index_buffer.slice(..));
-			render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
-
-			std::mem::drop(render_pass);
-	
-			self.queue.submit(std::iter::once(encoder.finish()));
+	pub fn get_next_frame<'a>(&'a mut self) -> Frame<'a> {
+		Frame {
+			swap_chain_frame: self.swap_chain.get_current_frame().unwrap(),
+			renderer: self,
 		}
 	}
-
+	
 	/// This function should be called in your event loop whenever the window gets resized.
 	/// 
 	/// # Arguments
@@ -388,54 +269,209 @@ impl Renderer {
 /// The data necessary for a frame to be rendered. Stores [`ShapeSet`](../vertex/enum.ShapeSet.html)s and gets passed to
 /// [`Renderer`](struct.Renderer.html) to be rendered.
 pub struct Frame<'a> {
-	shape_sets: Vec<ShapeSet<'a>>,
-	clear_color: Option<Color>,
+	renderer: &'a mut Renderer,
+	swap_chain_frame: wgpu::SwapChainFrame,
 }
 
 //MARK: Frame API
 impl<'a> Frame<'a> {
-	/// Creates a new frame with no shape sets and no clear colour.
-	pub fn new() -> Frame<'a> {
-		Frame {
-			shape_sets: Vec::new(),
-			clear_color: None,
-		}
-	}
-
 	/// Queues the passed [`ColoredShape`](../vertex/struct.ColoredShape.html) for rendering. Shapes are rendered in the order
 	/// they are queued in.
 	pub fn add_colored(&mut self, shape: ColoredShape) {
-		self.shape_sets.push(ShapeSet::SingleColored(shape));
+		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("polystrip_render_encoder"),
+		});
+
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			color_attachments: &[
+				wgpu::RenderPassColorAttachmentDescriptor {
+					attachment: &self.swap_chain_frame.output.view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Load,
+						store: true,
+					}
+				}
+			],
+			depth_stencil_attachment: None,
+		});
+
+		self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
+		let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+		let index_count = index_data.len();
+		if index_count % 2 == 1 {
+			index_data.push(0); // Align the data to u32 for the upcoming buffer write
+		}
+		self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+		render_pass.set_pipeline(&self.renderer.colour_render_pipeline);
+		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
+		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
+		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+
+		std::mem::drop(render_pass);
+
+		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
 	/// Queues the passed [`TexturedShape`](../vertex/struct.TexturedShape.html) for rendering. The shape will be rendered with
 	/// the passed texture. Shapes are rendered in the order they are queued in.
-	pub fn add_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
-		self.shape_sets.push(ShapeSet::SingleTextured(shape, texture));
+	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
+		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("polystrip_render_encoder"),
+		});
+
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			color_attachments: &[
+				wgpu::RenderPassColorAttachmentDescriptor {
+					attachment: &self.swap_chain_frame.output.view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Load,
+						store: true,
+					}
+				}
+			],
+			depth_stencil_attachment: None,
+		});
+
+		self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
+		let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+		let index_count = index_data.len();
+		if index_count % 2 == 1 {
+			index_data.push(0); // Align the data to u32 for the upcoming buffer write
+		}
+		self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+		render_pass.set_pipeline(&self.renderer.texture_render_pipeline);
+		render_pass.set_bind_group(0, &texture.bind_group, &[]);
+		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
+		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
+		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+
+		std::mem::drop(render_pass);
+
+		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
 	/// Queues the passed [`ShapeSet`](../vertex/enum.ShapeSet.html) for rendering. Shapes and shape sets are rendered in the
 	/// order they are queued in.
-	pub fn add_shape_set(&mut self, set: ShapeSet<'a>) {
-		self.shape_sets.push(set);
+	pub fn draw_shape_set(&mut self, set: ShapeSet<'a>) {
+		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("polystrip_render_encoder"),
+		});
+
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			color_attachments: &[
+				wgpu::RenderPassColorAttachmentDescriptor {
+					attachment: &self.swap_chain_frame.output.view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Load,
+						store: true,
+					}
+				}
+			],
+			depth_stencil_attachment: None,
+		});
+
+		let index_count;
+		match set {
+			ShapeSet::Colored(shapes) => {
+				//TODO: Merge these two iterations into one which produces two vectors?
+				let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
+				self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+
+				let mut index_offset: u16 = 0;
+				let mut index_data = shapes.iter().flat_map(|shape| {
+					let indices = shape.indices.iter()
+						.flatten()
+						.map(|&index| index + index_offset)
+						.collect::<Vec<_>>();
+					index_offset += u16::try_from(shape.vertices.len()).unwrap();
+					indices
+				}).collect::<Vec<u16>>();
+				index_count = index_data.len();
+				if index_count % 2 == 1 {
+					index_data.push(0); // Align the data to u32 for the upcoming buffer write
+				}
+				self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
+
+				render_pass.set_pipeline(&self.renderer.colour_render_pipeline);
+			},
+			ShapeSet::Textured(shapes, texture) => {
+				// ! Duplicated code from above branch
+				let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
+				self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+
+				let mut index_offset: u16 = 0;
+				let mut index_data = shapes.iter().flat_map(|shape| {
+					let indices = shape.indices.iter()
+						.flatten()
+						.map(|&index| index + index_offset)
+						.collect::<Vec<_>>();
+					index_offset += u16::try_from(shape.vertices.len()).unwrap();
+					indices
+				}).collect::<Vec<u16>>();
+				index_count = index_data.len();
+				if index_count % 2 == 1 {
+					index_data.push(0); // Align the data to u32 for the upcoming buffer write
+				}
+				self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
+				// ! End of duplicated code
+
+				render_pass.set_pipeline(&self.renderer.texture_render_pipeline);
+				render_pass.set_bind_group(0, &texture.bind_group, &[]);
+			}
+		}
+
+		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
+		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
+		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+
+		std::mem::drop(render_pass);
+
+		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
 	/// Sets the clear color of the frame. The frame is cleared before any shapes are drawn.
 	/// 
 	/// Any shapes drawn before calling this method will still be drawn.
-	pub fn set_clear(&mut self, color: Color) {
-		self.clear_color = Some(color);
-	}
+	pub fn clear(&mut self, color: Color) {
+		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("polystrip_render_encoder"),
+		});
 
-	/// Resets the clear color of the frame, meaning the previous frame is underlayed beneath this one. This is the default.
-	pub fn reset_clear(&mut self) {
-		self.clear_color = None;
-	}
+		let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			color_attachments: &[
+				wgpu::RenderPassColorAttachmentDescriptor {
+					attachment: &self.swap_chain_frame.output.view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Clear(wgpu::Color {
+							//TODO: Convert sRGB properly
+							r: color.r as f64 / 255.0,
+							g: color.g as f64 / 255.0,
+							b: color.b as f64 / 255.0,
+							a: color.a as f64 / 255.0,
+						}),
+						store: true,
+					}
+				}
+			],
+			depth_stencil_attachment: None,
+		});
 
-	/// Reserve space for at least `additional` more shape sets to be drawn. This increases the capacity of the internal `Vec`
-	/// used to store shapes before rendering. See [`Vec`'s documentation](https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.reserve)
-	/// for more details.
-	pub fn reserve(&mut self, additional: usize) {
-		self.shape_sets.reserve(additional);
+		std::mem::drop(render_pass);
+
+		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+	}
+}
+
+impl<'a> std::ops::Deref for Frame<'a> {
+	type Target = Renderer;
+
+	fn deref(&self) -> &Renderer {
+		&self.renderer
 	}
 }
