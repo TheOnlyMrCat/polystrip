@@ -1,5 +1,6 @@
 //! Images to be rendered onto shapes
 
+use crate::data::GpuPos;
 use crate::renderer::Renderer;
 
 /// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html).
@@ -11,6 +12,8 @@ pub struct Texture {
 	view: wgpu::TextureView,
 	sampler: wgpu::Sampler,
 	pub(crate) bind_group: wgpu::BindGroup,
+	width: u32,
+	height: u32,
 }
 
 impl Texture {
@@ -81,7 +84,21 @@ impl Texture {
 		});
 
 		Texture {
-			texture, view, sampler, bind_group
+			texture, view, sampler, bind_group,
+			width: size.0, height: size.1,
+		}
+	}
+
+	/// Get the dimensions of this texture, in (width, height) order.
+	pub fn dimensions(&self) -> (u32, u32) {
+		(self.width, self.height)
+	}
+
+	/// Converts pixel coordinates to Gpu coordinates
+	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
+		GpuPos {
+			x: x as f32 / self.width as f32,
+			y: y as f32 / self.height as f32,
 		}
 	}
 }
