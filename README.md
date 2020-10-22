@@ -1,5 +1,6 @@
 # Polystrip
 
+[![Build Status](https://img.shields.io/travis/TheOnlyMrCat/polystrip)](https://travis-ci.org/github/TheOnlyMrCat/polystrip)
 [![Crates.io](https://img.shields.io/crates/v/polystrip)](https://crates.io/crates/polystrip)
 
 Polystrip is a 2D hardware-accelerated rendering library, primarily targeted at game development, but which could
