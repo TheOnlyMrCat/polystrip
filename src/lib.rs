@@ -23,7 +23,7 @@
 //!             renderer.resize((window_size.width, window_size.height));
 //!         },
 //!         Event::MainEventsCleared => {
-//!             let mut frame = renderer.begin_frame();
+//!             let mut frame = renderer.get_next_frame();
 //!             // Render in here
 //!         },
 //!         _ => {}
