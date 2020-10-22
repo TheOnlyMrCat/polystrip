@@ -463,6 +463,8 @@ impl<'a> Frame<'a> {
 	}
 
 	/// Clears the entire frame with the specified color, setting every pixel to its value.
+	/// 
+	/// Note: The sRGB conversion in this function uses a gamma of 2.0
 	pub fn clear(&mut self, color: Color) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
@@ -475,10 +477,9 @@ impl<'a> Frame<'a> {
 					resolve_target: None,
 					ops: wgpu::Operations {
 						load: wgpu::LoadOp::Clear(wgpu::Color {
-							//TODO: Convert sRGB properly
-							r: color.r as f64 / 255.0,
-							g: color.g as f64 / 255.0,
-							b: color.b as f64 / 255.0,
+							r: (color.r as f64).powi(2) / 65_025.0,
+							g: (color.g as f64).powi(2) / 65_025.0,
+							b: (color.b as f64).powi(2) / 65_025.0,
 							a: color.a as f64 / 255.0,
 						}),
 						store: true,
