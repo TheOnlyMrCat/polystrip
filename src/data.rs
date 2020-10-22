@@ -23,6 +23,7 @@ pub struct Color {
 	pub a: u8,
 }
 
+/// A rectangle in pixel coordinates. (x, y) is the top-left corner; (w, h) expanding rightward and downward.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub struct Rect {
 	pub x: i32,

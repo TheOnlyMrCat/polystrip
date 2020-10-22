@@ -10,11 +10,33 @@ use crate::vertex::*;
 
 const QUAD_INCICES: [[u16; 3]; 2] = [[0, 1, 3], [1, 2, 3]];
 
+/// This trait contains numerous functions to make rendering to a [`Frame`](../renderer/struct.Frame.html) easier.
 pub trait FrameGeometryExt<'a> {
+	/// Draw and fill a `Rect` with the specified `Color`.
 	fn draw_rect(&mut self, bounds: Rect, color: Color);
+
+	/// Draw a rectangular texture at a 1:1 scale at the specified coordinates.
 	fn draw_texture(&mut self, x: i32, y: i32, texture: &'a Texture);
+	
+	/// Draw a rectangular texture to fit the specified `Rect`
 	fn draw_texture_scaled(&mut self, destination: Rect, texture: &'a Texture);
+
+	/// Draw a rectangular section of a texture at a 1:1 scale at the specified coordinates.
+	/// 
+	/// # Arguments
+	/// * `source`: The section of the texture to draw. Sampling beyond the bounds of the texture will
+	///             result in the texture being repeated
+	/// * `x`, `y`: The coordinates of the top-left corner of the destination.
+	/// * `texture`: A reference to the texture to be drawn
 	fn draw_texture_cropped(&mut self, source: Rect, x: i32, y: i32, texture: &'a Texture);
+
+	/// Draw a rectangular section of a texture to fit the specified destination `Rect`.
+	/// 
+	/// # Arguments
+	/// * `source`: The section of the texture to draw. Sampling beyond the bounds of the texture will
+	///             result in the texture being repeated
+	/// * `destination`: The position and size at which to draw the texture
+	/// * `texture`: The texture to be drawn
 	fn draw_texture_cropped_scaled(&mut self, source: Rect, destination: Rect, texture: &'a Texture);
 }
 

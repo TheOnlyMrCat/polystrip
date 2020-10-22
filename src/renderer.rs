@@ -239,6 +239,8 @@ impl Renderer {
 		}
 	}
 
+	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
+	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Dever<Target = Renderer>`.
 	pub fn get_next_frame(&mut self) -> Frame<'_> {
 		Frame {
 			swap_chain_frame: self.swap_chain.get_current_frame().unwrap(),
@@ -246,7 +248,9 @@ impl Renderer {
 		}
 	}
 	
-	/// This function should be called in your event loop whenever the window gets resized.
+	/// Resizes the internal swapchain
+	/// 
+	/// For correctness, call this method in your window's event loop whenever the window gets resized
 	/// 
 	/// # Arguments
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
@@ -266,8 +270,12 @@ impl Renderer {
 	}
 }
 
-/// The data necessary for a frame to be rendered. Stores [`ShapeSet`](../vertex/enum.ShapeSet.html)s and gets passed to
-/// [`Renderer`](struct.Renderer.html) to be rendered.
+/// A frame to be drawn to. The frame gets presented on drop.
+/// 
+/// Since a `Frame` borrows the [`Renderer`](struct.Renderer.html) it was created for, any functions which would normally
+/// be called on a `&Renderer` must be called on the `Frame`, which implements `Deref<Target = Renderer>`.
+/// 
+/// More methods are implemented in the [`FrameGeometryExt`](../geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
 	swap_chain_frame: wgpu::SwapChainFrame,
@@ -275,8 +283,8 @@ pub struct Frame<'a> {
 
 //MARK: Frame API
 impl<'a> Frame<'a> {
-	/// Queues the passed [`ColoredShape`](../vertex/struct.ColoredShape.html) for rendering. Shapes are rendered in the order
-	/// they are queued in.
+	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
+	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
@@ -314,8 +322,12 @@ impl<'a> Frame<'a> {
 		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
-	/// Queues the passed [`TexturedShape`](../vertex/struct.TexturedShape.html) for rendering. The shape will be rendered with
-	/// the passed texture. Shapes are rendered in the order they are queued in.
+	/// Draws a [`TexturedShape`](../vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
+	/// before it.
+	/// 
+	/// # Arguments
+	/// * `shape`: The `TexturedShape` to be rendered. 
+	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
 	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
@@ -354,8 +366,8 @@ impl<'a> Frame<'a> {
 		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
-	/// Queues the passed [`ShapeSet`](../vertex/enum.ShapeSet.html) for rendering. Shapes and shape sets are rendered in the
-	/// order they are queued in.
+	/// Draws a [`ShapeSet`](../vertex/enum.ShapeSet.html). All shapes in the set will be drawn in front of shapes drawn before
+	/// the set. The render order of shapes in the set is unspecified.
 	pub fn draw_shape_set(&mut self, set: ShapeSet<'a>) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
@@ -434,9 +446,7 @@ impl<'a> Frame<'a> {
 		self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
-	/// Sets the clear color of the frame. The frame is cleared before any shapes are drawn.
-	/// 
-	/// Any shapes drawn before calling this method will still be drawn.
+	/// Clears the entire frame with the specified color, setting every pixel to its value.
 	pub fn clear(&mut self, color: Color) {
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
