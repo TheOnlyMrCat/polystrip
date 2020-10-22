@@ -94,6 +94,14 @@ impl Texture {
 		(self.width, self.height)
 	}
 
+	pub fn width(&self) -> u32 {
+		self.width
+	}
+
+	pub fn height(&self) -> u32 {
+		self.height
+	}
+
 	/// Converts pixel coordinates to Gpu coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
 		GpuPos {

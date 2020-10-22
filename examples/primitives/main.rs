@@ -29,8 +29,8 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = renderer.get_next_frame();
 				frame.draw_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color { r: 255, g: 0, b: 0, a: 255 });
-				frame.draw_texture(Rect { x: 70, y: 200, w: 80, h: 120 }, &sandstone);
-				frame.draw_texture_cropped(Rect { x: 7, w: 7, y: 0, h: 16 }, Rect { x: 160, y: 200, w: 70, h: 160 }, &sandstone);
+				frame.draw_texture_scaled(Rect { x: 70, y: 200, w: 80, h: 120 }, &sandstone);
+				frame.draw_texture_cropped_scaled(Rect { x: 7, y: 0, w: 7, h: 16 }, Rect { x: 160, y: 200, w: 70, h: 160 }, &sandstone);
 			},
 			_ => {}
 		}
