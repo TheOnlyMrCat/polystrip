@@ -43,9 +43,6 @@ pub struct Renderer {
 
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
-
-	width: u32,
-	height: u32,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -250,8 +247,6 @@ impl Renderer {
 			surface, device, queue, sc_desc, swap_chain, colour_render_pipeline, texture_render_pipeline,
 			texture_bind_group_layout,
 			vertex_buffer, index_buffer,
-
-			width: size.0, height: size.1,
 		}
 	}
 
@@ -280,8 +275,8 @@ impl Renderer {
 	/// Converts pixel coordinates to Gpu coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
 		GpuPos {
-			x: (x * 2) as f32 / self.width as f32 - 1.0,
-			y: -((y * 2) as f32 / self.height as f32 - 1.0),
+			x: (x * 2) as f32 / self.sc_desc.width as f32 - 1.0,
+			y: -((y * 2) as f32 / self.sc_desc.height as f32 - 1.0),
 		}
 	}
 }
