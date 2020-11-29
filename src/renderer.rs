@@ -32,8 +32,8 @@ use raw_window_handle::HasRawWindowHandle;
 /// ```
 pub struct Renderer {
 	surface: wgpu::Surface,
-	pub(crate) device: wgpu::Device, //TODO: Encapsulation?
-	pub(crate) queue: wgpu::Queue,
+	device: wgpu::Device,
+	queue: wgpu::Queue,
 	sc_desc: wgpu::SwapChainDescriptor,
 	swap_chain: wgpu::SwapChain,
 	colour_render_pipeline: wgpu::RenderPipeline,
@@ -251,7 +251,7 @@ impl Renderer {
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
-	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Dever<Target = Renderer>`.
+	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
 	pub fn get_next_frame(&mut self) -> Frame<'_> {
 		Frame {
 			swap_chain_frame: self.swap_chain.get_current_frame().unwrap(),
@@ -270,6 +270,23 @@ impl Renderer {
 		self.sc_desc.width = size.0;
 		self.sc_desc.height = size.1;
 		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+	}
+
+	/// Gets the underlying gpu `Device` and `Queue` used internally to render.
+	/// 
+	/// The device and queue are requested with no special features, the default limits and shader validation enabled.
+	pub fn device(&self) -> (&wgpu::Device, &wgpu::Queue) {
+		(&self.device, &self.queue)
+	}
+
+	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
+	pub fn width(&self) -> u32 {
+		self.sc_desc.width
+	}
+
+	/// Gets the height of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
+	pub fn height(&self) -> u32 {
+		self.sc_desc.height
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
@@ -487,6 +504,11 @@ impl<'a> Frame<'a> {
 		std::mem::drop(render_pass);
 
 		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+	}
+
+	/// Gets the internal `SwapChainFrame` for use in custom rendering.
+	pub fn swap_chain_frame(&self) -> &wgpu::SwapChainFrame {
+		&self.swap_chain_frame
 	}
 }
 

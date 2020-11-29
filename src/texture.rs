@@ -30,8 +30,10 @@ impl Texture {
 			height: size.1,
 			depth: 1,
 		};
+		
+		let (device, queue) = renderer.device();
 
-		let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+		let texture = device.create_texture(&wgpu::TextureDescriptor {
 			label: None,
 			size: extent,
 			mip_level_count: 1,
@@ -41,7 +43,7 @@ impl Texture {
 			usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
 		});
 
-		renderer.queue.write_texture(
+		queue.write_texture(
 			wgpu::TextureCopyView {
 				texture: &texture,
 				mip_level: 0,
@@ -57,7 +59,7 @@ impl Texture {
 		);
 
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-		let sampler = renderer.device.create_sampler(&wgpu::SamplerDescriptor {
+		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
 			label: None,
 			address_mode_u: wgpu::AddressMode::Repeat,
 			address_mode_v: wgpu::AddressMode::Repeat,
@@ -68,7 +70,7 @@ impl Texture {
 			..Default::default()
 		});
 
-		let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+		let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
 			label: None,
 			layout: &renderer.texture_bind_group_layout,
 			entries: &[
