@@ -13,6 +13,12 @@ pub struct GpuPos {
 	pub y: f32,
 }
 
+impl GpuPos {
+	pub fn new(x: f32, y: f32) -> GpuPos {
+		GpuPos { x, y }
+	}
+}
+
 /// A color in the sRGB color space, with red, green, blue, and alpha components all represented with `u8`s
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
@@ -23,6 +29,12 @@ pub struct Color {
 	pub a: u8,
 }
 
+impl Color {
+	pub fn new(r: u8, g: u8, b: u8, a: u8) -> Color {
+		Color { r, g, b, a }
+	}
+}
+
 /// A rectangle in pixel coordinates. (x, y) is the top-left corner; (w, h) expanding rightward and downward.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub struct Rect {
@@ -30,4 +42,10 @@ pub struct Rect {
 	pub y: i32,
 	pub w: i32,
 	pub h: i32,
+}
+
+impl Rect {
+	pub fn new(x: i32, y: i32, w: i32, h: i32) -> Rect {
+		Rect { x, y, w, h }
+	}
 }
