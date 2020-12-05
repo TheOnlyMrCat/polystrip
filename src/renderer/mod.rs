@@ -1,11 +1,45 @@
 //! The core rendering context structures
 
+pub(crate) mod backend;
+
 use std::convert::TryFrom;
 
 use crate::data::{GpuPos, Color};
 use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
+
+use gfx_hal::prelude::*;
+
+#[macro_use]
+mod alignment {
+	#[repr(C)] // guarantee 'bytes' comes after '_align'
+    pub struct AlignedAs<Align, Bytes: ?Sized> {
+        pub _align: [Align; 0],
+        pub bytes: Bytes,
+    }
+
+    macro_rules! include_bytes_align_as {
+        ($align_ty:ty, $path:literal) => {
+            {  // const block expression to encapsulate the static
+                use $crate::renderer::alignment::AlignedAs;
+                
+                // this assignment is made possible by CoerceUnsized
+                static ALIGNED: &AlignedAs::<$align_ty, [u8]> = &AlignedAs {
+                    _align: [],
+                    bytes: *include_bytes!($path),
+                };
+    
+                &ALIGNED.bytes
+            }
+        };
+    }
+}
+
+static COLOURED_VERT_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/coloured.vert.spv");
+static COLOURED_FRAG_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/coloured.frag.spv");
+static TEXTURED_VERT_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/textured.vert.spv");
+static TEXTURED_FRAG_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/textured.frag.spv");
 
 /// An accelerated 2D renderer.
 /// 
@@ -31,18 +65,16 @@ use raw_window_handle::HasRawWindowHandle;
 /// });
 /// ```
 pub struct Renderer {
-	surface: wgpu::Surface,
-	device: wgpu::Device,
-	queue: wgpu::Queue,
-	sc_desc: wgpu::SwapChainDescriptor,
-	swap_chain: wgpu::SwapChain,
-	colour_render_pipeline: wgpu::RenderPipeline,
-	texture_render_pipeline: wgpu::RenderPipeline,
+	surface: backend::Surface,
+	gpu: gfx_hal::adapter::Gpu<backend::Backend>,
+	swapchain_config: gfx_hal::window::SwapchainConfig,
+	colour_graphics_pipeline: backend::GraphicsPipeline,
+	texture_graphics_pipeline: backend::GraphicsPipeline,
 
-	pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
+	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
 
-	vertex_buffer: wgpu::Buffer,
-	index_buffer: wgpu::Buffer,
+	vertex_buffer: backend::Buffer,
+	index_buffer: backend::Buffer,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -65,187 +97,254 @@ impl Renderer {
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub async fn new_async(window: &impl HasRawWindowHandle, size: (u32, u32)) -> Renderer {
+	pub async fn new_async(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
 		//MARK: New Renderer
-		let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-		let surface = unsafe { instance.create_surface(window) };
 
-		let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-			power_preference: wgpu::PowerPreference::Default,
-			compatible_surface: Some(&surface),
-		}).await.unwrap();
+		//Note: Keep up-to-date.         X0.X4.X0_XX
+		const POLYSTRIP_VERSION: u32 = 0x00_04_00_00;
+		let instance = backend::Instance::create("polystrip", POLYSTRIP_VERSION).unwrap();
+		let mut surface = unsafe { instance.create_surface(window).unwrap() };
 
-		let (device, queue) = adapter.request_device(
-			&wgpu::DeviceDescriptor {
-				features: wgpu::Features::empty(),
-				limits: wgpu::Limits::default(), //TODO
-				shader_validation: true,
-			},
-			None, // Trace path
-		).await.unwrap();
-		
-		let sc_desc = wgpu::SwapChainDescriptor {
-			usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-			format: wgpu::TextureFormat::Bgra8UnormSrgb,
-			width: size.0,
-			height: size.1,
-			present_mode: wgpu::PresentMode::Fifo,
+		let adapter = instance.enumerate_adapters().into_iter()
+			.find(|adapter| {
+				adapter.queue_families.iter()
+					.any(|family| family.queue_type().supports_graphics())
+			})
+			.unwrap();
+
+		let gpu = unsafe {
+			adapter.physical_device.open(
+				&[(
+					adapter.queue_families.iter()
+						.find(|family| family.queue_type().supports_graphics()).unwrap(),
+					&[0.9]
+				)],
+				gfx_hal::Features::CORE_MASK
+			).unwrap()		
 		};
-		let swap_chain = device.create_swap_chain(&surface, &sc_desc);
-
-		let texture_bind_group_layout = device.create_bind_group_layout(
-			&wgpu::BindGroupLayoutDescriptor {
-				entries: &[
-					wgpu::BindGroupLayoutEntry {
-						binding: 0,
-						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::SampledTexture {
-							multisampled: false,
-							dimension: wgpu::TextureViewDimension::D2,
-							component_type: wgpu::TextureComponentType::Uint,
-						},
-						count: None,
-					},
-					wgpu::BindGroupLayoutEntry {
-						binding: 1,
-						visibility: wgpu::ShaderStage::FRAGMENT,
-						ty: wgpu::BindingType::Sampler {
-							comparison: false,
-						},
-						count: None,
-					},
-				],
-				label: Some("polystrip_texture_bind_group_layout"),
-			}
-		);
 		
-		let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: Some("polystrip_vertex_buffer"),
-			size: (1024 * std::mem::size_of::<TextureVertex>()) as wgpu::BufferAddress, //TODO: Figure out how big this should be
-			usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::VERTEX,
-			mapped_at_creation: false,
-		});
+		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
+		unsafe { surface.configure_swapchain(&gpu.device, swapchain_config.clone()).unwrap(); }
+		
+		let vertex_buffer = unsafe { gpu.device.create_buffer(
+			1024 * std::mem::size_of::<TextureVertex>() as u64,
+			gfx_hal::buffer::Usage::TRANSFER_DST | gfx_hal::buffer::Usage::VERTEX
+		).unwrap() };
 
-		let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-			label: Some("polystrip_index_buffer"),
-			size: (1024 * std::mem::size_of::<u16>()) as wgpu::BufferAddress,
-			usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::INDEX,
-			mapped_at_creation: false,
-		});
+		let index_buffer = unsafe { gpu.device.create_buffer(
+			1024 * std::mem::size_of::<u16>() as u64,
+			gfx_hal::buffer::Usage::TRANSFER_DST | gfx_hal::buffer::Usage::INDEX
+		).unwrap() };
 
-		let colour_vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/coloured.vert.spv"));
-		let colour_fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/coloured.frag.spv"));
+		let main_pass = unsafe { gpu.device.create_render_pass(
+			&[gfx_hal::pass::Attachment {
+				format: Some(swapchain_config.format),
+				samples: 1,
+				ops: gfx_hal::pass::AttachmentOps::DONT_CARE, //TODO: Potential customisation
+				stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
+				layouts: gfx_hal::image::Layout::General..gfx_hal::image::Layout::Present,
+			}],
+			&[gfx_hal::pass::SubpassDesc {
+				colors: &[(0, gfx_hal::image::Layout::General)],
+				depth_stencil: None,
+				inputs: &[],
+				resolves: &[],
+				preserves: &[],
+			}],
+			&[]
+		)}.unwrap();
 
-		let colour_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("polystrip_render_pipeline_layout_color"),
-			bind_group_layouts: &[],
-			push_constant_ranges: &[],
-		});
+		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
+		let colour_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV)) }.unwrap();
 
-		let colour_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("polystrip_render_pipeline_color"),
-			layout: Some(&colour_render_pipeline_layout),
-			vertex_stage: wgpu::ProgrammableStageDescriptor {
-				module: &colour_vs_module,
-				entry_point: "main",
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
+		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
+				buffers: &[gfx_hal::pso::VertexBufferDesc {
+					binding: 0,
+					stride: std::mem::size_of::<ColorVertex>() as u32,
+					rate: gfx_hal::pso::VertexInputRate::Vertex,
+				}],
+				attributes: ColorVertex::desc(),
+				input_assembler: gfx_hal::pso::InputAssemblerDesc {
+					primitive: gfx_hal::pso::Primitive::TriangleList,
+					with_adjacency: false,
+					restart_index: None,
+				},
+				vertex: gfx_hal::pso::EntryPoint {
+					entry: "main",
+					module: &colour_vs_module,
+					specialization: gfx_hal::pso::Specialization {
+						constants: std::borrow::Cow::Borrowed(&[]),
+						data: std::borrow::Cow::Borrowed(&[]),
+					}
+				},
+				tessellation: None,
+				geometry: None,
 			},
-			fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+			rasterizer: gfx_hal::pso::Rasterizer {
+				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
+				cull_face: gfx_hal::pso::Face::BACK,
+				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
+				depth_clamping: false,
+				depth_bias: None,
+				conservative: false,
+				line_width: gfx_hal::pso::State::Dynamic,
+			},
+			fragment: Some(gfx_hal::pso::EntryPoint {
+				entry: "main",
 				module: &colour_fs_module,
-				entry_point: "main",
+				specialization: gfx_hal::pso::Specialization {
+					constants: std::borrow::Cow::Borrowed(&[]),
+					data: std::borrow::Cow::Borrowed(&[]),
+				}
 			}),
-			rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: wgpu::CullMode::Back,
-				depth_bias: 0,
-				depth_bias_slope_scale: 0.0,
-				depth_bias_clamp: 0.0,
-				clamp_depth: false,
-			}),
-			primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-			color_states: &[
-				wgpu::ColorStateDescriptor {
-					format: sc_desc.format,
-					color_blend: wgpu::BlendDescriptor {
-						src_factor: wgpu::BlendFactor::SrcAlpha,
-						dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-						operation: wgpu::BlendOperation::Add,
+			blender: gfx_hal::pso::BlendDesc {
+				logic_op: None,
+				targets: vec![gfx_hal::pso::ColorBlendDesc {
+					mask: gfx_hal::pso::ColorMask::ALL,
+					blend: Some(gfx_hal::pso::BlendState {
+						color: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						},
+						alpha: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						}
+					})
+				}]
+			},
+			depth_stencil: gfx_hal::pso::DepthStencilDesc {
+				depth: None,
+				depth_bounds: false,
+				stencil: None,
+			},
+			multisampling: None,
+			baked_states: gfx_hal::pso::BakedStates {
+				viewport: None,
+				scissor: None,
+				blend_color: None,
+				depth_bounds: None,
+			},
+			layout: &colour_graphics_pipeline_layout,
+			subpass: gfx_hal::pass::Subpass {
+				index: 0,
+				main_pass: &main_pass,
+			},
+			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
+			parent: gfx_hal::pso::BasePipeline::None,
+		}, None) }.unwrap();
+
+		let texture_descriptor_set_layout = unsafe { gpu.device.create_descriptor_set_layout(
+			&[
+				gfx_hal::pso::DescriptorSetLayoutBinding {
+					binding: 0,
+					ty: gfx_hal::pso::DescriptorType::Image {
+						ty: gfx_hal::pso::ImageDescriptorType::Sampled {
+							with_sampler: true,
+						},
 					},
-					alpha_blend: wgpu::BlendDescriptor {
-						src_factor: wgpu::BlendFactor::One,
-						dst_factor: wgpu::BlendFactor::Zero,
-						operation: wgpu::BlendOperation::Add,
-					},
-					write_mask: wgpu::ColorWrite::ALL,
+					count: 1,
+					stage_flags: gfx_hal::pso::ShaderStageFlags::FRAGMENT,
+					immutable_samplers: false,
+				},
+				gfx_hal::pso::DescriptorSetLayoutBinding {
+					binding: 0,
+					ty: gfx_hal::pso::DescriptorType::Sampler,
+					count: 1,
+					stage_flags: gfx_hal::pso::ShaderStageFlags::FRAGMENT,
+					immutable_samplers: false,
 				}
 			],
-			depth_stencil_state: None,
-			vertex_state: wgpu::VertexStateDescriptor {
-				index_format: wgpu::IndexFormat::Uint16,
-				vertex_buffers: &[ColorVertex::desc()],
+			&[]
+		)}.unwrap();
+
+		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
+		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
+
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[texture_descriptor_set_layout], &[]) }.unwrap();
+		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
+				buffers: &[gfx_hal::pso::VertexBufferDesc {
+					binding: 0,
+					stride: std::mem::size_of::<TextureVertex>() as u32,
+					rate: gfx_hal::pso::VertexInputRate::Vertex,
+				}],
+				attributes: TextureVertex::desc(),
+				input_assembler: gfx_hal::pso::InputAssemblerDesc {
+					primitive: gfx_hal::pso::Primitive::TriangleList,
+					with_adjacency: false,
+					restart_index: None,
+				},
+				vertex: gfx_hal::pso::EntryPoint {
+					entry: "main",
+					module: &texture_vs_module,
+					specialization: gfx_hal::pso::Specialization {
+						constants: std::borrow::Cow::Borrowed(&[]),
+						data: std::borrow::Cow::Borrowed(&[]),
+					}
+				},
+				tessellation: None,
+				geometry: None,
 			},
-			sample_count: 1,
-			sample_mask: !0,
-			alpha_to_coverage_enabled: false,
-		});
-
-		let texture_vs_module = device.create_shader_module(wgpu::include_spirv!("spirv/textured.vert.spv"));
-		let texture_fs_module = device.create_shader_module(wgpu::include_spirv!("spirv/textured.frag.spv"));
-
-		let texture_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("polystrip_render_pipeline_layout_texture"),
-			bind_group_layouts: &[&texture_bind_group_layout],
-			push_constant_ranges: &[],
-		});
-
-		let texture_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("polystrip_render_pipeline_texture"),
-			layout: Some(&texture_render_pipeline_layout),
-			vertex_stage: wgpu::ProgrammableStageDescriptor {
-				module: &texture_vs_module,
-				entry_point: "main",
+			rasterizer: gfx_hal::pso::Rasterizer {
+				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
+				cull_face: gfx_hal::pso::Face::BACK,
+				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
+				depth_clamping: false,
+				depth_bias: None,
+				conservative: false,
+				line_width: gfx_hal::pso::State::Dynamic,
 			},
-			fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+			fragment: Some(gfx_hal::pso::EntryPoint {
+				entry: "main",
 				module: &texture_fs_module,
-				entry_point: "main",
-			}),
-			rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: wgpu::CullMode::Back,
-				depth_bias: 0,
-				depth_bias_slope_scale: 0.0,
-				depth_bias_clamp: 0.0,
-				clamp_depth: false,
-			}),
-			primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-			color_states: &[
-				wgpu::ColorStateDescriptor {
-					format: sc_desc.format,
-					color_blend: wgpu::BlendDescriptor {
-						src_factor: wgpu::BlendFactor::SrcAlpha,
-						dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-						operation: wgpu::BlendOperation::Add,
-					},
-					alpha_blend: wgpu::BlendDescriptor {
-						src_factor: wgpu::BlendFactor::One,
-						dst_factor: wgpu::BlendFactor::Zero,
-						operation: wgpu::BlendOperation::Add,
-					},
-					write_mask: wgpu::ColorWrite::ALL,
+				specialization: gfx_hal::pso::Specialization {
+					constants: std::borrow::Cow::Borrowed(&[]),
+					data: std::borrow::Cow::Borrowed(&[]),
 				}
-			],
-			depth_stencil_state: None,
-			vertex_state: wgpu::VertexStateDescriptor {
-				index_format: wgpu::IndexFormat::Uint16,
-				vertex_buffers: &[TextureVertex::desc()],
+			}),
+			blender: gfx_hal::pso::BlendDesc {
+				logic_op: None,
+				targets: vec![gfx_hal::pso::ColorBlendDesc {
+					mask: gfx_hal::pso::ColorMask::ALL,
+					blend: Some(gfx_hal::pso::BlendState {
+						color: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						},
+						alpha: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						}
+					})
+				}]
 			},
-			sample_count: 1,
-			sample_mask: !0,
-			alpha_to_coverage_enabled: false,
-		});
+			depth_stencil: gfx_hal::pso::DepthStencilDesc {
+				depth: None,
+				depth_bounds: false,
+				stencil: None,
+			},
+			multisampling: None,
+			baked_states: gfx_hal::pso::BakedStates {
+				viewport: None,
+				scissor: None,
+				blend_color: None,
+				depth_bounds: None,
+			},
+			layout: &texture_graphics_pipeline_layout,
+			subpass: gfx_hal::pass::Subpass {
+				index: 0,
+				main_pass: &main_pass,
+			},
+			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
+			parent: gfx_hal::pso::BasePipeline::None,
+		}, None) }.unwrap();
 
 		Renderer {
-			surface, device, queue, sc_desc, swap_chain, colour_render_pipeline, texture_render_pipeline,
-			texture_bind_group_layout,
+			surface, gpu, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline,
+			texture_descriptor_set_layout,
 			vertex_buffer, index_buffer,
 		}
 	}

@@ -3,17 +3,26 @@ name = "polystrip"
 description = "A 2D accelerated graphics rendering library"
 keywords = ["gamedev", "graphics", "rendering"]
 categories = ["game-development", "graphics", "rendering::engine"]
-version = "0.3.2"
+version = "0.4.0"
 authors = ["TheOnlyMrCat <skylifegame@gmail.com>"]
 repository = "https://github.com/TheOnlyMrCat/polystrip"
 license = "MIT OR Apache-2.0"
 edition = "2018"
 
+[features]
+vulkan = ["gfx-backend-vulkan"]
+metal = ["gfx-backend-metal"]
+dx12 = ["gfx-backend-dx12"]
+
 [dependencies]
-wgpu = "0.6"
 bytemuck = "1.4"
 futures = "0.3"
 raw-window-handle = "0.3"
+
+gfx-hal = "0.6"
+gfx-backend-vulkan = { version = "0.6", optional = true }
+gfx-backend-metal = { version = "0.6", optional = true }
+gfx-backend-dx12 = { version = "0.6", optional = true }
 
 [dev-dependencies]
 winit = "0.23"

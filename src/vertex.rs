@@ -17,25 +17,27 @@ unsafe impl bytemuck::Pod for TextureVertex {}
 unsafe impl bytemuck::Zeroable for TextureVertex {}
 
 impl TextureVertex {
-	pub(crate) fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
+	pub(crate) fn desc<'a>() -> &'a [gfx_hal::pso::AttributeDesc] {
 		use std::mem::size_of;
 		
-		wgpu::VertexBufferDescriptor {
-			stride: size_of::<TextureVertex>() as wgpu::BufferAddress,
-			step_mode: wgpu::InputStepMode::Vertex,
-			attributes: &[
-				wgpu::VertexAttributeDescriptor {
+		&[
+			gfx_hal::pso::AttributeDesc {
+				location: 0,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rg32Sfloat,
 					offset: 0,
-					shader_location: 0,
-					format: wgpu::VertexFormat::Float2,
 				},
-				wgpu::VertexAttributeDescriptor {
-					offset: size_of::<[f32; 2]>() as wgpu::BufferAddress,
-					shader_location: 1,
-					format: wgpu::VertexFormat::Float2,
+			},
+			gfx_hal::pso::AttributeDesc {
+				location: 1,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rg32Sfloat,
+					offset: size_of::<[f32; 2]>() as u32,
 				},
-			]
-		}
+			},
+		]
 	}
 }
 
@@ -53,25 +55,27 @@ unsafe impl bytemuck::Pod for ColorVertex {}
 unsafe impl bytemuck::Zeroable for ColorVertex {}
 
 impl ColorVertex {
-	pub(crate) fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
+	pub(crate) fn desc<'a>() -> &'a [gfx_hal::pso::AttributeDesc] {
 		use std::mem::size_of;
 		
-		wgpu::VertexBufferDescriptor {
-			stride: size_of::<ColorVertex>() as wgpu::BufferAddress,
-			step_mode: wgpu::InputStepMode::Vertex,
-			attributes: &[
-				wgpu::VertexAttributeDescriptor {
+		&[
+			gfx_hal::pso::AttributeDesc {
+				location: 0,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rg32Sfloat,
 					offset: 0,
-					shader_location: 0,
-					format: wgpu::VertexFormat::Float2,
 				},
-				wgpu::VertexAttributeDescriptor {
-					offset: size_of::<[f32; 2]>() as wgpu::BufferAddress,
-					shader_location: 1,
-					format: wgpu::VertexFormat::Uchar4Norm,
+			},
+			gfx_hal::pso::AttributeDesc {
+				location: 1,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rgba8Unorm,
+					offset: size_of::<[f32; 2]>() as u32,
 				},
-			]
-		}
+			},
+		]
 	}
 }
 
