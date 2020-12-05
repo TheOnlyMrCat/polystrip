@@ -342,10 +342,24 @@ impl Renderer {
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
 	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
 	pub fn get_next_frame(&mut self) -> Frame<'_> {
-		Frame {
-			swap_chain_frame: self.swap_chain.get_current_frame().unwrap(),
-			renderer: self,
+		match unsafe { self.surface.acquire_image(1000) } {
+			Ok((image, _)) => Frame {
+				swap_chain_frame: image,
+				renderer: self,
+			},
+			Err(gfx_hal::window::AcquireError::OutOfDate) => {
+				unsafe { self.surface.configure_swapchain(&self.gpu.device, self.swapchain_config.clone()) }.unwrap();
+				match unsafe { self.surface.acquire_image(0) } {
+					Ok((image, _)) => Frame {
+						swap_chain_frame: image,
+						renderer: self,
+					},
+					Err(e) => panic!("{}", e),
+				}
+			},
+			Err(e) => panic!("{}", e),
 		}
+		
 	}
 	
 	/// Resizes the internal swapchain
@@ -356,33 +370,33 @@ impl Renderer {
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
 	pub fn resize(&mut self, size: (u32, u32)) {
-		self.sc_desc.width = size.0;
-		self.sc_desc.height = size.1;
-		self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+		self.swapchain_config.extent.width = size.0;
+		self.swapchain_config.extent.height = size.1;
+		unsafe { self.surface.configure_swapchain(&self.gpu.device, self.swapchain_config.clone()) }.unwrap();
 	}
 
 	/// Gets the underlying gpu `Device` and `Queue` used internally to render.
 	/// 
 	/// The device and queue are requested with no special features, the default limits and shader validation enabled.
-	pub fn device(&self) -> (&wgpu::Device, &wgpu::Queue) {
-		(&self.device, &self.queue)
+	pub fn device(&self) -> &gfx_hal::adapter::Gpu<backend::Backend> {
+		&self.gpu
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
 	pub fn width(&self) -> u32 {
-		self.sc_desc.width
+		self.swapchain_config.extent.width
 	}
 
 	/// Gets the height of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
 	pub fn height(&self) -> u32 {
-		self.sc_desc.height
+		self.swapchain_config.extent.height
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
 		GpuPos {
-			x: (x * 2) as f32 / self.sc_desc.width as f32 - 1.0,
-			y: -((y * 2) as f32 / self.sc_desc.height as f32 - 1.0),
+			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
+			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
 		}
 	}
 }
@@ -395,7 +409,7 @@ impl Renderer {
 /// More methods are implemented in the [`FrameGeometryExt`](../geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
-	swap_chain_frame: wgpu::SwapChainFrame,
+	swap_chain_frame: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage,
 }
 
 //MARK: Frame API
