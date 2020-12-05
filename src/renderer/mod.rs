@@ -79,25 +79,15 @@ pub struct Renderer {
 
 //TODO: Builder pattern, to allow for more configuration?
 impl Renderer {
-	/// Creates a new renderer, initialising the wgpu backend. This method just calls and blocks on [`new_async`](#method.new_async)
+	/// Creates a new renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
+	/// was created legitimately. Technically, that's my problem, but if you're not making your window properly, I'm not
+	/// going to take responsibility for the resulting crash.
 	/// 
 	/// # Arguments
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn new(window: &impl HasRawWindowHandle, size: (u32, u32)) -> Renderer {
-		futures::executor::block_on(Renderer::new_async(window, size))
-	}
-
-	/// Creates a new renderer asynchronously, initialising the wgpu backend. This method assumes the raw window handle
-	/// was created legitimately. Technically, that's my problem, but if you're not making your window properly, I'm not
-	/// going to take responsibility for the resulting crash.
-	///
-	/// # Arguments
-	/// * `window`: A valid window compatible with `raw_window_handle`.
-	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
-	///           differentiate between physical and logical size, this refers to the logical size
-	pub async fn new_async(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
+	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
 		//MARK: New Renderer
 
 		//Note: Keep up-to-date.         X0.X4.X0_XX

@@ -16,7 +16,6 @@ dx12 = ["gfx-backend-dx12"]
 
 [dependencies]
 bytemuck = "1.4"
-futures = "0.3"
 raw-window-handle = "0.3"
 
 gfx-hal = "0.6"
