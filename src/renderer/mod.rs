@@ -118,13 +118,54 @@ impl Renderer {
 		
 		let vertex_buffer = unsafe { gpu.device.create_buffer(
 			1024 * std::mem::size_of::<TextureVertex>() as u64,
-			gfx_hal::buffer::Usage::TRANSFER_DST | gfx_hal::buffer::Usage::VERTEX
+			gfx_hal::buffer::Usage::VERTEX
 		).unwrap() };
 
 		let index_buffer = unsafe { gpu.device.create_buffer(
 			1024 * std::mem::size_of::<u16>() as u64,
-			gfx_hal::buffer::Usage::TRANSFER_DST | gfx_hal::buffer::Usage::INDEX
+			gfx_hal::buffer::Usage::INDEX
 		).unwrap() };
+
+		let memory_types = adapter.physical_device.memory_properties().memory_types;
+
+		let req = unsafe { gpu.device.get_buffer_requirements(&vertex_buffer) };
+		let vertex_memory_type = memory_types.iter()
+			.enumerate()
+			.find(|(id, memory_type)| {
+				req.type_mask & (1_u32 << id) != 0 &&
+				memory_type.properties.contains(gfx_hal::memory::Properties::CPU_VISIBLE)
+			})
+			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
+			.unwrap();
+		
+		let req = unsafe { gpu.device.get_buffer_requirements(&index_buffer) };
+		let index_memory_type = memory_types.iter()
+			.enumerate()
+			.find(|(id, memory_type)| {
+				req.type_mask & (1_u32 << id) != 0 &&
+				memory_type.properties.contains(gfx_hal::memory::Properties::CPU_VISIBLE)
+			})
+			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
+			.unwrap();
+
+		unsafe {
+			gpu.device.bind_buffer_memory(
+				&gpu.device.allocate_memory( //TODO: Free memory on drop
+					vertex_memory_type,
+					1024 * std::mem::size_of::<TextureVertex>() as u64,
+				).unwrap(),
+				0,
+				&mut vertex_buffer,
+			).unwrap();
+			gpu.device.bind_buffer_memory(
+				&gpu.device.allocate_memory(
+					index_memory_type,
+					1024 * std::mem::size_of::<u16>() as u64,
+				).unwrap(),
+				0,
+				&mut index_buffer,
+			).unwrap();
+		}
 
 		let main_pass = unsafe { gpu.device.create_render_pass(
 			&[gfx_hal::pass::Attachment {
@@ -375,9 +416,10 @@ impl Renderer {
 		unsafe { self.surface.configure_swapchain(&self.gpu.device, self.swapchain_config.clone()) }.unwrap();
 	}
 
-	/// Gets the underlying gpu `Device` and `Queue` used internally to render.
+	/// Gets the underlying `gfx_hal::Gpu` used internally to render.
 	/// 
-	/// The device and queue are requested with no special features, the default limits and shader validation enabled.
+	/// The device is requested with no special features, the default limits and shader validation enabled.
+	/// The device is opened with one 0.9 priority queue from one graphics-supporting queue family.
 	pub fn device(&self) -> &gfx_hal::adapter::Gpu<backend::Backend> {
 		&self.gpu
 	}
@@ -417,6 +459,7 @@ impl<'a> Frame<'a> {
 	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape) {
+		let mut queue = &mut self.renderer.gpu.queue_groups[0].queues[0];
 		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("polystrip_render_encoder"),
 		});
@@ -612,6 +655,14 @@ impl<'a> Frame<'a> {
 	/// Gets the internal `SwapChainFrame` for use in custom rendering.
 	pub fn swap_chain_frame(&self) -> &wgpu::SwapChainFrame {
 		&self.swap_chain_frame
+	}
+}
+
+impl<'a> Drop for Frame<'a> {
+	fn drop(&mut self) {
+		if !std::thread::panicking() {
+
+		}
 	}
 }
 
