@@ -718,33 +718,46 @@ impl<'a> Frame<'a> {
 	/// 
 	/// Note: The sRGB conversion in this function uses a gamma of 2.0
 	pub fn clear(&mut self, color: Color) {
-		todo!();
-		// let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-		// 	label: Some("polystrip_render_encoder"),
-		// });
+		self.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+				
+		self.command_buffer.set_viewports(0, &[self.viewport.clone()]);
+		self.command_buffer.set_scissors(0, &[self.viewport.rect]);
 
-		// let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-		// 	color_attachments: &[
-		// 		wgpu::RenderPassColorAttachmentDescriptor {
-		// 			attachment: &self.swap_chain_frame.output.view,
-		// 			resolve_target: None,
-		// 			ops: wgpu::Operations {
-		// 				load: wgpu::LoadOp::Clear(wgpu::Color {
-		// 					r: (color.r as f64).powi(2) / 65_025.0,
-		// 					g: (color.g as f64).powi(2) / 65_025.0,
-		// 					b: (color.b as f64).powi(2) / 65_025.0,
-		// 					a: color.a as f64 / 255.0,
-		// 				}),
-		// 				store: true,
-		// 			}
-		// 		}
-		// 	],
-		// 	depth_stencil_attachment: None,
-		// });
+		let colour = gfx_hal::command::ClearColor {
+			float32: [
+				(color.r as f32).powi(2) / 65_025.0,
+				(color.g as f32).powi(2) / 65_025.0,
+				(color.b as f32).powi(2) / 65_025.0,
+				color.a as f32 / 255.0,
+			]
+		};
 
-		// std::mem::drop(render_pass);
+		let clear_value = gfx_hal::command::ClearValue { color: colour };
 
-		// self.renderer.queue.submit(std::iter::once(encoder.finish()));
+		self.command_buffer.begin_render_pass(
+			&self.render_pass,
+			&self.framebuffer,
+			self.viewport.rect,
+			&[],
+			gfx_hal::command::SubpassContents::Inline
+		);
+
+		self.command_buffer.clear_attachments(
+			&[gfx_hal::command::AttachmentClear::Color { index: 0, value: colour }],
+			&[gfx_hal::pso::ClearRect { rect: self.viewport.rect, layers: 0..1 }]
+		);
+
+		match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+			Ok(true) => {},
+			Ok(false) => { panic!("Render pass took >1ms"); }
+			Err(e) => { panic!("{}", e); }
+		}
+
+		self.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
+			command_buffers: &[self.command_buffer],
+			wait_semaphores: None,
+			signal_semaphores: None,
+		}, None);
 	}
 
 	/// Gets the internal `SwapChainFrame` for use in custom rendering.
