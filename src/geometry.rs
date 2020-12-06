@@ -5,7 +5,7 @@
 
 use crate::data::{GpuPos, Color, Rect};
 use crate::renderer::Frame;
-use crate::texture::Texture;
+use crate::renderer::Texture;
 use crate::vertex::*;
 
 const QUAD_INCICES: [[u16; 3]; 2] = [[0, 1, 3], [1, 2, 3]];

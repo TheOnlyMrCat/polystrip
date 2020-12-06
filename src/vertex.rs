@@ -1,7 +1,7 @@
 //! Vertices and shapes, the core of the rendering process.
 
 use crate::data::*;
-use crate::texture::Texture;
+use crate::renderer::Texture;
 
 /// A vertex describing a position and a position on a texture.
 /// 

@@ -1,6 +1,8 @@
 //! The core rendering context structures
 
-pub(crate) mod backend;
+mod backend;
+pub mod texture;
+pub use texture::Texture;
 
 use std::convert::TryFrom;
 
@@ -67,9 +69,11 @@ static TEXTURED_FRAG_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv
 pub struct Renderer {
 	surface: backend::Surface,
 	gpu: gfx_hal::adapter::Gpu<backend::Backend>,
+	adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
 	colour_graphics_pipeline: backend::GraphicsPipeline,
 	texture_graphics_pipeline: backend::GraphicsPipeline,
+	texture_graphics_pipeline_layout: backend::PipelineLayout,
 
 	command_pool: backend::CommandPool,
 	command_buffer: backend::CommandBuffer,
@@ -84,6 +88,7 @@ pub struct Renderer {
 	submission_fence: backend::Fence,
 
 	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
+	pub(crate) descriptor_pool: backend::DescriptorPool,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -394,13 +399,32 @@ impl Renderer {
 
 		let submission_fence = unsafe { gpu.device.create_fence(false) }.unwrap();
 
+		let descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
+			1024,
+			&[
+				gfx_hal::pso::DescriptorRangeDesc {
+					ty: gfx_hal::pso::DescriptorType::Image {
+						ty: gfx_hal::pso::ImageDescriptorType::Sampled {
+							with_sampler: true,
+						},
+					},
+					count: 1,
+				},
+				gfx_hal::pso::DescriptorRangeDesc {
+					ty: gfx_hal::pso::DescriptorType::Sampler,
+					count: 1,
+				},
+			],
+			gfx_hal::pso::DescriptorPoolCreateFlags::empty(),
+		)}.unwrap();
+
 		Renderer {
-			surface, gpu, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline,
+			surface, gpu, adapter, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline, texture_graphics_pipeline_layout,
 			command_pool, command_buffer,
 			render_pass: main_pass,
 			vertex_buffer, index_buffer, vertex_memory, index_memory,
 			submission_fence,
-			texture_descriptor_set_layout,
+			texture_descriptor_set_layout, descriptor_pool,
 		}
 	}
 
@@ -461,6 +485,10 @@ impl Renderer {
 	/// The device is opened with one 0.9 priority queue from one graphics-supporting queue family.
 	pub fn device(&self) -> &gfx_hal::adapter::Gpu<backend::Backend> {
 		&self.gpu
+	}
+
+	pub fn physical_device(&self) -> &backend::PhysicalDevice {
+		&self.adapter.physical_device
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
@@ -559,7 +587,7 @@ impl<'a> Frame<'a> {
 	/// # Arguments
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
-	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
+	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a Texture) {
 		if shape.vertices.len() > 1024 {
 			panic!("Maximum size of shape is 1024 vertices, found {}", shape.vertices.len());
 		}
@@ -588,7 +616,7 @@ impl<'a> Frame<'a> {
 			self.gpu.device.unmap_memory(&self.index_memory);
 
 			self.command_buffer.bind_graphics_pipeline(&self.texture_graphics_pipeline);
-			//TODO: Bind descriptor sets
+			self.command_buffer.bind_graphics_descriptor_sets(&self.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
 			self.command_buffer.bind_vertex_buffers(0, vec![(self.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.index_buffer,
