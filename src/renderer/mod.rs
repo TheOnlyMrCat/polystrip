@@ -71,10 +71,17 @@ pub struct Renderer {
 	colour_graphics_pipeline: backend::GraphicsPipeline,
 	texture_graphics_pipeline: backend::GraphicsPipeline,
 
-	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
+	command_pool: backend::CommandPool,
+	command_buffer: backend::CommandBuffer,
 
+	render_pass: backend::RenderPass,
+	
 	vertex_buffer: backend::Buffer,
+	vertex_memory: backend::Memory,
 	index_buffer: backend::Buffer,
+	index_memory: backend::Memory,
+
+	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -115,6 +122,12 @@ impl Renderer {
 		
 		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
 		unsafe { surface.configure_swapchain(&gpu.device, swapchain_config.clone()).unwrap(); }
+
+		let (command_pool, command_buffer) = unsafe {
+			let mut command_pool = gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()).unwrap();
+			let command_buffer = command_pool.allocate_one(gfx_hal::command::Level::Primary);
+			(command_pool, command_buffer)
+		};
 		
 		let vertex_buffer = unsafe { gpu.device.create_buffer(
 			1024 * std::mem::size_of::<TextureVertex>() as u64,
@@ -138,6 +151,11 @@ impl Renderer {
 			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
 			.unwrap();
 		
+		let vertex_memory = unsafe { gpu.device.allocate_memory( //TODO: Free memory on drop
+			vertex_memory_type,
+			1024 * std::mem::size_of::<TextureVertex>() as u64,
+		)}.unwrap();
+		
 		let req = unsafe { gpu.device.get_buffer_requirements(&index_buffer) };
 		let index_memory_type = memory_types.iter()
 			.enumerate()
@@ -148,20 +166,19 @@ impl Renderer {
 			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
 			.unwrap();
 
+		let index_memory = unsafe {gpu.device.allocate_memory(
+			index_memory_type,
+			1024 * std::mem::size_of::<u16>() as u64,
+		)}.unwrap();
+
 		unsafe {
 			gpu.device.bind_buffer_memory(
-				&gpu.device.allocate_memory( //TODO: Free memory on drop
-					vertex_memory_type,
-					1024 * std::mem::size_of::<TextureVertex>() as u64,
-				).unwrap(),
+				&vertex_memory,
 				0,
 				&mut vertex_buffer,
 			).unwrap();
 			gpu.device.bind_buffer_memory(
-				&gpu.device.allocate_memory(
-					index_memory_type,
-					1024 * std::mem::size_of::<u16>() as u64,
-				).unwrap(),
+				&index_memory,
 				0,
 				&mut index_buffer,
 			).unwrap();
@@ -173,10 +190,10 @@ impl Renderer {
 				samples: 1,
 				ops: gfx_hal::pass::AttachmentOps::DONT_CARE, //TODO: Potential customisation
 				stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
-				layouts: gfx_hal::image::Layout::General..gfx_hal::image::Layout::Present,
+				layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
 			}],
 			&[gfx_hal::pass::SubpassDesc {
-				colors: &[(0, gfx_hal::image::Layout::General)],
+				colors: &[(0, gfx_hal::image::Layout::ColorAttachmentOptimal)],
 				depth_stencil: None,
 				inputs: &[],
 				resolves: &[],
@@ -375,32 +392,49 @@ impl Renderer {
 
 		Renderer {
 			surface, gpu, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline,
+			command_pool, command_buffer,
+			render_pass: main_pass,
+			vertex_buffer, index_buffer, vertex_memory, index_memory,
 			texture_descriptor_set_layout,
-			vertex_buffer, index_buffer,
 		}
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
 	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
 	pub fn get_next_frame(&mut self) -> Frame<'_> {
-		match unsafe { self.surface.acquire_image(1000) } {
-			Ok((image, _)) => Frame {
-				swap_chain_frame: image,
-				renderer: self,
-			},
+		match unsafe { self.surface.acquire_image(1_000_000 /* 1 ms */) } {
+			Ok((image, _)) => self.generate_frame(image),
 			Err(gfx_hal::window::AcquireError::OutOfDate) => {
 				unsafe { self.surface.configure_swapchain(&self.gpu.device, self.swapchain_config.clone()) }.unwrap();
 				match unsafe { self.surface.acquire_image(0) } {
-					Ok((image, _)) => Frame {
-						swap_chain_frame: image,
-						renderer: self,
-					},
+					Ok((image, _)) => self.generate_frame(image),
 					Err(e) => panic!("{}", e),
 				}
 			},
 			Err(e) => panic!("{}", e),
 		}
-		
+	}
+
+	fn generate_frame(&mut self, image: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage) -> Frame<'_> {
+		use std::borrow::Borrow;
+
+		let viewport = gfx_hal::pso::Viewport {
+			rect: gfx_hal::pso::Rect {
+				x: 0,
+				y: 0,
+				w: self.swapchain_config.extent.width as i16,
+				h: self.swapchain_config.extent.height as i16,
+			},
+			depth: 0.0..1.0,
+		};
+		let framebuffer = unsafe { self.gpu.device.create_framebuffer(&self.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
+
+		Frame {
+			swap_chain_frame: image,
+			framebuffer,
+			viewport,
+			renderer: self,
+		}
 	}
 	
 	/// Resizes the internal swapchain
@@ -452,6 +486,8 @@ impl Renderer {
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
 	swap_chain_frame: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage,
+	framebuffer: backend::Framebuffer,
+	viewport: gfx_hal::pso::Viewport,
 }
 
 //MARK: Frame API
@@ -459,41 +495,51 @@ impl<'a> Frame<'a> {
 	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape) {
-		let mut queue = &mut self.renderer.gpu.queue_groups[0].queues[0];
-		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		});
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &self.swap_chain_frame.output.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Load,
-						store: true,
-					}
-				}
-			],
-			depth_stencil_attachment: None,
-		});
-
-		self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
-		let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
-		let index_count = index_data.len();
-		if index_count % 2 == 1 {
-			index_data.push(0); // Align the data to u32 for the upcoming buffer write
+		if shape.vertices.len() > 1024 {
+			panic!("Maximum size of shape is 1024 vertices, found {}", shape.vertices.len());
 		}
-		self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
 
-		render_pass.set_pipeline(&self.renderer.colour_render_pipeline);
-		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
-		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+		let index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+		if index_data.len() > 1024 {
+			panic!("Maximum size of shape is 1024 indices, found {}", index_data.len());
+		}
 
-		std::mem::drop(render_pass);
+		unsafe {
+			self.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+				
+			self.command_buffer.set_viewports(0, &[self.viewport.clone()]);
+			self.command_buffer.set_scissors(0, &[self.viewport.rect]);
 
-		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+			self.command_buffer.begin_render_pass(&self.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+
+			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
+			let vertices = bytemuck::cast_slice(&shape.vertices);
+			std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
+			self.gpu.device.unmap_memory(&self.vertex_memory);
+
+			let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
+			let indices = bytemuck::cast_slice(&index_data);
+			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+			self.gpu.device.unmap_memory(&self.index_memory);
+
+			self.command_buffer.bind_graphics_pipeline(&self.colour_graphics_pipeline);
+			self.command_buffer.bind_vertex_buffers(0, vec![(self.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+				buffer: &self.index_buffer,
+				range: gfx_hal::buffer::SubRange::WHOLE,
+				index_type: gfx_hal::IndexType::U16,
+			});
+			self.command_buffer.draw_indexed(0..index_data.len() as u32, 0, 0..1);
+
+			self.command_buffer.end_render_pass();
+			self.command_buffer.finish();
+
+			self.gpu.queue_groups[0].queues[0].submit(gfx_hal::queue::Submission {
+				command_buffers: &[self.command_buffer],
+				wait_semaphores: None, //TODO: Semaphores and fences
+				signal_semaphores: None,
+			}, None);
+		}
 	}
 
 	/// Draws a [`TexturedShape`](../vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
@@ -503,41 +549,52 @@ impl<'a> Frame<'a> {
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
 	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a crate::texture::Texture) {
-		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		});
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &self.swap_chain_frame.output.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Load,
-						store: true,
-					}
-				}
-			],
-			depth_stencil_attachment: None,
-		});
-
-		self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&shape.vertices));
-		let mut index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
-		let index_count = index_data.len();
-		if index_count % 2 == 1 {
-			index_data.push(0); // Align the data to u32 for the upcoming buffer write
+		if shape.vertices.len() > 1024 {
+			panic!("Maximum size of shape is 1024 vertices, found {}", shape.vertices.len());
 		}
-		self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
 
-		render_pass.set_pipeline(&self.renderer.texture_render_pipeline);
-		render_pass.set_bind_group(0, &texture.bind_group, &[]);
-		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
-		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+		let index_data = shape.indices.iter().flatten().copied().collect::<Vec<_>>();
+		if index_data.len() > 1024 {
+			panic!("Maximum size of shape is 1024 indices, found {}", index_data.len());
+		}
 
-		std::mem::drop(render_pass);
+		unsafe {
+			self.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+				
+			self.command_buffer.set_viewports(0, &[self.viewport.clone()]);
+			self.command_buffer.set_scissors(0, &[self.viewport.rect]);
 
-		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+			self.command_buffer.begin_render_pass(&self.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+
+			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
+			let vertices = bytemuck::cast_slice(&shape.vertices);
+			std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
+			self.gpu.device.unmap_memory(&self.vertex_memory);
+
+			let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
+			let indices = bytemuck::cast_slice(&index_data);
+			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+			self.gpu.device.unmap_memory(&self.index_memory);
+
+			self.command_buffer.bind_graphics_pipeline(&self.texture_graphics_pipeline);
+			//TODO: Bind descriptor sets
+			self.command_buffer.bind_vertex_buffers(0, vec![(self.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+				buffer: &self.index_buffer,
+				range: gfx_hal::buffer::SubRange::WHOLE,
+				index_type: gfx_hal::IndexType::U16,
+			});
+			self.command_buffer.draw_indexed(0..index_data.len() as u32, 0, 0..1);
+
+			self.command_buffer.end_render_pass();
+			self.command_buffer.finish();
+
+			self.gpu.queue_groups[0].queues[0].submit(gfx_hal::queue::Submission {
+				command_buffers: &[self.command_buffer],
+				wait_semaphores: None, //TODO: Semaphores and fences
+				signal_semaphores: None,
+			}, None);
+		}
 	}
 
 	/// Draws a [`ShapeSet`](../vertex/enum.ShapeSet.html). All shapes in the set will be drawn in front of shapes drawn before
@@ -624,37 +681,38 @@ impl<'a> Frame<'a> {
 	/// 
 	/// Note: The sRGB conversion in this function uses a gamma of 2.0
 	pub fn clear(&mut self, color: Color) {
-		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		});
+		todo!();
+		// let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+		// 	label: Some("polystrip_render_encoder"),
+		// });
 
-		let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &self.swap_chain_frame.output.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color {
-							r: (color.r as f64).powi(2) / 65_025.0,
-							g: (color.g as f64).powi(2) / 65_025.0,
-							b: (color.b as f64).powi(2) / 65_025.0,
-							a: color.a as f64 / 255.0,
-						}),
-						store: true,
-					}
-				}
-			],
-			depth_stencil_attachment: None,
-		});
+		// let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+		// 	color_attachments: &[
+		// 		wgpu::RenderPassColorAttachmentDescriptor {
+		// 			attachment: &self.swap_chain_frame.output.view,
+		// 			resolve_target: None,
+		// 			ops: wgpu::Operations {
+		// 				load: wgpu::LoadOp::Clear(wgpu::Color {
+		// 					r: (color.r as f64).powi(2) / 65_025.0,
+		// 					g: (color.g as f64).powi(2) / 65_025.0,
+		// 					b: (color.b as f64).powi(2) / 65_025.0,
+		// 					a: color.a as f64 / 255.0,
+		// 				}),
+		// 				store: true,
+		// 			}
+		// 		}
+		// 	],
+		// 	depth_stencil_attachment: None,
+		// });
 
-		std::mem::drop(render_pass);
+		// std::mem::drop(render_pass);
 
-		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+		// self.renderer.queue.submit(std::iter::once(encoder.finish()));
 	}
 
 	/// Gets the internal `SwapChainFrame` for use in custom rendering.
-	pub fn swap_chain_frame(&self) -> &wgpu::SwapChainFrame {
-		&self.swap_chain_frame
+	pub fn swap_chain_frame(&self) -> ! {
+		todo!()
 	}
 }
 
