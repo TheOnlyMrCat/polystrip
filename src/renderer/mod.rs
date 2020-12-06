@@ -81,6 +81,8 @@ pub struct Renderer {
 	index_buffer: backend::Buffer,
 	index_memory: backend::Memory,
 
+	submission_fence: backend::Fence,
+
 	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
 }
 
@@ -390,11 +392,14 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
+		let submission_fence = unsafe { gpu.device.create_fence(false) }.unwrap();
+
 		Renderer {
 			surface, gpu, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline,
 			command_pool, command_buffer,
 			render_pass: main_pass,
 			vertex_buffer, index_buffer, vertex_memory, index_memory,
+			submission_fence,
 			texture_descriptor_set_layout,
 		}
 	}
@@ -534,11 +539,17 @@ impl<'a> Frame<'a> {
 			self.command_buffer.end_render_pass();
 			self.command_buffer.finish();
 
-			self.gpu.queue_groups[0].queues[0].submit(gfx_hal::queue::Submission {
+			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+				Ok(true) => {},
+				Ok(false) => { panic!("Render pass took >1ms"); }
+				Err(e) => { panic!("{}", e); }
+			}
+
+			self.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
 				command_buffers: &[self.command_buffer],
-				wait_semaphores: None, //TODO: Semaphores and fences
+				wait_semaphores: None,
 				signal_semaphores: None,
-			}, None);
+			}, Some(&self.submission_fence));
 		}
 	}
 
@@ -589,9 +600,15 @@ impl<'a> Frame<'a> {
 			self.command_buffer.end_render_pass();
 			self.command_buffer.finish();
 
-			self.gpu.queue_groups[0].queues[0].submit(gfx_hal::queue::Submission {
+			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+				Ok(true) => {},
+				Ok(false) => { panic!("Render pass took >1ms"); }
+				Err(e) => { panic!("{}", e); }
+			}
+
+			self.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
 				command_buffers: &[self.command_buffer],
-				wait_semaphores: None, //TODO: Semaphores and fences
+				wait_semaphores: None,
 				signal_semaphores: None,
 			}, None);
 		}
@@ -600,33 +617,13 @@ impl<'a> Frame<'a> {
 	/// Draws a [`ShapeSet`](../vertex/enum.ShapeSet.html). All shapes in the set will be drawn in front of shapes drawn before
 	/// the set. The render order of shapes in the set is unspecified.
 	pub fn draw_shape_set(&mut self, set: ShapeSet<'a>) {
-		let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("polystrip_render_encoder"),
-		});
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			color_attachments: &[
-				wgpu::RenderPassColorAttachmentDescriptor {
-					attachment: &self.swap_chain_frame.output.view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Load,
-						store: true,
-					}
-				}
-			],
-			depth_stencil_attachment: None,
-		});
-
 		let index_count;
 		match set {
 			ShapeSet::Colored(shapes) => {
 				//TODO: Merge these two iterations into one which produces two vectors?
 				let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
-				self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
 				let mut index_offset: u16 = 0;
-				let mut index_data = shapes.iter().flat_map(|shape| {
+				let index_data = shapes.iter().flat_map(|shape| {
 					let indices = shape.indices.iter()
 						.flatten()
 						.map(|&index| index + index_offset)
@@ -635,20 +632,33 @@ impl<'a> Frame<'a> {
 					indices
 				}).collect::<Vec<u16>>();
 				index_count = index_data.len();
-				if index_count % 2 == 1 {
-					index_data.push(0); // Align the data to u32 for the upcoming buffer write
-				}
-				self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
 
-				render_pass.set_pipeline(&self.renderer.colour_render_pipeline);
+				if vertex_data.len() > 1024 {
+					panic!("Maximum size of shape is 1024 vertices, found {}", index_data.len());
+				}
+		
+				if index_data.len() > 1024 {
+					panic!("Maximum size of shape is 1024 indices, found {}", index_data.len());
+				}
+				unsafe {
+					let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
+					let vertices = bytemuck::cast_slice(&vertex_data);
+					std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
+					self.gpu.device.unmap_memory(&self.vertex_memory);
+
+					let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
+					let indices = bytemuck::cast_slice(&index_data);
+					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+					self.gpu.device.unmap_memory(&self.index_memory);
+
+					self.command_buffer.bind_graphics_pipeline(&self.colour_graphics_pipeline);
+				}
 			},
 			ShapeSet::Textured(shapes, texture) => {
 				// ! Duplicated code from above branch
 				let vertex_data = shapes.iter().flat_map(|shape| shape.vertices.iter()).copied().collect::<Vec<_>>();
-				self.renderer.queue.write_buffer(&self.renderer.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
-
 				let mut index_offset: u16 = 0;
-				let mut index_data = shapes.iter().flat_map(|shape| {
+				let index_data = shapes.iter().flat_map(|shape| {
 					let indices = shape.indices.iter()
 						.flatten()
 						.map(|&index| index + index_offset)
@@ -657,24 +667,51 @@ impl<'a> Frame<'a> {
 					indices
 				}).collect::<Vec<u16>>();
 				index_count = index_data.len();
-				if index_count % 2 == 1 {
-					index_data.push(0); // Align the data to u32 for the upcoming buffer write
+
+				if vertex_data.len() > 1024 {
+					panic!("Maximum size of shape is 1024 vertices, found {}", index_data.len());
 				}
-				self.renderer.queue.write_buffer(&self.renderer.index_buffer, 0, bytemuck::cast_slice(&index_data));
+		
+				if index_data.len() > 1024 {
+					panic!("Maximum size of shape is 1024 indices, found {}", index_data.len());
+				}
+				unsafe {
+					let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
+					let vertices = bytemuck::cast_slice(&vertex_data);
+					std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
+					self.gpu.device.unmap_memory(&self.vertex_memory);
+
+					let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
+					let indices = bytemuck::cast_slice(&index_data);
+					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+					self.gpu.device.unmap_memory(&self.index_memory);
 				// ! End of duplicated code
 
-				render_pass.set_pipeline(&self.renderer.texture_render_pipeline);
-				render_pass.set_bind_group(0, &texture.bind_group, &[]);
+					self.command_buffer.bind_graphics_pipeline(&self.texture_graphics_pipeline);
+					// ! Bind descriptor set
+				}
 			}
 		}
 
-		render_pass.set_vertex_buffer(0, self.renderer.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.renderer.index_buffer.slice(..));
-		render_pass.draw_indexed(0..index_count as u32, 0, 0..1);
+		self.command_buffer.bind_vertex_buffers(0, vec![(self.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+		self.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+			buffer: &self.index_buffer,
+			range: gfx_hal::buffer::SubRange::WHOLE,
+			index_type: gfx_hal::IndexType::U16,
+		});
+		self.command_buffer.draw_indexed(0..index_count as u32, 0, 0..1);
 
-		std::mem::drop(render_pass);
+		match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+			Ok(true) => {},
+			Ok(false) => { panic!("Render pass took >1ms"); }
+			Err(e) => { panic!("{}", e); }
+		}
 
-		self.renderer.queue.submit(std::iter::once(encoder.finish()));
+		self.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
+			command_buffers: &[self.command_buffer],
+			wait_semaphores: None,
+			signal_semaphores: None,
+		}, None);
 	}
 
 	/// Clears the entire frame with the specified color, setting every pixel to its value.
@@ -719,7 +756,7 @@ impl<'a> Frame<'a> {
 impl<'a> Drop for Frame<'a> {
 	fn drop(&mut self) {
 		if !std::thread::panicking() {
-
+			//TODO
 		}
 	}
 }
