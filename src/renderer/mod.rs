@@ -446,6 +446,7 @@ impl Renderer {
 
 	fn generate_frame(&mut self, image: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage) -> Frame<'_> {
 		use std::borrow::Borrow;
+		use std::mem::ManuallyDrop;
 
 		let viewport = gfx_hal::pso::Viewport {
 			rect: gfx_hal::pso::Rect {
@@ -459,7 +460,7 @@ impl Renderer {
 		let framebuffer = unsafe { self.gpu.device.create_framebuffer(&self.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
 
 		Frame {
-			swap_chain_frame: image,
+			swap_chain_frame: ManuallyDrop::new(image),
 			framebuffer,
 			viewport,
 			renderer: self,
@@ -518,7 +519,7 @@ impl Renderer {
 /// More methods are implemented in the [`FrameGeometryExt`](../geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
-	swap_chain_frame: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage,
+	swap_chain_frame: std::mem::ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: backend::Framebuffer,
 	viewport: gfx_hal::pso::Viewport,
 }
@@ -806,8 +807,22 @@ impl<'a> Frame<'a> {
 
 impl<'a> Drop for Frame<'a> {
 	fn drop(&mut self) {
+		use std::mem::ManuallyDrop;
+
 		if !std::thread::panicking() {
-			//TODO
+			match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000 /* 1 ms */) } {
+				Ok(true) => {},
+				Ok(false) => { panic!("Render pass took >1ms"); }
+				Err(e) => { panic!("{}", e); }
+			}
+
+			unsafe {
+				self.renderer.gpu.queue_groups[0].queues[0].present(&mut self.renderer.surface, ManuallyDrop::take(&mut self.swap_chain_frame), None).unwrap();
+			}
+		} else {
+			unsafe {
+				ManuallyDrop::drop(&mut self.swap_chain_frame);
+			}
 		}
 	}
 }
