@@ -1,5 +1,5 @@
 use polystrip::prelude::*;
-use polystrip::texture::Texture;
+use polystrip::renderer::Texture;
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};

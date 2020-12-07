@@ -1,10 +1,10 @@
 #- b
 make shaders
-cargo build
+cargo build --features metal
 #/
 
 #- r
-test $1 '!=' '' && cargo run --example $1
+test $1 '!=' '' && cargo run --features metal --example $1
 #/
 
 #doc b!

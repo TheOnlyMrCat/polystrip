@@ -1,6 +1,6 @@
 use polystrip::data::GpuPos;
 use polystrip::prelude::*;
-use polystrip::texture::Texture;
+use polystrip::renderer::Texture;
 use polystrip::vertex::{TexturedShape, TextureVertex};
 
 use winit::event::{Event, WindowEvent};

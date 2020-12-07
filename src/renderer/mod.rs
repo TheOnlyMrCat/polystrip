@@ -38,10 +38,10 @@ mod alignment {
     }
 }
 
-static COLOURED_VERT_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/coloured.vert.spv");
-static COLOURED_FRAG_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/coloured.frag.spv");
-static TEXTURED_VERT_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/textured.vert.spv");
-static TEXTURED_FRAG_SPV: &'static [u8] = include_bytes_align_as!(u32, "../spirv/textured.frag.spv");
+static COLOURED_VERT_SPV: &[u8] = include_bytes_align_as!(u32, "../spirv/coloured.vert.spv");
+static COLOURED_FRAG_SPV: &[u8] = include_bytes_align_as!(u32, "../spirv/coloured.frag.spv");
+static TEXTURED_VERT_SPV: &[u8] = include_bytes_align_as!(u32, "../spirv/textured.vert.spv");
+static TEXTURED_FRAG_SPV: &[u8] = include_bytes_align_as!(u32, "../spirv/textured.frag.spv");
 
 /// An accelerated 2D renderer.
 /// 
@@ -123,7 +123,7 @@ impl Renderer {
 						.find(|family| family.queue_type().supports_graphics()).unwrap(),
 					&[0.9]
 				)],
-				gfx_hal::Features::CORE_MASK
+				gfx_hal::Features::empty()
 			).unwrap()		
 		};
 		
@@ -305,7 +305,7 @@ impl Renderer {
 					immutable_samplers: false,
 				},
 				gfx_hal::pso::DescriptorSetLayoutBinding {
-					binding: 0,
+					binding: 1,
 					ty: gfx_hal::pso::DescriptorType::Sampler,
 					count: 1,
 					stage_flags: gfx_hal::pso::ShaderStageFlags::FRAGMENT,
@@ -397,7 +397,7 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let submission_fence = gpu.device.create_fence(false).unwrap();
+		let submission_fence = gpu.device.create_fence(true).unwrap();
 
 		let descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
 			1024,
@@ -549,15 +549,17 @@ impl<'a> Frame<'a> {
 			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let vertices = bytemuck::cast_slice(&shape.vertices);
 			std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
-			self.gpu.device.unmap_memory(&self.vertex_memory);
-
+			
 			let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+			
+			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
-
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
+			
 			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.colour_graphics_pipeline);
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
@@ -568,9 +570,9 @@ impl<'a> Frame<'a> {
 			self.renderer.command_buffer.end_render_pass();
 			self.renderer.command_buffer.finish();
 
-			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 s */) {
 				Ok(true) => {},
-				Ok(false) => { panic!("Render pass took >1ms"); }
+				Ok(false) => { panic!("Render pass took >1s"); }
 				Err(e) => { panic!("{}", e); }
 			}
 
@@ -609,16 +611,18 @@ impl<'a> Frame<'a> {
 			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let vertices = bytemuck::cast_slice(&shape.vertices);
 			std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
-			self.gpu.device.unmap_memory(&self.vertex_memory);
-
+			
 			let index_buffer = self.gpu.device.map_memory(&self.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+			
+			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 
 			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.texture_graphics_pipeline);
 			self.renderer.command_buffer.bind_graphics_descriptor_sets(&self.renderer.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
@@ -629,9 +633,9 @@ impl<'a> Frame<'a> {
 			self.renderer.command_buffer.end_render_pass();
 			self.renderer.command_buffer.finish();
 
-			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) {
+			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 s */) {
 				Ok(true) => {},
-				Ok(false) => { panic!("Render pass took >1ms"); }
+				Ok(false) => { panic!("Render pass took >1s"); }
 				Err(e) => { panic!("{}", e); }
 			}
 
@@ -673,12 +677,14 @@ impl<'a> Frame<'a> {
 					let vertex_buffer = self.renderer.gpu.device.map_memory(&self.renderer.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 					let vertices = bytemuck::cast_slice(&vertex_data);
 					std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
-					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
-
+					
 					let index_buffer = self.renderer.gpu.device.map_memory(&self.renderer.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+
+					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.index_memory);
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 
 					self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.colour_graphics_pipeline);
 				}
@@ -708,12 +714,14 @@ impl<'a> Frame<'a> {
 					let vertex_buffer = self.renderer.gpu.device.map_memory(&self.renderer.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 					let vertices = bytemuck::cast_slice(&vertex_data);
 					std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
-					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
-
+					
 					let index_buffer = self.renderer.gpu.device.map_memory(&self.renderer.index_memory, gfx_hal::memory::Segment::ALL).unwrap();
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
+
+					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.renderer.index_memory);
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 				// ! End of duplicated code
 
 					self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.texture_graphics_pipeline);
@@ -723,18 +731,21 @@ impl<'a> Frame<'a> {
 		}
 
 		unsafe {
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
 			self.renderer.command_buffer.draw_indexed(0..index_count as u32, 0, 0..1);
+
+			self.renderer.command_buffer.end_render_pass();
+			self.renderer.command_buffer.finish();
 		}
 
-		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000 /* 1 ms */) } {
+		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000_000 /* 1 s */) } {
 			Ok(true) => {},
-			Ok(false) => { panic!("Render pass took >1ms"); }
+			Ok(false) => { panic!("Render pass took >1s"); }
 			Err(e) => { panic!("{}", e); }
 		}
 
@@ -782,11 +793,14 @@ impl<'a> Frame<'a> {
 				&[gfx_hal::command::AttachmentClear::Color { index: 0, value: colour }],
 				&[gfx_hal::pso::ClearRect { rect: self.viewport.rect, layers: 0..1 }]
 			);
+
+			self.renderer.command_buffer.end_render_pass();
+			self.renderer.command_buffer.finish();
 		}
 
-		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000 /* 1 ms */) } {
+		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 ms */) } {
 			Ok(true) => {},
-			Ok(false) => { panic!("Render pass took >1ms"); }
+			Ok(false) => { panic!("Render pass took >1s"); }
 			Err(e) => { panic!("{}", e); }
 		}
 
@@ -810,9 +824,9 @@ impl<'a> Drop for Frame<'a> {
 		use std::mem::ManuallyDrop;
 
 		if !std::thread::panicking() {
-			match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000 /* 1 ms */) } {
+			match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000_000 /* 1 s */) } {
 				Ok(true) => {},
-				Ok(false) => { panic!("Render pass took >1ms"); }
+				Ok(false) => { panic!("Render pass took >1s"); }
 				Err(e) => { panic!("{}", e); }
 			}
 

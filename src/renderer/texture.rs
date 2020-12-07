@@ -62,7 +62,7 @@ impl Texture {
 			std::ptr::copy_nonoverlapping(data.as_ptr(), image, data.len());
 			gpu.device.unmap_memory(&memory);
 
-			gpu.device.bind_image_memory(&memory, 0, &mut texture);
+			gpu.device.bind_image_memory(&memory, 0, &mut texture).unwrap();
 		}
 
 		let view = unsafe { gpu.device.create_image_view(
