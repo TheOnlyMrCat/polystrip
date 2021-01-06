@@ -94,8 +94,9 @@ pub struct Renderer {
 //TODO: Builder pattern, to allow for more configuration?
 impl Renderer {
 	/// Creates a new renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
-	/// was created legitimately. Technically, that's my problem, but if you're not making your window properly, I'm not
-	/// going to take responsibility for the resulting crash.
+	/// was created legitimately. *Technically*, that's my problem, but if you're not making your window properly, I'm not
+	/// going to take responsibility for the resulting crash. (The only way I'd be able to deal with it anyway would be to
+	/// mark this method `unsafe`)
 	/// 
 	/// # Arguments
 	/// * `window`: A valid window compatible with `raw_window_handle`.
@@ -160,7 +161,7 @@ impl Renderer {
 		
 		let vertex_memory = unsafe { gpu.device.allocate_memory( //TODO: Free memory on drop
 			vertex_memory_type,
-			1024 * std::mem::size_of::<TextureVertex>() as u64,
+			req.size,
 		)}.unwrap();
 		
 		let req = unsafe { gpu.device.get_buffer_requirements(&index_buffer) };
@@ -175,7 +176,7 @@ impl Renderer {
 
 		let index_memory = unsafe {gpu.device.allocate_memory(
 			index_memory_type,
-			1024 * std::mem::size_of::<u16>() as u64,
+			req.size,
 		)}.unwrap();
 
 		unsafe {
@@ -230,8 +231,11 @@ impl Renderer {
 					entry: "main",
 					module: &colour_vs_module,
 					specialization: gfx_hal::pso::Specialization {
-						constants: std::borrow::Cow::Borrowed(&[]),
-						data: std::borrow::Cow::Borrowed(&[]),
+						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
+							id: 0,
+							range: 0..1
+						}]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
 					}
 				},
 				tessellation: None,
@@ -336,8 +340,11 @@ impl Renderer {
 					entry: "main",
 					module: &texture_vs_module,
 					specialization: gfx_hal::pso::Specialization {
-						constants: std::borrow::Cow::Borrowed(&[]),
-						data: std::borrow::Cow::Borrowed(&[]),
+						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
+							id: 0,
+							range: 0..1
+						}]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
 					}
 				},
 				tessellation: None,
@@ -461,7 +468,7 @@ impl Renderer {
 
 		Frame {
 			swap_chain_frame: ManuallyDrop::new(image),
-			framebuffer,
+			framebuffer: ManuallyDrop::new(framebuffer),
 			viewport,
 			renderer: self,
 		}
@@ -483,7 +490,7 @@ impl Renderer {
 	/// Gets the underlying `gfx_hal::Gpu` used internally to render.
 	/// 
 	/// The device is requested with no special features, the default limits and shader validation enabled.
-	/// The device is opened with one 0.9 priority queue from one graphics-supporting queue family.
+	/// The device is opened with one 0.9-priority queue from one graphics-supporting queue family.
 	pub fn device(&self) -> &gfx_hal::adapter::Gpu<backend::Backend> {
 		&self.gpu
 	}
@@ -520,7 +527,7 @@ impl Renderer {
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
 	swap_chain_frame: std::mem::ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
-	framebuffer: backend::Framebuffer,
+	framebuffer: std::mem::ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
 }
 
@@ -539,12 +546,7 @@ impl<'a> Frame<'a> {
 		}
 
 		unsafe {
-			self.renderer.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
-				
-			self.renderer.command_buffer.set_viewports(0, &[self.viewport.clone()]);
-			self.renderer.command_buffer.set_scissors(0, &[self.viewport.rect]);
-
-			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+			self.begin_record_commands();
 
 			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let vertices = bytemuck::cast_slice(&shape.vertices);
@@ -554,33 +556,22 @@ impl<'a> Frame<'a> {
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 			
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
-			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 			
-			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.colour_graphics_pipeline);
 			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
+
+			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.colour_graphics_pipeline);
 			self.renderer.command_buffer.draw_indexed(0..index_data.len() as u32, 0, 0..1);
 
-			self.renderer.command_buffer.end_render_pass();
-			self.renderer.command_buffer.finish();
-
-			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 s */) {
-				Ok(true) => {},
-				Ok(false) => { panic!("Render pass took >1s"); }
-				Err(e) => { panic!("{}", e); }
-			}
-
-			self.renderer.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
-				command_buffers: vec![&self.renderer.command_buffer],
-				wait_semaphores: None,
-				signal_semaphores: None,
-			}, Some(&self.renderer.submission_fence));
+			self.finish_render_pass();
 		}
 	}
 
@@ -601,12 +592,7 @@ impl<'a> Frame<'a> {
 		}
 
 		unsafe {
-			self.renderer.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
-				
-			self.renderer.command_buffer.set_viewports(0, &[self.viewport.clone()]);
-			self.renderer.command_buffer.set_scissors(0, &[self.viewport.rect]);
-
-			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+			self.begin_record_commands();
 
 			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let vertices = bytemuck::cast_slice(&shape.vertices);
@@ -616,40 +602,42 @@ impl<'a> Frame<'a> {
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 			
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
-			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
-
-			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.texture_graphics_pipeline);
-			self.renderer.command_buffer.bind_graphics_descriptor_sets(&self.renderer.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
+			
+			
 			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
+			
+			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+			self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.texture_graphics_pipeline);
+			self.renderer.command_buffer.bind_graphics_descriptor_sets(&self.renderer.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
 			self.renderer.command_buffer.draw_indexed(0..index_data.len() as u32, 0, 0..1);
 
-			self.renderer.command_buffer.end_render_pass();
-			self.renderer.command_buffer.finish();
-
-			match self.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 s */) {
-				Ok(true) => {},
-				Ok(false) => { panic!("Render pass took >1s"); }
-				Err(e) => { panic!("{}", e); }
-			}
-
-			self.renderer.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
-				command_buffers: &[&self.renderer.command_buffer],
-				wait_semaphores: None,
-				signal_semaphores: None,
-			}, None);
+			self.finish_render_pass();
 		}
 	}
 
 	/// Draws a [`ShapeSet`](../vertex/enum.ShapeSet.html). All shapes in the set will be drawn in front of shapes drawn before
 	/// the set. The render order of shapes in the set is unspecified.
 	pub fn draw_shape_set(&mut self, set: ShapeSet<'a>) {
+		unsafe {
+			self.begin_record_commands();
+			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
+
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+				buffer: &self.renderer.index_buffer,
+				range: gfx_hal::buffer::SubRange::WHOLE,
+				index_type: gfx_hal::IndexType::U16,
+			});
+		}
+
 		let index_count;
 		match set {
 			ShapeSet::Colored(shapes) => {
@@ -682,9 +670,9 @@ impl<'a> Frame<'a> {
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.index_memory);
-					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 
 					self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.colour_graphics_pipeline);
 				}
@@ -719,9 +707,9 @@ impl<'a> Frame<'a> {
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.renderer.index_memory);
-					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 				// ! End of duplicated code
 
 					self.renderer.command_buffer.bind_graphics_pipeline(&self.renderer.texture_graphics_pipeline);
@@ -731,30 +719,9 @@ impl<'a> Frame<'a> {
 		}
 
 		unsafe {
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &self.renderer.index_buffer,
-				range: gfx_hal::buffer::SubRange::WHOLE,
-				index_type: gfx_hal::IndexType::U16,
-			});
 			self.renderer.command_buffer.draw_indexed(0..index_count as u32, 0, 0..1);
 
-			self.renderer.command_buffer.end_render_pass();
-			self.renderer.command_buffer.finish();
-		}
-
-		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000_000 /* 1 s */) } {
-			Ok(true) => {},
-			Ok(false) => { panic!("Render pass took >1s"); }
-			Err(e) => { panic!("{}", e); }
-		}
-
-		unsafe {
-			self.renderer.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
-				command_buffers: vec![&self.renderer.command_buffer],
-				wait_semaphores: None,
-				signal_semaphores: None,
-			}, None);
+			self.finish_render_pass();
 		}
 	}
 
@@ -763,10 +730,7 @@ impl<'a> Frame<'a> {
 	/// Note: The sRGB conversion in this function uses a gamma of 2.0
 	pub fn clear(&mut self, color: Color) {
 		unsafe {
-			self.renderer.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
-					
-			self.renderer.command_buffer.set_viewports(0, &[self.viewport.clone()]);
-			self.renderer.command_buffer.set_scissors(0, &[self.viewport.rect]);
+			self.begin_record_commands();
 		}
 
 		let colour = gfx_hal::command::ClearColor {
@@ -794,23 +758,33 @@ impl<'a> Frame<'a> {
 				&[gfx_hal::pso::ClearRect { rect: self.viewport.rect, layers: 0..1 }]
 			);
 
-			self.renderer.command_buffer.end_render_pass();
-			self.renderer.command_buffer.finish();
+			self.finish_render_pass();
 		}
+	}
 
-		match unsafe { self.renderer.gpu.device.wait_for_fence(&self.submission_fence, 1_000_000_000 /* 1 ms */) } {
-			Ok(true) => {},
+	unsafe fn begin_record_commands(&mut self) {
+		match self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000_000 /* 1 s */) {
+			Ok(true) => { self.renderer.gpu.device.reset_fence(&self.renderer.submission_fence).unwrap(); },
 			Ok(false) => { panic!("Render pass took >1s"); }
 			Err(e) => { panic!("{}", e); }
 		}
 
-		unsafe {
-			self.renderer.gpu.queue_groups[0].queues[0].submit::<_, _, &backend::Semaphore, _, _>(gfx_hal::queue::Submission {
-				command_buffers: vec![&self.renderer.command_buffer],
-				wait_semaphores: None,
-				signal_semaphores: None,
-			}, None);
-		}
+		self.renderer.command_buffer.reset(false);
+
+		self.renderer.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+				
+		self.renderer.command_buffer.set_viewports(0, &[self.viewport.clone()]);
+		self.renderer.command_buffer.set_scissors(0, &[self.viewport.rect]);
+	}
+
+	unsafe fn finish_render_pass(&mut self) {
+		self.renderer.command_buffer.end_render_pass();
+		self.renderer.command_buffer.finish();
+
+		self.renderer.gpu.queue_groups[0].queues[0].submit_without_semaphores(
+			vec![&self.renderer.command_buffer],
+			Some(&self.renderer.submission_fence)
+		);
 	}
 
 	/// Gets the internal `SwapChainFrame` for use in custom rendering.
@@ -837,6 +811,9 @@ impl<'a> Drop for Frame<'a> {
 			unsafe {
 				ManuallyDrop::drop(&mut self.swap_chain_frame);
 			}
+		}
+		unsafe {
+			self.renderer.gpu.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
 		}
 	}
 }
