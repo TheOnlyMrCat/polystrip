@@ -5,6 +5,7 @@ pub mod texture;
 pub use texture::Texture;
 
 use std::convert::TryFrom;
+use std::mem::ManuallyDrop;
 
 use crate::data::{GpuPos, Color};
 use crate::vertex::*;
@@ -71,24 +72,24 @@ pub struct Renderer {
 	gpu: gfx_hal::adapter::Gpu<backend::Backend>,
 	adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
-	colour_graphics_pipeline: backend::GraphicsPipeline,
-	texture_graphics_pipeline: backend::GraphicsPipeline,
-	texture_graphics_pipeline_layout: backend::PipelineLayout,
+	colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	texture_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 
-	command_pool: backend::CommandPool,
-	command_buffer: backend::CommandBuffer,
+	command_pool: ManuallyDrop<backend::CommandPool>,
+	command_buffer: ManuallyDrop<backend::CommandBuffer>,
 
-	render_pass: backend::RenderPass,
+	render_pass: ManuallyDrop<backend::RenderPass>,
 	
-	vertex_buffer: backend::Buffer,
-	vertex_memory: backend::Memory,
-	index_buffer: backend::Buffer,
-	index_memory: backend::Memory,
+	vertex_buffer: ManuallyDrop<backend::Buffer>,
+	vertex_memory: ManuallyDrop<backend::Memory>,
+	index_buffer: ManuallyDrop<backend::Buffer>,
+	index_memory: ManuallyDrop<backend::Memory>,
 
-	submission_fence: backend::Fence,
+	submission_fence: ManuallyDrop<backend::Fence>,
 
-	pub(crate) texture_descriptor_set_layout: backend::DescriptorSetLayout,
-	pub(crate) descriptor_pool: backend::DescriptorPool,
+	pub(crate) texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
+	pub(crate) descriptor_pool: ManuallyDrop<backend::DescriptorPool>,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
@@ -426,12 +427,25 @@ impl Renderer {
 		)}.unwrap();
 
 		Renderer {
-			surface, gpu, adapter, swapchain_config, colour_graphics_pipeline, texture_graphics_pipeline, texture_graphics_pipeline_layout,
-			command_pool, command_buffer,
-			render_pass: main_pass,
-			vertex_buffer, index_buffer, vertex_memory, index_memory,
-			submission_fence,
-			texture_descriptor_set_layout, descriptor_pool,
+			surface, gpu, adapter, swapchain_config,
+			colour_graphics_pipeline: ManuallyDrop::new(colour_graphics_pipeline),
+			texture_graphics_pipeline: ManuallyDrop::new(texture_graphics_pipeline),
+			texture_graphics_pipeline_layout: ManuallyDrop::new(texture_graphics_pipeline_layout),
+
+			command_pool: ManuallyDrop::new(command_pool),
+			command_buffer: ManuallyDrop::new(command_buffer),
+
+			render_pass: ManuallyDrop::new(main_pass),
+
+			vertex_buffer: ManuallyDrop::new(vertex_buffer),
+			index_buffer: ManuallyDrop::new(index_buffer),
+			vertex_memory: ManuallyDrop::new(vertex_memory),
+			index_memory: ManuallyDrop::new(index_memory),
+
+			submission_fence: ManuallyDrop::new(submission_fence),
+
+			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
+			descriptor_pool: ManuallyDrop::new(descriptor_pool),
 		}
 	}
 
@@ -453,7 +467,6 @@ impl Renderer {
 
 	fn generate_frame(&mut self, image: <backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage) -> Frame<'_> {
 		use std::borrow::Borrow;
-		use std::mem::ManuallyDrop;
 
 		let viewport = gfx_hal::pso::Viewport {
 			rect: gfx_hal::pso::Rect {
@@ -518,6 +531,32 @@ impl Renderer {
 	}
 }
 
+impl Drop for Renderer {
+	fn drop(&mut self) {
+		unsafe {
+			self.gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
+			self.gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
+			self.gpu.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
+
+			let mut command_pool = ManuallyDrop::take(&mut self.command_pool);
+			command_pool.free(std::iter::once(ManuallyDrop::take(&mut self.command_buffer)));
+			self.gpu.device.destroy_command_pool(command_pool);
+			
+			self.gpu.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
+			
+			self.gpu.device.destroy_buffer(ManuallyDrop::take(&mut self.vertex_buffer));
+			self.gpu.device.destroy_buffer(ManuallyDrop::take(&mut self.index_buffer));
+			self.gpu.device.free_memory(ManuallyDrop::take(&mut self.vertex_memory));
+			self.gpu.device.free_memory(ManuallyDrop::take(&mut self.index_memory));
+			
+			self.gpu.device.destroy_fence(ManuallyDrop::take(&mut self.submission_fence));
+
+			self.gpu.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
+			self.gpu.device.destroy_descriptor_pool(ManuallyDrop::take(&mut self.descriptor_pool));
+		}
+	}
+}
+
 /// A frame to be drawn to. The frame gets presented on drop.
 /// 
 /// Since a `Frame` borrows the [`Renderer`](struct.Renderer.html) it was created for, any functions which would normally
@@ -556,11 +595,11 @@ impl<'a> Frame<'a> {
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 			
-			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&*self.vertex_memory, gfx_hal::memory::Segment::ALL), (&*self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
-			
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&*self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
@@ -590,10 +629,10 @@ impl<'a> Frame<'a> {
 		if index_data.len() > 1024 {
 			panic!("Maximum size of shape is 1024 indices, found {}", index_data.len());
 		}
-
+		
 		unsafe {
 			self.begin_record_commands();
-
+			
 			let vertex_buffer = self.gpu.device.map_memory(&self.vertex_memory, gfx_hal::memory::Segment::ALL).unwrap();
 			let vertices = bytemuck::cast_slice(&shape.vertices);
 			std::ptr::copy_nonoverlapping(vertices.as_ptr(), vertex_buffer, vertices.len());
@@ -602,12 +641,11 @@ impl<'a> Frame<'a> {
 			let indices = bytemuck::cast_slice(&index_data);
 			std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 			
-			self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
+			self.gpu.device.flush_mapped_memory_ranges(vec![(&*self.vertex_memory, gfx_hal::memory::Segment::ALL), (&*self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 			self.gpu.device.unmap_memory(&self.vertex_memory);
 			self.gpu.device.unmap_memory(&self.index_memory);
 			
-			
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&*self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
@@ -630,7 +668,7 @@ impl<'a> Frame<'a> {
 			self.begin_record_commands();
 			self.renderer.command_buffer.begin_render_pass(&self.renderer.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
 
-			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.command_buffer.bind_vertex_buffers(0, vec![(&*self.renderer.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &self.renderer.index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
@@ -670,7 +708,7 @@ impl<'a> Frame<'a> {
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 
-					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&*self.vertex_memory, gfx_hal::memory::Segment::ALL), (&*self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.index_memory);
 
@@ -707,7 +745,7 @@ impl<'a> Frame<'a> {
 					let indices = bytemuck::cast_slice(&index_data);
 					std::ptr::copy_nonoverlapping(indices.as_ptr(), index_buffer, indices.len());
 
-					self.gpu.device.flush_mapped_memory_ranges(vec![(&self.vertex_memory, gfx_hal::memory::Segment::ALL), (&self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
+					self.gpu.device.flush_mapped_memory_ranges(vec![(&*self.vertex_memory, gfx_hal::memory::Segment::ALL), (&*self.index_memory, gfx_hal::memory::Segment::ALL)]).unwrap();
 					self.renderer.gpu.device.unmap_memory(&self.vertex_memory);
 					self.renderer.gpu.device.unmap_memory(&self.renderer.index_memory);
 				// ! End of duplicated code
@@ -782,7 +820,7 @@ impl<'a> Frame<'a> {
 		self.renderer.command_buffer.finish();
 
 		self.renderer.gpu.queue_groups[0].queues[0].submit_without_semaphores(
-			vec![&self.renderer.command_buffer],
+			vec![&*self.renderer.command_buffer],
 			Some(&self.renderer.submission_fence)
 		);
 	}
@@ -790,13 +828,11 @@ impl<'a> Frame<'a> {
 	/// Gets the internal `SwapChainFrame` for use in custom rendering.
 	pub fn swap_chain_frame(&self) -> ! {
 		todo!()
-	}
+	}	
 }
 
 impl<'a> Drop for Frame<'a> {
 	fn drop(&mut self) {
-		use std::mem::ManuallyDrop;
-
 		if !std::thread::panicking() {
 			match unsafe { self.renderer.gpu.device.wait_for_fence(&self.renderer.submission_fence, 1_000_000_000 /* 1 s */) } {
 				Ok(true) => {},
