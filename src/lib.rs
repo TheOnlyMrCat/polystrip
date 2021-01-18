@@ -32,7 +32,6 @@
 //! ```
 
 pub mod data;
-pub mod geometry;
 pub mod renderer;
 pub mod vertex;
 
@@ -40,5 +39,4 @@ pub mod prelude {
 	//! The polystrip prelude, containing the most useful structs and traits.
 	pub use crate::renderer::{Renderer, Frame};
 	pub use crate::data::{Color, Rect};
-	pub use crate::geometry::FrameGeometryExt;
 }

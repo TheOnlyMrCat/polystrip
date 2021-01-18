@@ -1,5 +1,7 @@
 //! Vertices and shapes, the core of the rendering process.
 
+use std::rc::Rc;
+
 use crate::data::*;
 use crate::renderer::Texture;
 
@@ -79,17 +81,33 @@ impl ColorVertex {
 	}
 }
 
+pub struct ShapePool {
+	context: Rc<crate::renderer::RendererContext>,
+}
+
+impl ShapePool {
+	/// Creates a [`ColoredShape`](struct.ColoredShape) from raw vertex and index data.
+	/// 
+	/// * `indices`: indices into `vertices` describing how the vertices arrange into triangles
+	fn raw_colored(vertices: &[ColorVertex], indices: &[[u16; 3]]) -> ColoredShape {
+		todo!();
+	}
+
+	fn raw_textured(vertices: &[TextureVertex], indices: &[[u16; 3]]) -> TexturedShape {
+		todo!();
+	}
+}
+
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
 ///
 /// The color of the shape is determined by interpolating the colours at each
 /// [`ColorVertex`](struct.ColorVertex).
 /// 
 /// See also [`TexturedShape`](struct.TexturedShape)
-#[derive(Clone, Debug)]
-pub struct ColoredShape<'a> {
-	pub vertices: &'a [ColorVertex],
-	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: &'a [[u16; 3]], //TODO: Work out if it needs to be CCW or not
+pub struct ColoredShape {
+	pub(crate) vertex_buffer: crate::renderer::backend::Buffer,
+	pub(crate) index_buffer: crate::renderer::backend::Buffer,
+	pub(crate) index_count: u32,
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
@@ -97,22 +115,12 @@ pub struct ColoredShape<'a> {
 /// The color of the shape is determined by interpolating the texture coordinates at each
 /// [`TextureVertex`](struct.TextureVertex).
 /// 
-/// A `TexturedShape` does not store the texture it is to draw. This must be specified in the [`ShapeSet`](struct.ShapeSet)
-/// or in the arguments to [`Frame::add_textured`](../renderer/struct.Frame#method.add_textured)
+/// A `TexturedShape` does not store the texture it is to draw. This must be specified in the
+/// arguments to [`Frame::draw_textured`](../renderer/struct.Frame#method.draw_textured)
 /// 
 /// See also [`ColoredShape`](struct.ColoredShape)
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct TexturedShape<'a> {
-	pub vertices: &'a [TextureVertex],
-	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: &'a [[u16; 3]], //TODO: As above
-}
-
-/// A set of [`ColoredShape`](struct.ColoredShape)s or [`TexturedShape`](struct.TexturedShape)s.
-#[derive(Debug)]
-pub enum ShapeSet<'a> {
-	/// Multiple [`ColoredShape`](struct.ColoredShape)s.
-	Colored(&'a [ColoredShape<'a>]),
-	/// Multiple [`TexturedShape`](struct.TexturedShape)s, with a reference to the texture to draw to them.
-	Textured(&'a [TexturedShape<'a>], &'a Texture),
+pub struct TexturedShape {
+	pub(crate) vertex_buffer: crate::renderer::backend::Buffer,
+	pub(crate) index_buffer: crate::renderer::backend::Buffer,
+	pub(crate) index_count: u32,
 }

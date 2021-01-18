@@ -44,3 +44,5 @@ pub type Fence = <Backend as gfx_hal::Backend>::Fence;
 pub type Semaphore = <Backend as gfx_hal::Backend>::Semaphore;
 pub type Event = <Backend as gfx_hal::Backend>::Event;
 pub type QueryPool = <Backend as gfx_hal::Backend>::QueryPool;
+
+pub type SwapchainImage = <Surface as gfx_hal::window::PresentationSurface<Backend>>::SwapchainImage;
