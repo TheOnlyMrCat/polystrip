@@ -37,9 +37,11 @@ pub mod vertex;
 pub mod texture;
 pub use texture::Texture;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
+
+use gpu_alloc::GpuAllocator;
 
 use crate::data::{GpuPos, Color};
 use crate::vertex::*;
@@ -73,6 +75,8 @@ pub struct RendererContext {
 	pub descriptor_pool: ManuallyDrop<backend::DescriptorPool>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
+
+	pub allocator: RefCell<GpuAllocator<std::sync::Arc<backend::Memory>>>,
 }
 
 impl RendererContext {
@@ -337,6 +341,12 @@ impl RendererContext {
 
 		let render_semaphore = gpu.device.create_semaphore().unwrap();
 
+		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
+		let allocator = GpuAllocator::new(
+			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
+			alloc_props,
+		);
+
 		RendererContext {
 			instance, gpu, adapter,
 
@@ -354,13 +364,21 @@ impl RendererContext {
 			descriptor_pool: ManuallyDrop::new(descriptor_pool),
 
 			extent: Cell::new(extent),
+
+			allocator: RefCell::new(allocator),
 		}
+	}
+
+	pub fn get_memory_device(&self) -> &gpu_alloc_gfx::GfxMemoryDevice<backend::Backend> {
+		gpu_alloc_gfx::GfxMemoryDevice::wrap(&self.gpu.device)
 	}
 }
 
 impl Drop for RendererContext {
 	fn drop(&mut self) {
 		unsafe {
+			self.allocator.get_mut().cleanup(self.get_memory_device());
+
 			let mut command_pool = ManuallyDrop::take(&mut self.command_pool);
 			command_pool.free(std::iter::once(ManuallyDrop::take(&mut self.command_buffer)));
 			self.gpu.device.destroy_command_pool(command_pool);
@@ -420,19 +438,24 @@ impl Renderer {
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
 	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
-		//MARK: New Renderer
 		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
-
 		let mut context = RendererContext::new(swapchain_config.format, swapchain_config.extent);
 
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
-		
 		unsafe { surface.configure_swapchain(&context.gpu.device, swapchain_config.clone()).unwrap(); }
 
 		Renderer {
 			context: Rc::new(context),
-
 			surface, swapchain_config,
+		}
+	}
+
+	/// Creates a new `ShapePool` to manage allocation and deallocation of shapes
+	pub fn create_shape_pool(&self) -> ShapePool {
+		ShapePool {
+			context: self.context.clone(),
+			allocated_memory: RefCell::default(),
+			transient: false,
 		}
 	}
 
@@ -445,6 +468,7 @@ impl Renderer {
 	pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_> {
 		self.generate_frame(self.acquire_image(), Some(clear_color))
 	}
+
 
 	fn acquire_image(&mut self) -> backend::SwapchainImage {
 		match unsafe { self.surface.acquire_image(1_000_000 /* 1 ms */) } {
@@ -521,7 +545,7 @@ impl Renderer {
 	
 	/// Resizes the internal swapchain
 	/// 
-	/// For correctness, call this method in your window's event loop whenever the window gets resized
+	/// Call this method in your window's event loop whenever the window gets resized
 	/// 
 	/// # Arguments
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
@@ -585,7 +609,6 @@ impl<'a> Frame<'a> {
 				index_type: gfx_hal::IndexType::U16,
 			});
 
-			self.renderer.context.command_buffer.begin_render_pass(&self.renderer.context.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
 			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
 			self.renderer.context.command_buffer.draw_indexed(0..shape.index_count, 0, 0..1);
 		}
@@ -606,20 +629,9 @@ impl<'a> Frame<'a> {
 				index_type: gfx_hal::IndexType::U16,
 			});
 			
-			self.renderer.context.command_buffer.begin_render_pass(&self.renderer.context.render_pass, &self.framebuffer, self.viewport.rect, &[], gfx_hal::command::SubpassContents::Inline);
 			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
 			self.renderer.context.command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
 			self.renderer.context.command_buffer.draw_indexed(0..shape.index_count as u32, 0, 0..1);
-		}
-	}
-
-	/// Converts pixel coordinates to Gpu coordinates
-	/// 
-	/// This is a copy of the same function in `Renderer`.
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
-			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
-			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
 		}
 	}
 }

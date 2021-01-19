@@ -18,6 +18,8 @@ dx12 = ["gfx-backend-dx12"]
 bytemuck = "1.4"
 raw-window-handle = "0.3"
 align-data = "0.1"
+gpu-alloc = "0.2"
+gpu-alloc-gfx = "0.1"
 
 gfx-hal = "0.6"
 gfx-backend-vulkan = { version = "0.6", optional = true }
