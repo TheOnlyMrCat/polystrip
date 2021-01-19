@@ -160,7 +160,7 @@ impl Renderer {
 			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
 			.unwrap();
 		
-		let vertex_memory = unsafe { gpu.device.allocate_memory( //TODO: Free memory on drop
+		let vertex_memory = unsafe { gpu.device.allocate_memory(
 			vertex_memory_type,
 			req.size,
 		)}.unwrap();
@@ -175,7 +175,7 @@ impl Renderer {
 			.map(|(id, _)| gfx_hal::MemoryTypeId(id))
 			.unwrap();
 
-		let index_memory = unsafe {gpu.device.allocate_memory(
+		let index_memory = unsafe { gpu.device.allocate_memory(
 			index_memory_type,
 			req.size,
 		)}.unwrap();
@@ -504,12 +504,16 @@ impl Renderer {
 	/// 
 	/// The device is requested with no special features, the default limits and shader validation enabled.
 	/// The device is opened with one 0.9-priority queue from one graphics-supporting queue family.
-	pub fn device(&self) -> &gfx_hal::adapter::Gpu<backend::Backend> {
-		&self.gpu
+	pub fn device(&mut self) -> &mut gfx_hal::adapter::Gpu<backend::Backend> {
+		&mut self.gpu
 	}
 
 	pub fn physical_device(&self) -> &backend::PhysicalDevice {
 		&self.adapter.physical_device
+	}
+
+	pub fn command_pool(&mut self) -> &mut backend::CommandPool {
+		&mut self.command_pool
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
