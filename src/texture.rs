@@ -2,7 +2,7 @@
 use gfx_hal::prelude::*;
 
 use crate::data::GpuPos;
-use crate::renderer::Renderer;
+use crate::{Renderer, RendererContext};
 
 /// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html).
 /// 

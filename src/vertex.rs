@@ -3,7 +3,6 @@
 use std::rc::Rc;
 
 use crate::data::*;
-use crate::renderer::Texture;
 
 /// A vertex describing a position and a position on a texture.
 /// 
@@ -82,7 +81,7 @@ impl ColorVertex {
 }
 
 pub struct ShapePool {
-	context: Rc<crate::renderer::RendererContext>,
+	context: Rc<crate::RendererContext>,
 }
 
 impl ShapePool {
@@ -105,8 +104,8 @@ impl ShapePool {
 /// 
 /// See also [`TexturedShape`](struct.TexturedShape)
 pub struct ColoredShape {
-	pub(crate) vertex_buffer: crate::renderer::backend::Buffer,
-	pub(crate) index_buffer: crate::renderer::backend::Buffer,
+	pub(crate) vertex_buffer: crate::backend::Buffer,
+	pub(crate) index_buffer: crate::backend::Buffer,
 	pub(crate) index_count: u32,
 }
 
@@ -120,7 +119,7 @@ pub struct ColoredShape {
 /// 
 /// See also [`ColoredShape`](struct.ColoredShape)
 pub struct TexturedShape {
-	pub(crate) vertex_buffer: crate::renderer::backend::Buffer,
-	pub(crate) index_buffer: crate::renderer::backend::Buffer,
+	pub(crate) vertex_buffer: crate::backend::Buffer,
+	pub(crate) index_buffer: crate::backend::Buffer,
 	pub(crate) index_count: u32,
 }
