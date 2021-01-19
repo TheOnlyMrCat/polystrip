@@ -41,7 +41,7 @@ use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
-use gpu_alloc::GpuAllocator;
+use gpu_alloc::{GpuAllocator, MemoryBlock};
 
 use crate::data::{GpuPos, Color};
 use crate::vertex::*;
@@ -450,15 +450,6 @@ impl Renderer {
 		}
 	}
 
-	/// Creates a new `ShapePool` to manage allocation and deallocation of shapes
-	pub fn create_shape_pool(&self) -> ShapePool {
-		ShapePool {
-			context: self.context.clone(),
-			allocated_memory: RefCell::default(),
-			transient: false,
-		}
-	}
-
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
 	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
 	pub fn next_frame(&mut self) -> Frame<'_> {
@@ -540,6 +531,7 @@ impl Renderer {
 			swap_chain_frame: ManuallyDrop::new(image),
 			framebuffer: ManuallyDrop::new(framebuffer),
 			viewport,
+			allocations: Vec::new(),
 		}
 	}
 	
@@ -594,23 +586,72 @@ pub struct Frame<'a> {
 	swap_chain_frame: std::mem::ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: std::mem::ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
+	allocations: Vec<MemoryBlock<std::sync::Arc<backend::Memory>>>,
 }
 
 //MARK: Frame API
 impl<'a> Frame<'a> {
+	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) -> (backend::Buffer, backend::Buffer) {
+		use gpu_alloc::{Request, UsageFlags};
+
+		let mut vertex_buffer = unsafe {
+			self.context.gpu.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
+		}.unwrap();
+		let mut index_buffer = unsafe {
+			self.context.gpu.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
+		}.unwrap();
+		let vertex_mem_req = unsafe { self.context.gpu.device.get_buffer_requirements(&vertex_buffer) };
+		let index_mem_req = unsafe { self.context.gpu.device.get_buffer_requirements(&index_buffer) };
+
+		let memory_device = self.context.get_memory_device();
+		let vertex_block = unsafe {
+			self.context.allocator.borrow_mut().alloc(
+				memory_device,
+				Request {
+					size: vertex_mem_req.size,
+					align_mask: vertex_mem_req.alignment,
+					memory_types: vertex_mem_req.type_mask,
+					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT, // Implies host-visible
+				}
+			)
+		}.unwrap();
+		let index_block = unsafe {
+			self.context.allocator.borrow_mut().alloc(
+				memory_device,
+				Request {
+					size: index_mem_req.size,
+					align_mask: index_mem_req.alignment,
+					memory_types: index_mem_req.type_mask,
+					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
+				}
+			)
+		}.unwrap();
+		unsafe {
+			vertex_block.write_bytes(memory_device, 0, vertices);
+			index_block.write_bytes(memory_device, 0, indices);
+			self.context.gpu.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer);
+			self.context.gpu.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer);
+		}
+		self.allocations.push(vertex_block);
+		self.allocations.push(index_block);
+		(vertex_buffer, index_buffer)
+	}
+
 	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: &'a ColoredShape) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'a>) {
+		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+
 		unsafe {
-			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&shape.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.context.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &shape.index_buffer,
+				buffer: &index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
 
 			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
-			self.renderer.context.command_buffer.draw_indexed(0..shape.index_count, 0, 0..1);
+			self.renderer.context.command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
 
@@ -621,27 +662,35 @@ impl<'a> Frame<'a> {
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
 	pub fn draw_textured(&mut self, shape: &'a TexturedShape, texture: &'a Texture) {
+		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+
 		unsafe {
-			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&shape.vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			self.renderer.context.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &shape.index_buffer,
+				buffer: &index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
 			
 			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
 			self.renderer.context.command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
-			self.renderer.context.command_buffer.draw_indexed(0..shape.index_count as u32, 0, 0..1);
+			self.renderer.context.command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
 }
 
 impl<'a> Drop for Frame<'a> {
 	fn drop(&mut self) {
-		if !std::thread::panicking() {
-			self.renderer.context.command_buffer.end_render_pass();
-			self.renderer.context.command_buffer.finish();
+		self.renderer.context.command_buffer.end_render_pass();
+		self.renderer.context.command_buffer.finish();
 
+		for block in self.allocations.drain(..) {
+			unsafe {
+				self.renderer.context.allocator.borrow_mut().dealloc(self.renderer.context.get_memory_device(), block);
+			}
+		}
+
+		if !std::thread::panicking() {
 			self.renderer.context.gpu.queue_groups[0].queues[0].submit(
 				gfx_hal::queue::Submission {
 					command_buffers: vec![&*self.renderer.context.command_buffer],
