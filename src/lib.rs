@@ -33,6 +33,7 @@
 
 pub(crate) mod backend;
 pub mod data;
+pub mod geometry;
 pub mod vertex;
 
 use std::cell::{Cell, RefCell};
@@ -140,14 +141,14 @@ impl RendererContext {
 							with_sampler: true,
 						},
 					},
-					count: 1,
+					count: 1024,
 				},
 				gfx_hal::pso::DescriptorRangeDesc {
 					ty: gfx_hal::pso::DescriptorType::Sampler,
-					count: 1,
+					count: 1024,
 				},
 			],
-			gfx_hal::pso::DescriptorPoolCreateFlags::empty(),
+			gfx_hal::pso::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
 		)}.unwrap();
 
 		let main_pass = unsafe { gpu.device.create_render_pass(
@@ -552,7 +553,6 @@ impl Renderer {
 	pub fn texture_from_rgba(&self, data: &[u8], (width, height): (u32, u32)) -> Texture {
 		let context = self.context.clone();
 
-		// Do this before grabbing the gpu to avoid borrow checker
 		let descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_set(&self.context.texture_descriptor_set_layout) }.unwrap();
 		let mut command_buffer = unsafe { context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary) };
 		let gpu = context.gpu.borrow();
@@ -588,7 +588,7 @@ impl Renderer {
 			Request {
 				size: buf_req.size,
 				align_mask: buf_req.alignment,
-				memory_types: img_req.type_mask,
+				memory_types: buf_req.type_mask,
 				usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
 			}
 		)}.unwrap();
@@ -627,7 +627,7 @@ impl Renderer {
 					buffer_height: height,
 					image_layers: gfx_hal::image::SubresourceLayers {
 						aspects: gfx_hal::format::Aspects::COLOR,
-						level: 1,
+						level: 0,
 						layers: 0..1,
 					},
 					image_offset: gfx_hal::image::Offset::ZERO,
@@ -665,9 +665,17 @@ impl Renderer {
 			gpu.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
 			gpu.device.destroy_fence(fence);
-		}
 
+		}
+		
 		let gpu = context.gpu.borrow();
+		unsafe {
+			context.allocator.borrow_mut().dealloc(
+				GfxMemoryDevice::wrap(&gpu.device),
+				buf_block
+			);
+			gpu.device.destroy_buffer(buffer);
+		}
 
 		let view = unsafe { gpu.device.create_image_view(
 			&image,
@@ -676,9 +684,9 @@ impl Renderer {
 			gfx_hal::format::Swizzle::NO,
 			gfx_hal::image::SubresourceRange {
 				aspects: gfx_hal::format::Aspects::COLOR,
-				level_start: 1,
+				level_start: 0,
 				level_count: None,
-				layer_start: 1,
+				layer_start: 0,
 				layer_count: None,
 			},
 		)}.unwrap();
@@ -809,7 +817,7 @@ impl<'a> Frame<'a> {
 
 	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'a>) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'_>) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
@@ -832,7 +840,11 @@ impl<'a> Frame<'a> {
 	/// # Arguments
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
-	pub fn draw_textured(&mut self, shape: &'a TexturedShape, texture: &'a Texture) {
+	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture) {
+		if !Rc::ptr_eq(&self.renderer.context, &texture.context) {
+			panic!("Texture was not made with renderer that made this frame");
+		}
+
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
@@ -910,6 +922,8 @@ pub struct Texture {
 	width: u32,
 	height: u32,
 }
+
+//TODO: Implement drop for Texture
 
 impl Texture {
 	/// Get the dimensions of this texture, in (width, height) order.

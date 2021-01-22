@@ -1,6 +1,5 @@
-use polystrip::data::GpuPos;
-use polystrip::prelude::*;
-use polystrip::renderer::Texture;
+use polystrip::Renderer;
+use polystrip::data::{GpuPos, Color};
 use polystrip::vertex::{TexturedShape, TextureVertex};
 
 use winit::event::{Event, WindowEvent};
@@ -17,7 +16,7 @@ fn main() {
 	let mut renderer = Renderer::new(&window, (size.width, size.height));
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = Texture::new_from_rgba(&mut renderer, &*sandstone_img, sandstone_img.dimensions());
+	let sandstone = renderer.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
 
 	el.run(move |event, _, control_flow| {
 		match event {
@@ -29,8 +28,7 @@ fn main() {
 				renderer.resize((window_size.width, window_size.height));
 			},
 			Event::MainEventsCleared => {
-				let mut frame = renderer.get_next_frame();
-				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
+				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(TexturedShape {
 					vertices: &[
 						TextureVertex { position: frame.pixel(50, 50), tex_coords: GpuPos { x: 0.0, y: 0.0 } },
