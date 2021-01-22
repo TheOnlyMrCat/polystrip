@@ -34,14 +34,13 @@
 pub(crate) mod backend;
 pub mod data;
 pub mod vertex;
-pub mod texture;
-pub use texture::Texture;
 
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
-use gpu_alloc::{GpuAllocator, MemoryBlock};
+use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
+use gpu_alloc_gfx::GfxMemoryDevice;
 
 use crate::data::{GpuPos, Color};
 use crate::vertex::*;
@@ -51,14 +50,14 @@ use raw_window_handle::HasRawWindowHandle;
 use gfx_hal::prelude::*;
 
 use align_data::{include_aligned, Align32};
-static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../spirv/coloured.vert.spv");
-static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../spirv/coloured.frag.spv");
-static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../spirv/textured.vert.spv");
-static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../spirv/textured.frag.spv");
+static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.vert.spv");
+static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.frag.spv");
+static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.vert.spv");
+static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag.spv");
 
 pub struct RendererContext {
 	pub instance: backend::Instance,
-	pub gpu: gfx_hal::adapter::Gpu<backend::Backend>,
+	pub gpu: RefCell<gfx_hal::adapter::Gpu<backend::Backend>>, //TODO: Split into device and queue groups?
 	pub adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 
 	pub colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
@@ -66,13 +65,13 @@ pub struct RendererContext {
 	pub texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub render_pass: ManuallyDrop<backend::RenderPass>,
 
-	pub command_pool: ManuallyDrop<backend::CommandPool>,
-	pub command_buffer: ManuallyDrop<backend::CommandBuffer>,
+	pub command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
+	pub command_buffer: RefCell<ManuallyDrop<backend::CommandBuffer>>,
 
 	pub render_semaphore: ManuallyDrop<backend::Semaphore>,
 
 	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
-	pub descriptor_pool: ManuallyDrop<backend::DescriptorPool>,
+	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
 
@@ -348,51 +347,49 @@ impl RendererContext {
 		);
 
 		RendererContext {
-			instance, gpu, adapter,
+			instance, adapter,
+			gpu: RefCell::new(gpu),
 
 			colour_graphics_pipeline: ManuallyDrop::new(colour_graphics_pipeline),
 			texture_graphics_pipeline: ManuallyDrop::new(texture_graphics_pipeline),
 			texture_graphics_pipeline_layout: ManuallyDrop::new(texture_graphics_pipeline_layout),
 			render_pass: ManuallyDrop::new(main_pass),
 
-			command_pool: ManuallyDrop::new(command_pool),
-			command_buffer: ManuallyDrop::new(command_buffer),
+			command_pool: RefCell::new(ManuallyDrop::new(command_pool)),
+			command_buffer: RefCell::new(ManuallyDrop::new(command_buffer)),
 
 			render_semaphore: ManuallyDrop::new(render_semaphore),
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
-			descriptor_pool: ManuallyDrop::new(descriptor_pool),
+			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
 
 			extent: Cell::new(extent),
 
 			allocator: RefCell::new(allocator),
 		}
 	}
-
-	pub fn get_memory_device(&self) -> &gpu_alloc_gfx::GfxMemoryDevice<backend::Backend> {
-		gpu_alloc_gfx::GfxMemoryDevice::wrap(&self.gpu.device)
-	}
 }
 
 impl Drop for RendererContext {
 	fn drop(&mut self) {
 		unsafe {
-			self.allocator.get_mut().cleanup(self.get_memory_device());
+			let gpu = self.gpu.borrow();
+			self.allocator.get_mut().cleanup(GfxMemoryDevice::wrap(&gpu.device));
 
-			let mut command_pool = ManuallyDrop::take(&mut self.command_pool);
-			command_pool.free(std::iter::once(ManuallyDrop::take(&mut self.command_buffer)));
-			self.gpu.device.destroy_command_pool(command_pool);
+			let mut command_pool = ManuallyDrop::take(self.command_pool.get_mut());
+			command_pool.free(std::iter::once(ManuallyDrop::take(self.command_buffer.get_mut())));
+			gpu.device.destroy_command_pool(command_pool);
 
-			self.gpu.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
+			gpu.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
 
-			self.gpu.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
-			self.gpu.device.destroy_descriptor_pool(ManuallyDrop::take(&mut self.descriptor_pool));
+			gpu.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
+			gpu.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
 
-			self.gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
-			self.gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
-			self.gpu.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
+			gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
+			gpu.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
+			gpu.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
 			
-			self.gpu.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
+			gpu.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
 		}
 	}
 }
@@ -442,7 +439,7 @@ impl Renderer {
 		let mut context = RendererContext::new(swapchain_config.format, swapchain_config.extent);
 
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
-		unsafe { surface.configure_swapchain(&context.gpu.device, swapchain_config.clone()).unwrap(); }
+		unsafe { surface.configure_swapchain(&context.gpu.borrow().device, swapchain_config.clone()).unwrap(); }
 
 		Renderer {
 			context: Rc::new(context),
@@ -453,11 +450,13 @@ impl Renderer {
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
 	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
 	pub fn next_frame(&mut self) -> Frame<'_> {
-		self.generate_frame(self.acquire_image(), None)
+		let image = self.acquire_image();
+		self.generate_frame(image, None)
 	}
 
 	pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_> {
-		self.generate_frame(self.acquire_image(), Some(clear_color))
+		let image = self.acquire_image();
+		self.generate_frame(image, Some(clear_color))
 	}
 
 
@@ -465,7 +464,7 @@ impl Renderer {
 		match unsafe { self.surface.acquire_image(1_000_000 /* 1 ms */) } {
 			Ok((image, _)) => image,
 			Err(gfx_hal::window::AcquireError::OutOfDate) => {
-				unsafe { self.surface.configure_swapchain(&self.context.gpu.device, self.swapchain_config.clone()) }.unwrap();
+				unsafe { self.surface.configure_swapchain(&self.context.gpu.borrow().device, self.swapchain_config.clone()) }.unwrap();
 				match unsafe { self.surface.acquire_image(0) } {
 					Ok((image, _)) => image,
 					Err(e) => panic!("{}", e),
@@ -487,7 +486,7 @@ impl Renderer {
 			},
 			depth: 0.0..1.0,
 		};
-		let framebuffer = unsafe { self.context.gpu.device.create_framebuffer(&self.context.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
+		let framebuffer = unsafe { self.context.gpu.borrow().device.create_framebuffer(&self.context.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
 
 		let clear_colour_linear = clear_colour.map(|clear_colour| gfx_hal::command::ClearColor {
 			float32: [
@@ -498,33 +497,41 @@ impl Renderer {
 			]
 		});
 
+		let mut command_buffer = self.context.command_buffer.borrow_mut();
+
 		unsafe {
-			self.context.command_buffer.reset(false);
+			command_buffer.reset(false);
 
-			self.context.command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 					
-			self.context.command_buffer.set_viewports(0, &[viewport.clone()]);
-			self.context.command_buffer.set_scissors(0, &[viewport.rect]);
-
-			self.context.command_buffer.begin_render_pass(
-				&self.context.render_pass,
-				&framebuffer,
-				viewport.rect,
-				if let Some(c) = clear_colour_linear {
-					&[gfx_hal::command::ClearValue { color: c }] as &[gfx_hal::command::ClearValue]
-				} else {
-					&[] as _
-				},
-				gfx_hal::command::SubpassContents::Inline
-			);
+			command_buffer.set_viewports(0, &[viewport.clone()]);
+			command_buffer.set_scissors(0, &[viewport.rect]);
 
 			if let Some(c) = clear_colour_linear {
-				self.context.command_buffer.clear_attachments(
+				command_buffer.begin_render_pass(
+					&self.context.render_pass,
+					&framebuffer,
+					viewport.rect,
+					&[gfx_hal::command::ClearValue { color: c }] as &[gfx_hal::command::ClearValue],
+					gfx_hal::command::SubpassContents::Inline
+				);
+
+				command_buffer.clear_attachments(
 					&[gfx_hal::command::AttachmentClear::Color { index: 0, value: c }],
 					&[gfx_hal::pso::ClearRect { rect: viewport.rect, layers: 0..1 }]
 				);
+			} else {
+				command_buffer.begin_render_pass(
+					&self.context.render_pass,
+					&framebuffer,
+					viewport.rect,
+					&[],
+					gfx_hal::command::SubpassContents::Inline
+				);
 			}
 		}
+
+		std::mem::drop(command_buffer);
 
 		Frame {
 			renderer: self,
@@ -532,6 +539,170 @@ impl Renderer {
 			framebuffer: ManuallyDrop::new(framebuffer),
 			viewport,
 			allocations: Vec::new(),
+		}
+	}
+
+	/// Create a new texture from the given rgba data, associated with the given `Renderer`.
+	/// 
+	/// # Arguments
+	/// * `renderer`: The `Renderer` to create this texture for. 
+	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
+	///           the sRGB color space, in row-major order.
+	/// * `size`: The size of the texture, in pixels, in (width, height) order.
+	pub fn texture_from_rgba(&self, data: &[u8], (width, height): (u32, u32)) -> Texture {
+		let context = self.context.clone();
+
+		// Do this before grabbing the gpu to avoid borrow checker
+		let descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_set(&self.context.texture_descriptor_set_layout) }.unwrap();
+		let mut command_buffer = unsafe { context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary) };
+		let gpu = context.gpu.borrow();
+		let memory_device = GfxMemoryDevice::wrap(&gpu.device);
+
+		let mut image = unsafe { gpu.device.create_image(
+			gfx_hal::image::Kind::D2(width, height, 1, 1),
+			1,
+			gfx_hal::format::Format::Rgba8Srgb,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::TRANSFER_DST | gfx_hal::image::Usage::SAMPLED,
+			gfx_hal::image::ViewCapabilities::empty(),
+		)}.unwrap();
+		let img_req = unsafe { gpu.device.get_image_requirements(&image) };
+		let img_block = unsafe { context.allocator.borrow_mut().alloc(
+			memory_device,
+			Request {
+				size: img_req.size,
+				align_mask: img_req.alignment,
+				memory_types: img_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+
+		unsafe {
+			gpu.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
+		}
+
+		let mut buffer = unsafe { gpu.device.create_buffer(img_req.size, gfx_hal::buffer::Usage::TRANSFER_SRC) }.unwrap();
+		let buf_req = unsafe { gpu.device.get_buffer_requirements(&buffer) };
+		let buf_block = unsafe { context.allocator.borrow_mut().alloc(
+			memory_device,
+			Request {
+				size: buf_req.size,
+				align_mask: buf_req.alignment,
+				memory_types: img_req.type_mask,
+				usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
+			}
+		)}.unwrap();
+
+		unsafe {
+			buf_block.write_bytes(memory_device, 0, data).unwrap();
+			gpu.device.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
+
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
+				gfx_hal::memory::Dependencies::empty(),
+				&[gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
+						..
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+			command_buffer.copy_buffer_to_image(
+				&buffer,
+				&image,
+				gfx_hal::image::Layout::TransferDstOptimal,
+				&[gfx_hal::command::BufferImageCopy {
+					buffer_offset: 0,
+					buffer_width: width,
+					buffer_height: height,
+					image_layers: gfx_hal::image::SubresourceLayers {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level: 1,
+						layers: 0..1,
+					},
+					image_offset: gfx_hal::image::Offset::ZERO,
+					image_extent: gfx_hal::image::Extent {
+						width, height,
+						depth: 1,
+					}
+				}]
+			);
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				&[gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..
+						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+			command_buffer.finish();
+
+			let fence = gpu.device.create_fence(false).unwrap();
+			std::mem::drop(gpu);
+			let mut gpu = context.gpu.borrow_mut();
+			gpu.queue_groups[0].queues[0].submit_without_semaphores(&[command_buffer], Some(&fence));
+			gpu.device.wait_for_fence(&fence, u64::MAX).unwrap();
+
+			gpu.device.destroy_fence(fence);
+		}
+
+		let gpu = context.gpu.borrow();
+
+		let view = unsafe { gpu.device.create_image_view(
+			&image,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::Rgba8Srgb,
+			gfx_hal::format::Swizzle::NO,
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::COLOR,
+				level_start: 1,
+				level_count: None,
+				layer_start: 1,
+				layer_count: None,
+			},
+		)}.unwrap();
+
+		let sampler = unsafe { gpu.device.create_sampler(&gfx_hal::image::SamplerDesc::new(gfx_hal::image::Filter::Nearest, gfx_hal::image::WrapMode::Tile)) }.unwrap();
+
+		unsafe {
+			gpu.device.write_descriptor_sets(vec![gfx_hal::pso::DescriptorSetWrite {
+				set: &descriptor_set,
+				binding: 0,
+				array_offset: 0,
+				descriptors: &[
+					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::General),
+					gfx_hal::pso::Descriptor::Sampler(&sampler),
+				]
+			}])
+		}
+
+		std::mem::drop(gpu);
+
+		Texture {
+			context,
+			image, view, sampler, descriptor_set,
+			width, height,
 		}
 	}
 	
@@ -546,7 +717,7 @@ impl Renderer {
 		self.swapchain_config.extent.width = size.0;
 		self.swapchain_config.extent.height = size.1;
 		self.context.extent.set(self.swapchain_config.extent);
-		unsafe { self.surface.configure_swapchain(&self.context.gpu.device, self.swapchain_config.clone()) }.unwrap();
+		unsafe { self.surface.configure_swapchain(&self.context.gpu.borrow().device, self.swapchain_config.clone()) }.unwrap();
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
@@ -583,8 +754,8 @@ impl Drop for Renderer {
 /// More methods are implemented in the [`FrameGeometryExt`](../geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
-	swap_chain_frame: std::mem::ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
-	framebuffer: std::mem::ManuallyDrop<backend::Framebuffer>,
+	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
+	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
 	allocations: Vec<MemoryBlock<std::sync::Arc<backend::Memory>>>,
 }
@@ -592,18 +763,17 @@ pub struct Frame<'a> {
 //MARK: Frame API
 impl<'a> Frame<'a> {
 	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) -> (backend::Buffer, backend::Buffer) {
-		use gpu_alloc::{Request, UsageFlags};
-
+		let gpu = self.renderer.context.gpu.borrow();
 		let mut vertex_buffer = unsafe {
-			self.context.gpu.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
+			gpu.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
 		}.unwrap();
 		let mut index_buffer = unsafe {
-			self.context.gpu.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
+			gpu.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
 		}.unwrap();
-		let vertex_mem_req = unsafe { self.context.gpu.device.get_buffer_requirements(&vertex_buffer) };
-		let index_mem_req = unsafe { self.context.gpu.device.get_buffer_requirements(&index_buffer) };
+		let vertex_mem_req = unsafe { gpu.device.get_buffer_requirements(&vertex_buffer) };
+		let index_mem_req = unsafe { gpu.device.get_buffer_requirements(&index_buffer) };
 
-		let memory_device = self.context.get_memory_device();
+		let memory_device = GfxMemoryDevice::wrap(&gpu.device);
 		let vertex_block = unsafe {
 			self.context.allocator.borrow_mut().alloc(
 				memory_device,
@@ -627,10 +797,10 @@ impl<'a> Frame<'a> {
 			)
 		}.unwrap();
 		unsafe {
-			vertex_block.write_bytes(memory_device, 0, vertices);
-			index_block.write_bytes(memory_device, 0, indices);
-			self.context.gpu.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer);
-			self.context.gpu.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer);
+			vertex_block.write_bytes(memory_device, 0, vertices).unwrap();
+			index_block.write_bytes(memory_device, 0, indices).unwrap();
+			gpu.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer).unwrap();
+			gpu.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer).unwrap();
 		}
 		self.allocations.push(vertex_block);
 		self.allocations.push(index_block);
@@ -641,17 +811,18 @@ impl<'a> Frame<'a> {
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape<'a>) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
 		unsafe {
-			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			self.renderer.context.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
 
-			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
-			self.renderer.context.command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
+			command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
+			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
 
@@ -663,45 +834,50 @@ impl<'a> Frame<'a> {
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
 	pub fn draw_textured(&mut self, shape: &'a TexturedShape, texture: &'a Texture) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
 		unsafe {
-			self.renderer.context.command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			self.renderer.context.command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
 				buffer: &index_buffer,
 				range: gfx_hal::buffer::SubRange::WHOLE,
 				index_type: gfx_hal::IndexType::U16,
 			});
 			
-			self.renderer.context.command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
-			self.renderer.context.command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
-			self.renderer.context.command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
+			command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
+			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
+			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
 }
 
 impl<'a> Drop for Frame<'a> {
 	fn drop(&mut self) {
-		self.renderer.context.command_buffer.end_render_pass();
-		self.renderer.context.command_buffer.finish();
+		unsafe {		
+			let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
+			command_buffer.end_render_pass();
+			command_buffer.finish();
+		}
 
 		for block in self.allocations.drain(..) {
 			unsafe {
-				self.renderer.context.allocator.borrow_mut().dealloc(self.renderer.context.get_memory_device(), block);
+				self.renderer.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&self.renderer.context.gpu.borrow().device), block);
 			}
 		}
 
 		if !std::thread::panicking() {
-			self.renderer.context.gpu.queue_groups[0].queues[0].submit(
-				gfx_hal::queue::Submission {
-					command_buffers: vec![&*self.renderer.context.command_buffer],
-					wait_semaphores: vec![],
-					signal_semaphores: vec![&*self.renderer.context.render_semaphore],
-				},
-				None
-			);
-
+			let mut gpu = self.renderer.context.gpu.borrow_mut();
 			unsafe {
-				self.renderer.context.gpu.queue_groups[0].queues[0].present(&mut self.renderer.surface, ManuallyDrop::take(&mut self.swap_chain_frame), None).unwrap();
+				gpu.queue_groups[0].queues[0].submit(
+					gfx_hal::queue::Submission {
+						command_buffers: vec![&**self.renderer.context.command_buffer.borrow()],
+						wait_semaphores: vec![],
+						signal_semaphores: vec![&*self.renderer.context.render_semaphore],
+					},
+					None
+				);
+
+				gpu.queue_groups[0].queues[0].present(&mut self.renderer.surface, ManuallyDrop::take(&mut self.swap_chain_frame), None).unwrap();
 			}
 		} else {
 			unsafe {
@@ -709,7 +885,7 @@ impl<'a> Drop for Frame<'a> {
 			}
 		}
 		unsafe {
-			self.renderer.context.gpu.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
+			self.renderer.context.gpu.borrow().device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
 		}
 	}
 }
@@ -719,5 +895,41 @@ impl<'a> std::ops::Deref for Frame<'a> {
 
 	fn deref(&self) -> &Renderer {
 		&self.renderer
+	}
+}
+
+/// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html).
+/// 
+/// It can be used only with the `Renderer` which created it.
+pub struct Texture {
+	context: Rc<RendererContext>,
+	image: backend::Image,
+	view: backend::ImageView,
+	sampler: backend::Sampler,
+	descriptor_set: backend::DescriptorSet,
+	width: u32,
+	height: u32,
+}
+
+impl Texture {
+	/// Get the dimensions of this texture, in (width, height) order.
+	pub fn dimensions(&self) -> (u32, u32) {
+		(self.width, self.height)
+	}
+
+	pub fn width(&self) -> u32 {
+		self.width
+	}
+
+	pub fn height(&self) -> u32 {
+		self.height
+	}
+
+	/// Converts pixel coordinates to Gpu coordinates
+	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
+		GpuPos {
+			x: x as f32 / self.width as f32,
+			y: y as f32 / self.height as f32,
+		}
 	}
 }
