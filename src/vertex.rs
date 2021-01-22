@@ -1,11 +1,5 @@
 //! Vertices and shapes, the core of the rendering process.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use gfx_hal::prelude::*;
-use gpu_alloc::{MemoryBlock, Request, UsageFlags};
-
 use crate::data::*;
 
 /// A vertex describing a position and a position on a texture.

@@ -420,7 +420,7 @@ impl Drop for RendererContext {
 /// ```
 pub struct Renderer {
 	context: Rc<RendererContext>,
-	surface: backend::Surface,
+	surface: ManuallyDrop<backend::Surface>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
 }
 
@@ -437,14 +437,15 @@ impl Renderer {
 	///           differentiate between physical and logical size, this refers to the logical size
 	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
 		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
-		let mut context = RendererContext::new(swapchain_config.format, swapchain_config.extent);
+		let context = RendererContext::new(swapchain_config.format, swapchain_config.extent);
 
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
 		unsafe { surface.configure_swapchain(&context.gpu.borrow().device, swapchain_config.clone()).unwrap(); }
 
 		Renderer {
 			context: Rc::new(context),
-			surface, swapchain_config,
+			surface: ManuallyDrop::new(surface),
+			swapchain_config,
 		}
 	}
 
@@ -665,7 +666,6 @@ impl Renderer {
 			gpu.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
 			gpu.device.destroy_fence(fence);
-
 		}
 		
 		let gpu = context.gpu.borrow();
@@ -709,7 +709,11 @@ impl Renderer {
 
 		Texture {
 			context,
-			image, view, sampler, descriptor_set,
+			image: ManuallyDrop::new(image),
+			view: ManuallyDrop::new(view),
+			sampler: ManuallyDrop::new(sampler),
+			descriptor_set: ManuallyDrop::new(descriptor_set),
+			memory_block: ManuallyDrop::new(img_block),
 			width, height,
 		}
 	}
@@ -750,6 +754,7 @@ impl Renderer {
 impl Drop for Renderer {
 	fn drop(&mut self) {
 		unsafe {
+			self.context.instance.destroy_surface(ManuallyDrop::take(&mut self.surface));
 		}
 	}
 }
@@ -857,7 +862,7 @@ impl<'a> Frame<'a> {
 			});
 			
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
-			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&texture.descriptor_set], &[0]);
+			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&*texture.descriptor_set], &[0]);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
@@ -915,15 +920,14 @@ impl<'a> std::ops::Deref for Frame<'a> {
 /// It can be used only with the `Renderer` which created it.
 pub struct Texture {
 	context: Rc<RendererContext>,
-	image: backend::Image,
-	view: backend::ImageView,
-	sampler: backend::Sampler,
-	descriptor_set: backend::DescriptorSet,
+	image: ManuallyDrop<backend::Image>,
+	view: ManuallyDrop<backend::ImageView>,
+	sampler: ManuallyDrop<backend::Sampler>,
+	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
+	memory_block: ManuallyDrop<MemoryBlock<std::sync::Arc<backend::Memory>>>,
 	width: u32,
 	height: u32,
 }
-
-//TODO: Implement drop for Texture
 
 impl Texture {
 	/// Get the dimensions of this texture, in (width, height) order.
@@ -944,6 +948,23 @@ impl Texture {
 		GpuPos {
 			x: x as f32 / self.width as f32,
 			y: y as f32 / self.height as f32,
+		}
+	}
+}
+
+impl Drop for Texture {
+	fn drop(&mut self) {
+		unsafe {
+			self.context.descriptor_pool.borrow_mut().free(std::iter::once(ManuallyDrop::take(&mut self.descriptor_set)));
+		}
+
+		let gpu = self.context.gpu.borrow();
+		
+		unsafe {
+			gpu.device.destroy_sampler(ManuallyDrop::take(&mut self.sampler));
+			gpu.device.destroy_image_view(ManuallyDrop::take(&mut self.view));
+			gpu.device.destroy_image(ManuallyDrop::take(&mut self.image));
+			self.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&gpu.device), ManuallyDrop::take(&mut self.memory_block));
 		}
 	}
 }
