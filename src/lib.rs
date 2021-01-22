@@ -772,17 +772,17 @@ pub struct Frame<'a> {
 impl<'a> Frame<'a> {
 	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) -> (backend::Buffer, backend::Buffer) {
 		let mut vertex_buffer = unsafe {
-			self.context.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
+			self.renderer.context.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
 		}.unwrap();
 		let mut index_buffer = unsafe {
-			self.context.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
+			self.renderer.context.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
 		}.unwrap();
-		let vertex_mem_req = unsafe { self.context.device.get_buffer_requirements(&vertex_buffer) };
-		let index_mem_req = unsafe { self.context.device.get_buffer_requirements(&index_buffer) };
+		let vertex_mem_req = unsafe { self.renderer.context.device.get_buffer_requirements(&vertex_buffer) };
+		let index_mem_req = unsafe { self.renderer.context.device.get_buffer_requirements(&index_buffer) };
 
-		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
+		let memory_device = GfxMemoryDevice::wrap(&self.renderer.context.device);
 		let vertex_block = unsafe {
-			self.context.allocator.borrow_mut().alloc(
+			self.renderer.context.allocator.borrow_mut().alloc(
 				memory_device,
 				Request {
 					size: vertex_mem_req.size,
@@ -793,7 +793,7 @@ impl<'a> Frame<'a> {
 			)
 		}.unwrap();
 		let index_block = unsafe {
-			self.context.allocator.borrow_mut().alloc(
+			self.renderer.context.allocator.borrow_mut().alloc(
 				memory_device,
 				Request {
 					size: index_mem_req.size,
@@ -806,8 +806,8 @@ impl<'a> Frame<'a> {
 		unsafe {
 			vertex_block.write_bytes(memory_device, 0, vertices).unwrap();
 			index_block.write_bytes(memory_device, 0, indices).unwrap();
-			self.context.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer).unwrap();
-			self.context.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer).unwrap();
+			self.renderer.context.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer).unwrap();
+			self.renderer.context.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer).unwrap();
 		}
 		self.allocations.push(vertex_block);
 		self.allocations.push(index_block);
@@ -860,6 +860,14 @@ impl<'a> Frame<'a> {
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
+
+	/// Converts pixel coordinates to Gpu coordinates
+	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
+		GpuPos {
+			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
+			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
+		}
+	}
 }
 
 impl<'a> Drop for Frame<'a> {
@@ -898,14 +906,6 @@ impl<'a> Drop for Frame<'a> {
 		unsafe {
 			self.renderer.context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
 		}
-	}
-}
-
-impl<'a> std::ops::Deref for Frame<'a> {
-	type Target = Renderer;
-
-	fn deref(&self) -> &Renderer {
-		&self.renderer
 	}
 }
 
