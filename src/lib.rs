@@ -9,7 +9,7 @@
 //! # Example with `winit`
 //! ```no_run
 //! # use winit::event::{Event, WindowEvent};
-//! # use polystrip::prelude::Renderer;
+//! # use polystrip::Renderer;
 //! let event_loop = winit::event_loop::EventLoop::new();
 //! let window = winit::window::Window::new(&event_loop).unwrap();
 //! 
@@ -23,7 +23,7 @@
 //!             renderer.resize((window_size.width, window_size.height));
 //!         },
 //!         Event::MainEventsCleared => {
-//!             let mut frame = renderer.get_next_frame();
+//!             let mut frame = renderer.next_frame();
 //!             // Render in here
 //!         },
 //!         _ => {}
@@ -402,7 +402,7 @@ impl Drop for RendererContext {
 /// in the event loop, and specified on creation. For example, using `winit`:
 /// ```no_run
 /// # use winit::event::{Event, WindowEvent};
-/// # use polystrip::prelude::Renderer;
+/// # use polystrip::Renderer;
 /// # let event_loop = winit::event_loop::EventLoop::new();
 /// # let window = winit::window::Window::new(&event_loop).unwrap();
 /// let window_size = window.inner_size().to_logical(window.scale_factor());
@@ -451,7 +451,7 @@ impl Renderer {
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
-	/// frame is alive. Any operations on this renderer must be done through the `Frame`, which implements `Deref<Target = Renderer>`.
+	/// frame is alive.
 	pub fn next_frame(&mut self) -> Frame<'_> {
 		let image = self.acquire_image();
 		self.generate_frame(image, None)
@@ -545,10 +545,9 @@ impl Renderer {
 		}
 	}
 
-	/// Create a new texture from the given rgba data, associated with the given `Renderer`.
+	/// Create a new texture from the given rgba data, associated with this `Renderer`.
 	/// 
 	/// # Arguments
-	/// * `renderer`: The `Renderer` to create this texture for. 
 	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
 	///           the sRGB color space, in row-major order.
 	/// * `size`: The size of the texture, in pixels, in (width, height) order.
@@ -756,10 +755,7 @@ impl Drop for Renderer {
 
 /// A frame to be drawn to. The frame gets presented on drop.
 /// 
-/// Since a `Frame` borrows the [`Renderer`](struct.Renderer.html) it was created for, any functions which would normally
-/// be called on a `&Renderer` must be called on the `Frame`, which implements `Deref<Target = Renderer>`.
-/// 
-/// More methods are implemented in the [`FrameGeometryExt`](../geometry/trait.FrameGeometryExt.html) trait.
+/// More methods are implemented in the [`FrameGeometryExt`](geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
 	renderer: &'a mut Renderer,
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
@@ -814,7 +810,7 @@ impl<'a> Frame<'a> {
 		(vertex_buffer, index_buffer)
 	}
 
-	/// Draws a [`ColoredShape`](../vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
+	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape<'_>) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
@@ -833,7 +829,7 @@ impl<'a> Frame<'a> {
 		}
 	}
 
-	/// Draws a [`TexturedShape`](../vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
+	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	/// 
 	/// # Arguments
@@ -909,9 +905,9 @@ impl<'a> Drop for Frame<'a> {
 	}
 }
 
-/// A texture which can be copied to and rendered by a [`Frame`](../renderer/struct.Frame.html).
+/// A texture which can be copied to and rendered by a [`Frame`](struct.Frame.html).
 /// 
-/// It can be used only with the `Renderer` which created it.
+/// It can be used only with the [`Renderer`](struct.Renderer.html) which created it.
 pub struct Texture {
 	context: Rc<RendererContext>,
 	image: ManuallyDrop<backend::Image>,

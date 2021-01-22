@@ -7,6 +7,10 @@ cargo build --features metal
 test $1 '!=' '' && cargo run --features metal --example $1
 #/
 
+#test
+cargo test --features metal
+#/
+
 #doc b!
 cargo doc
 #/

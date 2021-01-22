@@ -10,7 +10,7 @@ use crate::vertex::*;
 
 const QUAD_INCICES: [[u16; 3]; 2] = [[0, 1, 3], [1, 2, 3]];
 
-/// This trait contains numerous functions to make rendering to a [`Frame`](../renderer/struct.Frame.html) easier.
+/// This trait contains numerous functions to make rendering to a [`Frame`](../struct.Frame.html) easier.
 pub trait FrameGeometryExt<'a> {
 	/// Draw and fill a `Rect` with the specified `Color`.
 	fn draw_rect(&mut self, bounds: Rect, color: Color);
