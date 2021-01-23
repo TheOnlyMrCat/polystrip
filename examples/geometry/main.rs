@@ -1,6 +1,6 @@
 use polystrip::Renderer;
 use polystrip::data::{GpuPos, Color};
-use polystrip::vertex::{ColoredShape, ColorVertex};
+use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -39,6 +39,21 @@ fn main() {
 						[0, 1, 4],
 						[1, 2, 4],
 						[2, 3, 4],
+					]
+				});
+				frame.draw_stroked(StrokedShape {
+					vertices: &[
+						ColorVertex { position: GpuPos { x: 0.5, y: 0.5 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.125, y: 0.125 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.25, y: -0.5 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.75, y: -0.5 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: GpuPos { x: 0.875, y: 0.125 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+					],
+					indices: &[
+						[0, 1], [0, 2], [0, 3], [0, 4],
+						[1, 2], [1, 3], [1, 4],
+						[2, 3], [2, 4],
+						[3, 4],
 					]
 				});
 				frame.draw_colored(ColoredShape {

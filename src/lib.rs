@@ -62,7 +62,10 @@ pub struct RendererContext {
 	pub queue_groups: RefCell<Vec<gfx_hal::queue::family::QueueGroup<backend::Backend>>>,
 	pub adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 
+	pub stroked_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	pub stroked_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	pub colour_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub texture_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
 	pub texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub render_pass: ManuallyDrop<backend::RenderPass>,
@@ -172,6 +175,88 @@ impl RendererContext {
 
 		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
 		let colour_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV)) }.unwrap();
+
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
+		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
+				buffers: &[gfx_hal::pso::VertexBufferDesc {
+					binding: 0,
+					stride: std::mem::size_of::<ColorVertex>() as u32,
+					rate: gfx_hal::pso::VertexInputRate::Vertex,
+				}],
+				attributes: ColorVertex::desc(),
+				input_assembler: gfx_hal::pso::InputAssemblerDesc {
+					primitive: gfx_hal::pso::Primitive::LineList,
+					with_adjacency: false,
+					restart_index: None,
+				},
+				vertex: gfx_hal::pso::EntryPoint {
+					entry: "main",
+					module: &colour_vs_module,
+					specialization: gfx_hal::pso::Specialization {
+						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
+							id: 0,
+							range: 0..1
+						}]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
+					}
+				},
+				tessellation: None,
+				geometry: None,
+			},
+			rasterizer: gfx_hal::pso::Rasterizer {
+				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
+				cull_face: gfx_hal::pso::Face::BACK,
+				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
+				depth_clamping: false,
+				depth_bias: None,
+				conservative: false,
+				line_width: gfx_hal::pso::State::Dynamic,
+			},
+			fragment: Some(gfx_hal::pso::EntryPoint {
+				entry: "main",
+				module: &colour_fs_module,
+				specialization: gfx_hal::pso::Specialization {
+					constants: std::borrow::Cow::Borrowed(&[]),
+					data: std::borrow::Cow::Borrowed(&[]),
+				}
+			}),
+			blender: gfx_hal::pso::BlendDesc {
+				logic_op: None,
+				targets: vec![gfx_hal::pso::ColorBlendDesc {
+					mask: gfx_hal::pso::ColorMask::ALL,
+					blend: Some(gfx_hal::pso::BlendState {
+						color: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						},
+						alpha: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						}
+					})
+				}]
+			},
+			depth_stencil: gfx_hal::pso::DepthStencilDesc {
+				depth: None,
+				depth_bounds: false,
+				stencil: None,
+			},
+			multisampling: None,
+			baked_states: gfx_hal::pso::BakedStates {
+				viewport: None,
+				scissor: None,
+				blend_color: None,
+				depth_bounds: None,
+			},
+			layout: &stroked_graphics_pipeline_layout,
+			subpass: gfx_hal::pass::Subpass {
+				index: 0,
+				main_pass: &main_pass,
+			},
+			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
+			parent: gfx_hal::pso::BasePipeline::None,
+		}, None) }.unwrap();
 
 		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
@@ -353,7 +438,10 @@ impl RendererContext {
 			device: gpu.device,
 			queue_groups: RefCell::new(gpu.queue_groups),
 
+			stroked_graphics_pipeline: ManuallyDrop::new(stroked_graphics_pipeline),
+			stroked_graphics_pipeline_layout: ManuallyDrop::new(stroked_graphics_pipeline_layout),
 			colour_graphics_pipeline: ManuallyDrop::new(colour_graphics_pipeline),
+			colour_graphics_pipeline_layout: ManuallyDrop::new(colour_graphics_pipeline_layout),
 			texture_graphics_pipeline: ManuallyDrop::new(texture_graphics_pipeline),
 			texture_graphics_pipeline_layout: ManuallyDrop::new(texture_graphics_pipeline_layout),
 			render_pass: ManuallyDrop::new(main_pass),
@@ -387,8 +475,11 @@ impl Drop for RendererContext {
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
 
+			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.stroked_graphics_pipeline));
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
+			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.stroked_graphics_pipeline_layout));
+			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.colour_graphics_pipeline_layout));
 			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
 			
 			self.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
@@ -808,6 +899,25 @@ impl<'a> Frame<'a> {
 		self.allocations.push(vertex_block);
 		self.allocations.push(index_block);
 		(vertex_buffer, index_buffer)
+	}
+
+	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
+	/// before it.
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>) {
+		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
+
+		unsafe {
+			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+				buffer: &index_buffer,
+				range: gfx_hal::buffer::SubRange::WHOLE,
+				index_type: gfx_hal::IndexType::U16,
+			});
+
+			command_buffer.bind_graphics_pipeline(&self.renderer.context.stroked_graphics_pipeline);
+			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 2, 0, 0..1);
+		}
 	}
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn

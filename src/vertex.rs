@@ -78,12 +78,21 @@ impl ColorVertex {
 	}
 }
 
+/// A set of vertices and indices describing an outlined geometric shape as a set of lines.
+///
+/// The colors of the lines are determined by interpolating the colours at each
+/// [`ColorVertex`](struct.ColorVertex).
+#[derive(Clone, Copy, Debug)]
+pub struct StrokedShape<'a> {
+	pub vertices: &'a [ColorVertex],
+	/// A list of pairs of vertices which specify which vertices should have lines drawn between them
+	pub indices: &'a [[u16; 2]],
+}
+
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
 ///
 /// The color of the shape is determined by interpolating the colours at each
 /// [`ColorVertex`](struct.ColorVertex).
-/// 
-/// See also [`TexturedShape`](struct.TexturedShape)
 #[derive(Clone, Copy, Debug)]
 pub struct ColoredShape<'a> {
 	pub vertices: &'a [ColorVertex],
@@ -98,8 +107,6 @@ pub struct ColoredShape<'a> {
 /// 
 /// A `TexturedShape` does not store the texture it is to draw. This must be specified in the
 /// arguments to [`Frame::draw_textured`](../renderer/struct.Frame#method.draw_textured)
-/// 
-/// See also [`ColoredShape`](struct.ColoredShape)
 #[derive(Clone, Copy, Debug)]
 pub struct TexturedShape<'a> {
 	pub vertices: &'a [TextureVertex],
