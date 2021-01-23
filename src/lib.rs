@@ -200,25 +200,61 @@ impl RendererContext {
 		)}.unwrap();
 
 		let main_pass = unsafe { gpu.device.create_render_pass(
-			&[gfx_hal::pass::Attachment {
-				format: Some(format),
-				samples: 1,
-				ops: gfx_hal::pass::AttachmentOps::DONT_CARE, //TODO: Potential customisation
-				stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
-				layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
-			}],
+			&[
+				gfx_hal::pass::Attachment {
+					format: Some(format),
+					samples: 1,
+					ops: gfx_hal::pass::AttachmentOps {
+						load: gfx_hal::pass::AttachmentLoadOp::Load,
+						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+					},
+					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
+					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
+				},
+				gfx_hal::pass::Attachment {
+					format: Some(gfx_hal::format::Format::D32Sfloat),
+					samples: 1,
+					ops: gfx_hal::pass::AttachmentOps {
+						load: gfx_hal::pass::AttachmentLoadOp::Clear,
+						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+					},
+					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
+					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::DepthStencilAttachmentOptimal
+				}
+			],
 			&[gfx_hal::pass::SubpassDesc {
 				colors: &[(0, gfx_hal::image::Layout::ColorAttachmentOptimal)],
-				depth_stencil: None,
+				depth_stencil: Some(&(1, gfx_hal::image::Layout::DepthStencilAttachmentOptimal)),
 				inputs: &[],
 				resolves: &[],
 				preserves: &[],
 			}],
-			&[]
+			&[
+				gfx_hal::pass::SubpassDependency {
+					passes: None..Some(0),
+					stages: gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT
+						..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT | gfx_hal::pso::PipelineStage::LATE_FRAGMENT_TESTS,
+					accesses: gfx_hal::image::Access::empty()
+						..gfx_hal::image::Access::COLOR_ATTACHMENT_READ | gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE
+						| gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_READ | gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
+					flags: gfx_hal::memory::Dependencies::empty(),
+				},
+				gfx_hal::pass::SubpassDependency {
+					passes: Some(0)..None,
+					stages: gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT | gfx_hal::pso::PipelineStage::LATE_FRAGMENT_TESTS
+						..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+					accesses: gfx_hal::image::Access::COLOR_ATTACHMENT_READ | gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE
+						| gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_READ | gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_WRITE
+						..gfx_hal::image::Access::empty(),
+					flags: gfx_hal::memory::Dependencies::empty(),
+				}
+			]
 		)}.unwrap();
 
 		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
 		let colour_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV)) }.unwrap();
+		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
+		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
 		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
 		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
@@ -282,7 +318,10 @@ impl RendererContext {
 				}]
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
-				depth: None,
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::LessEqual,
+					write: true,
+				}),
 				depth_bounds: false,
 				stencil: None,
 			},
@@ -364,7 +403,10 @@ impl RendererContext {
 				}]
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
-				depth: None,
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::LessEqual,
+					write: true,
+				}),
 				depth_bounds: false,
 				stencil: None,
 			},
@@ -383,9 +425,6 @@ impl RendererContext {
 			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
-
-		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
-		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
 		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
@@ -449,7 +488,10 @@ impl RendererContext {
 				}]
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
-				depth: None,
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::LessEqual,
+					write: true,
+				}),
 				depth_bounds: false,
 				stencil: None,
 			},
@@ -625,7 +667,11 @@ impl Renderer {
 			},
 			depth: 0.0..1.0,
 		};
-		let framebuffer = unsafe { self.context.device.create_framebuffer(&self.context.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
+		let framebuffer = unsafe { self.context.device.create_framebuffer(
+			&self.context.render_pass,
+			vec![image.borrow(), &*self.context.depth_stencil_view], //TODO: Remove the vector. arrayvec?
+			self.swapchain_config.extent.to_extent()
+		)}.unwrap();
 
 		let clear_colour_linear = clear_colour.map(|clear_colour| gfx_hal::command::ClearColor {
 			float32: [
