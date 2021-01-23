@@ -13,7 +13,7 @@ pub type Backend = gfx_backend_metal::Backend;
 pub type Backend = gfx_backend_dx12::Backend;
 
 #[cfg(feature = "gfx-backend-empty")]
-pub type Backend = gfx_backend_dx12::Backend;
+pub type Backend = gfx_backend_empty::Backend;
 
 pub type Instance = <Backend as gfx_hal::Backend>::Instance;
 pub type PhysicalDevice = <Backend as gfx_hal::Backend>::PhysicalDevice;
