@@ -39,6 +39,7 @@ pub mod vertex;
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
@@ -77,10 +78,14 @@ pub struct RendererContext {
 
 	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
 	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
+
+	pub depth_stencil: ManuallyDrop<backend::Image>,
+	pub depth_stencil_view: ManuallyDrop<backend::ImageView>,
+	pub depth_stencil_memory: MemoryBlock<Arc<backend::Memory>>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
 
-	pub allocator: RefCell<GpuAllocator<std::sync::Arc<backend::Memory>>>,
+	pub allocator: RefCell<GpuAllocator<Arc<backend::Memory>>>,
 }
 
 impl RendererContext {
@@ -153,6 +158,45 @@ impl RendererContext {
 				},
 			],
 			gfx_hal::pso::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
+		)}.unwrap();
+
+		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
+		let mut allocator = GpuAllocator::new(
+			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
+			alloc_props,
+		);
+
+		let mut depth_stencil = unsafe { gpu.device.create_image(
+			gfx_hal::image::Kind::D2(extent.width, extent.height, 1, 1),
+			1,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+			gfx_hal::image::ViewCapabilities::empty()
+		)}.unwrap();
+		let depth_stencil_req = unsafe { gpu.device.get_image_requirements(&depth_stencil) };
+		let depth_stencil_memory = unsafe { allocator.alloc(
+			GfxMemoryDevice::wrap(&gpu.device),
+			Request {
+				size: depth_stencil_req.size,
+				align_mask: depth_stencil_req.alignment,
+				memory_types: depth_stencil_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+		unsafe { gpu.device.bind_image_memory(&depth_stencil_memory.memory(), depth_stencil_memory.offset(), &mut depth_stencil) }.unwrap();
+		let depth_stencil_view = unsafe { gpu.device.create_image_view(
+			&depth_stencil,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::format::Swizzle::NO,
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::DEPTH,
+				level_start: 0,
+				level_count: None,
+				layer_start: 0,
+				layer_count: None,
+			}
 		)}.unwrap();
 
 		let main_pass = unsafe { gpu.device.create_render_pass(
@@ -427,12 +471,6 @@ impl RendererContext {
 
 		let render_semaphore = gpu.device.create_semaphore().unwrap();
 
-		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
-		let allocator = GpuAllocator::new(
-			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
-			alloc_props,
-		);
-
 		RendererContext {
 			instance, adapter,
 			device: gpu.device,
@@ -454,6 +492,10 @@ impl RendererContext {
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
 
+			depth_stencil: ManuallyDrop::new(depth_stencil),
+			depth_stencil_view: ManuallyDrop::new(depth_stencil_view),
+			depth_stencil_memory,
+
 			extent: Cell::new(extent),
 
 			allocator: RefCell::new(allocator),
@@ -471,6 +513,9 @@ impl Drop for RendererContext {
 			self.device.destroy_command_pool(command_pool);
 
 			self.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
+
+			self.device.destroy_image_view(ManuallyDrop::take(&mut self.depth_stencil_view));
+			self.device.destroy_image(ManuallyDrop::take(&mut self.depth_stencil));
 
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
@@ -852,7 +897,7 @@ pub struct Frame<'a> {
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
-	allocations: Vec<MemoryBlock<std::sync::Arc<backend::Memory>>>,
+	allocations: Vec<MemoryBlock<Arc<backend::Memory>>>,
 }
 
 //MARK: Frame API
@@ -1024,7 +1069,7 @@ pub struct Texture {
 	view: ManuallyDrop<backend::ImageView>,
 	sampler: ManuallyDrop<backend::Sampler>,
 	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
-	memory_block: ManuallyDrop<MemoryBlock<std::sync::Arc<backend::Memory>>>,
+	memory_block: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
 	width: u32,
 	height: u32,
 }
