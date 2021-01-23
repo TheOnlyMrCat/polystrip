@@ -1,5 +1,7 @@
-#[cfg(not(any(feature = "gfx-backend-vulkan", feature = "gfx-backend-metal", feature = "gfx-backend-dx12")))]
-compile_error!("Need to select a backend! (One of [\"vulkan\", \"metal\", \"dx12\"]");
+#![allow(dead_code)]
+
+#[cfg(not(any(feature = "gfx-backend-vulkan", feature = "gfx-backend-metal", feature = "gfx-backend-dx12", feature = "gfx-backend-empty")))]
+compile_error!("Need to select a backend! Enable one of the [\"vulkan\", \"metal\", \"dx12\"] features");
 
 #[cfg(feature = "gfx-backend-vulkan")]
 pub type Backend = gfx_backend_vulkan::Backend;
@@ -8,6 +10,9 @@ pub type Backend = gfx_backend_vulkan::Backend;
 pub type Backend = gfx_backend_metal::Backend;
 
 #[cfg(feature = "gfx-backend-dx12")]
+pub type Backend = gfx_backend_dx12::Backend;
+
+#[cfg(feature = "gfx-backend-empty")]
 pub type Backend = gfx_backend_dx12::Backend;
 
 pub type Instance = <Backend as gfx_hal::Backend>::Instance;

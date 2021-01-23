@@ -9,14 +9,9 @@ matrix:
 
 cache: cargo
 
-addons:
-  apt:
-    packages:
-      - libvulkan-dev
-
 install:
-  - cargo build --verbose --features vulkan
+  - cargo build --verbose --features empty
 
 script:
-  - cargo build --verbose --features vulkan
-  - cargo test --verbose --features vulkan
+  - cargo build --verbose --features empty
+  - cargo test --verbose --features empty
