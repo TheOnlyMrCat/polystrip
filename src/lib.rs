@@ -44,7 +44,7 @@ use std::sync::Arc;
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
-use crate::data::{GpuPos, Color};
+use crate::data::{GpuVec2, Color};
 use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
@@ -206,7 +206,7 @@ impl RendererContext {
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
 						load: gfx_hal::pass::AttachmentLoadOp::Load,
-						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+						store: gfx_hal::pass::AttachmentStoreOp::Store,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
 					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
@@ -319,7 +319,7 @@ impl RendererContext {
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
 				depth: Some(gfx_hal::pso::DepthTest {
-					fun: gfx_hal::pso::Comparison::LessEqual,
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
 					write: true,
 				}),
 				depth_bounds: false,
@@ -404,7 +404,7 @@ impl RendererContext {
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
 				depth: Some(gfx_hal::pso::DepthTest {
-					fun: gfx_hal::pso::Comparison::LessEqual,
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
 					write: true,
 				}),
 				depth_bounds: false,
@@ -489,7 +489,7 @@ impl RendererContext {
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
 				depth: Some(gfx_hal::pso::DepthTest {
-					fun: gfx_hal::pso::Comparison::LessEqual,
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
 					write: true,
 				}),
 				depth_bounds: false,
@@ -628,13 +628,15 @@ impl Renderer {
 		}
 	}
 
-	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
-	/// frame is alive.
+	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
+	/// previous frame. This `Renderer` is borrowed mutably while the `Frame` is alive.
 	pub fn next_frame(&mut self) -> Frame<'_> {
 		let image = self.acquire_image();
 		self.generate_frame(image, None)
 	}
 
+	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will be cleared to the specified
+	/// `clear_color` (converted from sRGB with a gamma of 2.0). This `Renderer` is borrowed mutably while the `Frame` is alive
 	pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_> {
 		let image = self.acquire_image();
 		self.generate_frame(image, Some(clear_color))
@@ -673,15 +675,6 @@ impl Renderer {
 			self.swapchain_config.extent.to_extent()
 		)}.unwrap();
 
-		let clear_colour_linear = clear_colour.map(|clear_colour| gfx_hal::command::ClearColor {
-			float32: [
-				(clear_colour.r as f32).powi(2) / 65_025.0,
-				(clear_colour.g as f32).powi(2) / 65_025.0,
-				(clear_colour.b as f32).powi(2) / 65_025.0,
-				clear_colour.a as f32 / 255.0,
-			]
-		});
-
 		let mut command_buffer = self.context.command_buffer.borrow_mut();
 
 		unsafe {
@@ -692,26 +685,35 @@ impl Renderer {
 			command_buffer.set_viewports(0, &[viewport.clone()]);
 			command_buffer.set_scissors(0, &[viewport.rect]);
 
-			if let Some(c) = clear_colour_linear {
-				command_buffer.begin_render_pass(
-					&self.context.render_pass,
-					&framebuffer,
-					viewport.rect,
-					&[gfx_hal::command::ClearValue { color: c }] as &[gfx_hal::command::ClearValue],
-					gfx_hal::command::SubpassContents::Inline
-				);
+			command_buffer.begin_render_pass(
+				&self.context.render_pass,
+				&framebuffer,
+				viewport.rect,
+				&[gfx_hal::command::ClearValue {
+					depth_stencil: gfx_hal::command::ClearDepthStencil {
+						depth: 0.0,
+						stencil: 0,
+					}
+				}] as &[gfx_hal::command::ClearValue],
+				gfx_hal::command::SubpassContents::Inline
+			);
 
+			if let Some(clear_colour) = clear_colour {
 				command_buffer.clear_attachments(
-					&[gfx_hal::command::AttachmentClear::Color { index: 0, value: c }],
+					&[
+						gfx_hal::command::AttachmentClear::Color {
+							index: 0,
+							value: gfx_hal::command::ClearColor {
+								float32: [
+									(clear_colour.r as f32).powi(2) / 65_025.0,
+									(clear_colour.g as f32).powi(2) / 65_025.0,
+									(clear_colour.b as f32).powi(2) / 65_025.0,
+									clear_colour.a as f32 / 255.0,
+								]
+							}
+						},
+					],
 					&[gfx_hal::pso::ClearRect { rect: viewport.rect, layers: 0..1 }]
-				);
-			} else {
-				command_buffer.begin_render_pass(
-					&self.context.render_pass,
-					&framebuffer,
-					viewport.rect,
-					&[],
-					gfx_hal::command::SubpassContents::Inline
 				);
 			}
 		}
@@ -919,8 +921,8 @@ impl Renderer {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
 			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
 		}
@@ -1059,8 +1061,8 @@ impl<'a> Frame<'a> {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
 			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
 		}
@@ -1135,8 +1137,8 @@ impl Texture {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: x as f32 / self.width as f32,
 			y: y as f32 / self.height as f32,
 		}

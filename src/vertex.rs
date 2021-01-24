@@ -8,8 +8,8 @@ use crate::data::*;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct TextureVertex {
-	pub position: GpuPos,
-	pub tex_coords: GpuPos,
+	pub position: GpuVec3,
+	pub tex_coords: GpuVec2,
 }
 
 unsafe impl bytemuck::Pod for TextureVertex {}
@@ -24,7 +24,7 @@ impl TextureVertex {
 				location: 0,
 				binding: 0,
 				element: gfx_hal::pso::Element {
-					format: gfx_hal::format::Format::Rg32Sfloat,
+					format: gfx_hal::format::Format::Rgb32Sfloat,
 					offset: 0,
 				},
 			},
@@ -33,7 +33,7 @@ impl TextureVertex {
 				binding: 0,
 				element: gfx_hal::pso::Element {
 					format: gfx_hal::format::Format::Rg32Sfloat,
-					offset: size_of::<[f32; 2]>() as u32,
+					offset: size_of::<[f32; 3]>() as u32,
 				},
 			},
 		]
@@ -46,7 +46,7 @@ impl TextureVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct ColorVertex {
-	pub position: GpuPos,
+	pub position: GpuVec3,
 	pub color: Color,
 }
 
@@ -62,7 +62,7 @@ impl ColorVertex {
 				location: 0,
 				binding: 0,
 				element: gfx_hal::pso::Element {
-					format: gfx_hal::format::Format::Rg32Sfloat,
+					format: gfx_hal::format::Format::Rgb32Sfloat,
 					offset: 0,
 				},
 			},
@@ -71,7 +71,7 @@ impl ColorVertex {
 				binding: 0,
 				element: gfx_hal::pso::Element {
 					format: gfx_hal::format::Format::Rgba8Unorm,
-					offset: size_of::<[f32; 2]>() as u32,
+					offset: size_of::<[f32; 3]>() as u32,
 				},
 			},
 		]
@@ -97,7 +97,7 @@ pub struct StrokedShape<'a> {
 pub struct ColoredShape<'a> {
 	pub vertices: &'a [ColorVertex],
 	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: &'a [[u16; 3]], //TODO: Work out if it needs to be CCW or not
+	pub indices: &'a [[u16; 3]], //TODO: Work out if it should need to be CCW or not
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
