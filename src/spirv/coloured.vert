@@ -6,12 +6,14 @@ layout(location=0) in vec3 in_position;
 layout(location=1) in vec4 in_colour;
 
 layout(location=0) out vec4 frag_colour;
+layout(location=1) out float frag_depth;
 
 void main() {
 	if (FLIP_Y) {
-		gl_Position = vec4(in_position.x, -in_position.y, 1/(1+exp(-in_position.z)), 1.0);
+		gl_Position = vec4(in_position.x, -in_position.y, 0.0, 1.0);
 	} else {
-		gl_Position = vec4(in_position.xy, 1/(1+exp(-in_position.z)), 1.0);
+		gl_Position = vec4(in_position.xy, 0.0, 1.0);
 	}
 	frag_colour = in_colour;
+	frag_depth = in_position.z;
 }

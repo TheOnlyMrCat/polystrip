@@ -229,26 +229,7 @@ impl RendererContext {
 				resolves: &[],
 				preserves: &[],
 			}],
-			&[
-				gfx_hal::pass::SubpassDependency {
-					passes: None..Some(0),
-					stages: gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT
-						..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT | gfx_hal::pso::PipelineStage::LATE_FRAGMENT_TESTS,
-					accesses: gfx_hal::image::Access::empty()
-						..gfx_hal::image::Access::COLOR_ATTACHMENT_READ | gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE
-						| gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_READ | gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
-					flags: gfx_hal::memory::Dependencies::empty(),
-				},
-				gfx_hal::pass::SubpassDependency {
-					passes: Some(0)..None,
-					stages: gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT | gfx_hal::pso::PipelineStage::LATE_FRAGMENT_TESTS
-						..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-					accesses: gfx_hal::image::Access::COLOR_ATTACHMENT_READ | gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE
-						| gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_READ | gfx_hal::image::Access::DEPTH_STENCIL_ATTACHMENT_WRITE
-						..gfx_hal::image::Access::empty(),
-					flags: gfx_hal::memory::Dependencies::empty(),
-				}
-			]
+			&[]
 		)}.unwrap();
 
 		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
