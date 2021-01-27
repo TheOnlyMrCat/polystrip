@@ -1,6 +1,6 @@
 use polystrip::Renderer;
 use polystrip::data::{GpuVec2, Color};
-use polystrip::vertex::{TexturedShape, TextureVertex};
+use polystrip::vertex::{TexturedShape, TextureVertex, Matrix3};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -40,7 +40,7 @@ fn main() {
 						[0, 1, 3],
 						[1, 2, 3],
 					]
-				}, &sandstone);
+				}, &sandstone, Matrix3::identity());
 			},
 			_ => {}
 		}

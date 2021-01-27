@@ -50,7 +50,7 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 				ColorVertex { position: self.pixel(bounds.x + bounds.w, bounds.y).with_height(0.0), color }
 			],
 			indices: &QUAD_INCICES
-		});
+		}, Matrix3::identity());
 	}
 
 	fn draw_texture(&mut self, x: i32, y: i32, texture: &'a Texture) {
@@ -62,7 +62,7 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 				TextureVertex { position: self.pixel(x + texture.width() as i32, y).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 0.0 } }
 			],
 			indices: &QUAD_INCICES
-		}, texture);
+		}, texture, Matrix3::identity());
 	}
 
 	fn draw_texture_scaled(&mut self, destination: Rect, texture: &'a Texture) {
@@ -74,7 +74,7 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 0.0 } }
 			],
 			indices: &QUAD_INCICES
-		}, texture);
+		}, texture, Matrix3::identity());
 	}
 
 	fn draw_texture_cropped(&mut self, source: Rect, x: i32, y: i32, texture: &'a Texture) {
@@ -86,7 +86,7 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 				TextureVertex { position: self.pixel(x + texture.width() as i32 - source.w, y).with_height(0.0), tex_coords: texture.pixel(source.x + source.w, source.y) }
 			],
 			indices: &QUAD_INCICES
-		}, texture);
+		}, texture, Matrix3::identity());
 	}
 
 	fn draw_texture_cropped_scaled(&mut self, source: Rect, destination: Rect, texture: &'a Texture) {
@@ -98,6 +98,6 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y).with_height(0.0), tex_coords: texture.pixel(source.x + source.w, source.y) }
 			],
 			indices: &QUAD_INCICES
-		}, texture);
+		}, texture, Matrix3::identity());
 	}
 }

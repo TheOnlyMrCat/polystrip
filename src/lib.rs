@@ -237,7 +237,7 @@ impl RendererContext {
 		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
 		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
-		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix3>() as u32)]) }.unwrap();
 		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
@@ -322,7 +322,7 @@ impl RendererContext {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix3>() as u32)]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
@@ -407,7 +407,7 @@ impl RendererContext {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[]) }.unwrap();
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix3>() as u32)]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
@@ -977,7 +977,7 @@ impl<'a> Frame<'a> {
 
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>) {
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, transform: Matrix3) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
@@ -990,13 +990,19 @@ impl<'a> Frame<'a> {
 			});
 
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.stroked_graphics_pipeline);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.stroked_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[f32; 3], _>(&[transform.row(0).into(), transform.row(1).into(), transform.row(2).into()]),
+			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 2, 0, 0..1);
 		}
 	}
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'_>) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, transform: Matrix3) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
@@ -1009,6 +1015,12 @@ impl<'a> Frame<'a> {
 			});
 
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.colour_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[[f32; 3]; 3], _>(&[transform.into()]),
+			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
@@ -1019,7 +1031,7 @@ impl<'a> Frame<'a> {
 	/// # Arguments
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
-	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture) {
+	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, transform: Matrix3) {
 		if !Rc::ptr_eq(&self.renderer.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
 		}
@@ -1037,6 +1049,12 @@ impl<'a> Frame<'a> {
 			
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
 			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&*texture.descriptor_set], &[0]);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.texture_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[[f32; 3]; 3], _>(&[transform.into()]),
+			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}

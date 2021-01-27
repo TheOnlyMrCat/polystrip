@@ -8,12 +8,13 @@ layout(location=1) in vec2 in_texture_coords;
 layout(location=0) out vec2 frag_texture_coords;
 layout(location=1) out float frag_depth;
 
+layout(push_constant)
+uniform Transform {
+	mat3 o_transform;
+};
+
 void main() {
-	if (FLIP_Y) {
-		gl_Position = vec4(in_position.x, -in_position.y, 0.0, 1.0);
-	} else {
-		gl_Position = vec4(in_position.xy, 0.0, 1.0);
-	}
+	gl_Position = vec4(o_transform * vec3(in_position.x, FLIP_Y ? -in_position.y : in_position.y, 0.0), 1.0);
 	frag_texture_coords = in_texture_coords;
 	frag_depth = in_position.z;
 }
