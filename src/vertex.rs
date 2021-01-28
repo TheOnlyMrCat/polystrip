@@ -114,59 +114,64 @@ pub struct TexturedShape<'a> {
 	pub indices: &'a [[u16; 3]], //TODO: As above
 }
 
-/// A 3 x 3, column major matrix
-/// 
-/// If the `cgmath` feature is enabled, this is instead a type alias to `cgmath::Matrix3<f32>`
-#[cfg(not(feature="cgmath"))]
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Matrix3 {
-	/// The first column of the matrix
-	pub x: [f32; 3],
-	/// The second column of the matrix
-	pub y: [f32; 3],
-	/// The third column of the matrix
-	pub z: [f32; 3],
-}
+mod matrix {
+	/// A 4 x 4, column major matrix
+	/// 
+	/// If the `cgmath` feature is enabled, this is instead a type alias to `cgmath::Matrix4<f32>`
+	#[repr(C)]
+	#[derive(Clone, Copy, Debug)]
+	pub struct Matrix4 {
+		/// The first column of the matrix
+		pub x: [f32; 4],
+		/// The second column of the matrix
+		pub y: [f32; 4],
+		/// The third column of the matrix
+		pub z: [f32; 4],
+		/// The fourth column of the matrix
+		pub w: [f32; 4],
+	}
 
-#[cfg(not(feature="cgmath"))]
-impl Matrix3 {
-	/// Returns the [identity matrix](https://en.wikipedia.org/wiki/Identity_matrix).
-	pub fn identity() -> Matrix3 {
-		Matrix3 {
-			x: [1.0, 0.0, 0.0],
-			y: [0.0, 1.0, 0.0],
-			z: [0.0, 0.0, 1.0],
+	impl Matrix4 {
+		/// Returns the [identity matrix](https://en.wikipedia.org/wiki/Identity_matrix).
+		pub fn identity() -> Matrix4 {
+			Matrix4 {
+				x: [1.0, 0.0, 0.0, 0.0],
+				y: [0.0, 1.0, 0.0, 0.0],
+				z: [0.0, 0.0, 1.0, 0.0],
+				w: [0.0, 0.0, 0.0, 1.0],
+			}
+		}
+
+		pub fn row(&self, i: usize) -> [f32; 4] {
+			[self.x[i], self.y[i], self.z[i], self.w[i]]
 		}
 	}
 
-	pub fn row(&self, i: usize) -> [f32; 3] {
-		[self.x[i], self.y[i], self.z[i]]
+	fn dot(lhs: [f32; 4], rhs: [f32; 4]) -> f32 {
+		lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2] + lhs[3] * rhs[3]
 	}
-}
 
-fn dot(lhs: [f32; 3], rhs: [f32; 3]) -> f32 {
-	lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2]
-}
+	impl std::ops::Mul<Matrix4> for Matrix4 {
+		type Output = Matrix4;
+		fn mul(self, rhs: Matrix4) -> Matrix4 {
+			Matrix4 {
+				x: [dot(self.row(0), rhs.x), dot(self.row(1), rhs.x), dot(self.row(2), rhs.x), dot(self.row(3), rhs.x)],
+				y: [dot(self.row(0), rhs.y), dot(self.row(1), rhs.y), dot(self.row(2), rhs.y), dot(self.row(3), rhs.y)],
+				z: [dot(self.row(0), rhs.z), dot(self.row(1), rhs.z), dot(self.row(2), rhs.z), dot(self.row(3), rhs.z)],
+				w: [dot(self.row(0), rhs.w), dot(self.row(1), rhs.w), dot(self.row(2), rhs.w), dot(self.row(3), rhs.w)],
+			}
+		}
+	}
 
-#[cfg(not(feature="cgmath"))]
-impl std::ops::Mul<Matrix3> for Matrix3 {
-	type Output = Matrix3;
-	fn mul(self, rhs: Matrix3) -> Matrix3 {
-		Matrix3 {
-			x: [dot(self.row(0), rhs.x), dot(self.row(1), rhs.x), dot(self.row(2), rhs.x)],
-			y: [dot(self.row(0), rhs.y), dot(self.row(1), rhs.y), dot(self.row(2), rhs.y)],
-			z: [dot(self.row(0), rhs.z), dot(self.row(1), rhs.z), dot(self.row(2), rhs.z)],
+	impl Into<[[f32; 4]; 4]> for Matrix4 {
+		fn into(self) -> [[f32; 4]; 4] {
+			[self.x, self.y, self.z, self.w]
 		}
 	}
 }
 
 #[cfg(not(feature="cgmath"))]
-impl Into<[[f32; 3]; 3]> for Matrix3 {
-	fn into(self) -> [[f32; 3]; 3] {
-		[self.x, self.y, self.z]
-	}
-}
+pub type Matrix4 = matrix::Matrix4;
 
 #[cfg(feature="cgmath")]
-pub type Matrix3 = cgmath::Matrix3<f32>;
+pub type Matrix4 = cgmath::Matrix4<f32>;

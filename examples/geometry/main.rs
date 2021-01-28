@@ -1,6 +1,6 @@
 use polystrip::Renderer;
 use polystrip::data::{GpuVec3, Color};
-use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Matrix3};
+use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Matrix4};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -40,7 +40,7 @@ fn main() {
 						[2, 3], [2, 4],
 						[3, 4],
 					]
-				}, Matrix3::identity());
+				}, Matrix4::identity());
 				frame.draw_colored(ColoredShape {
 					vertices: &[
 						ColorVertex { position: GpuVec3 { x: 0.5, y: 0.5, h: 1.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
@@ -55,7 +55,7 @@ fn main() {
 						[1, 2, 4],
 						[2, 3, 4],
 					]
-				}, Matrix3::identity());
+				}, Matrix4::identity());
 				frame.draw_colored(ColoredShape {
 					vertices: &[
 						ColorVertex { position: GpuVec3 { x: -0.5, y: 0.5, h: 0.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
@@ -63,7 +63,7 @@ fn main() {
 						ColorVertex { position: GpuVec3 { x: -0.25, y: -0.5, h: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
 					],
 					indices: &[[0, 1, 2]]
-				}, Matrix3::identity());
+				}, Matrix4::identity());
 			},
 			_ => {}
 		}

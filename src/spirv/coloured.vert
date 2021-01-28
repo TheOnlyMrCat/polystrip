@@ -10,11 +10,11 @@ layout(location=1) out float frag_depth;
 
 layout(push_constant)
 uniform Transform {
-	mat3 o_transform;
+	mat4 o_transform;
 };
 
 void main() {
-	gl_Position = vec4(o_transform * vec3(in_position.x, FLIP_Y ? -in_position.y : in_position.y, 0.0), 1.0);
+	gl_Position = o_transform * vec4(in_position.x, FLIP_Y ? -in_position.y : in_position.y, 0.0, 1.0);
 	frag_colour = in_colour;
 	frag_depth = in_position.z;
 }
