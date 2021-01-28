@@ -2,20 +2,59 @@
 
 use std::fmt::Debug;
 
-/// Coordinates in GPU space, represented with `f32`s.
+/// 2D coordinates in GPU space, represented with `f32`s.
 /// 
+/// # Screen space
 /// `(0.0, 0.0)` is the screen center. `(1.0, 1.0)` is the top-right corner.
 /// `(-1.0, -1.0)` is the bottom-left corner.
+/// 
+/// # Texture space
+/// `(0.0, 0.0)` is the top-left corner
+/// `(1.0, 1.0)` is the bottom-right corner
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct GpuPos {
+pub struct GpuVec2 {
 	pub x: f32,
 	pub y: f32,
 }
 
-impl GpuPos {
-	pub fn new(x: f32, y: f32) -> GpuPos {
-		GpuPos { x, y }
+impl GpuVec2 {
+	pub fn new(x: f32, y: f32) -> GpuVec2 {
+		GpuVec2 { x, y }
+	}
+
+	pub fn with_height(self, h: f32) -> GpuVec3 {
+		GpuVec3 { x: self.x, y: self.y, h }
+	}
+}
+
+/// 3D coordinates in GPU space, represented with `f32`s.
+/// 
+/// # Height
+/// The third coordinate, `h`, is uncapped non-linear height, used to affect the render output.
+/// Out of a set of shapes drawn at the same height, the one drawn last appears on top.
+/// Out of a set of shapes drawn at different heights, however, the one with the greatest height appears on top.
+/// 
+/// Additionally, height interpolates linearly between vertices.
+/// 
+/// # Screen space
+/// `(0.0, 0.0)` is the screen center. `(1.0, 1.0)` is the top-right corner.
+/// `(-1.0, -1.0)` is the bottom-left corner.
+/// 
+/// # Texture space
+/// `(0.0, 0.0)` is the top-left corner
+/// `(1.0, 1.0)` is the bottom-right corner
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub struct GpuVec3 {
+	pub x: f32,
+	pub y: f32,
+	pub h: f32,
+}
+
+impl GpuVec3 {
+	pub fn new(x: f32, y: f32, h: f32) -> GpuVec3 {
+		GpuVec3 { x, y, h }
 	}
 }
 

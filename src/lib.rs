@@ -39,11 +39,12 @@ pub mod vertex;
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
-use crate::data::{GpuPos, Color};
+use crate::data::{GpuVec2, Color};
 use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
@@ -62,7 +63,10 @@ pub struct RendererContext {
 	pub queue_groups: RefCell<Vec<gfx_hal::queue::family::QueueGroup<backend::Backend>>>,
 	pub adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 
+	pub stroked_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	pub stroked_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	pub colour_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub texture_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
 	pub texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
 	pub render_pass: ManuallyDrop<backend::RenderPass>,
@@ -74,10 +78,14 @@ pub struct RendererContext {
 
 	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
 	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
+
+	pub depth_stencil: ManuallyDrop<backend::Image>,
+	pub depth_stencil_view: ManuallyDrop<backend::ImageView>,
+	pub depth_stencil_memory: MemoryBlock<Arc<backend::Memory>>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
 
-	pub allocator: RefCell<GpuAllocator<std::sync::Arc<backend::Memory>>>,
+	pub allocator: RefCell<GpuAllocator<Arc<backend::Memory>>>,
 }
 
 impl RendererContext {
@@ -152,17 +160,71 @@ impl RendererContext {
 			gfx_hal::pso::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
 		)}.unwrap();
 
+		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
+		let mut allocator = GpuAllocator::new(
+			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
+			alloc_props,
+		);
+
+		let mut depth_stencil = unsafe { gpu.device.create_image(
+			gfx_hal::image::Kind::D2(extent.width, extent.height, 1, 1),
+			1,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+			gfx_hal::image::ViewCapabilities::empty()
+		)}.unwrap();
+		let depth_stencil_req = unsafe { gpu.device.get_image_requirements(&depth_stencil) };
+		let depth_stencil_memory = unsafe { allocator.alloc(
+			GfxMemoryDevice::wrap(&gpu.device),
+			Request {
+				size: depth_stencil_req.size,
+				align_mask: depth_stencil_req.alignment,
+				memory_types: depth_stencil_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+		unsafe { gpu.device.bind_image_memory(&depth_stencil_memory.memory(), depth_stencil_memory.offset(), &mut depth_stencil) }.unwrap();
+		let depth_stencil_view = unsafe { gpu.device.create_image_view(
+			&depth_stencil,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::format::Swizzle::NO,
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::DEPTH,
+				level_start: 0,
+				level_count: None,
+				layer_start: 0,
+				layer_count: None,
+			}
+		)}.unwrap();
+
 		let main_pass = unsafe { gpu.device.create_render_pass(
-			&[gfx_hal::pass::Attachment {
-				format: Some(format),
-				samples: 1,
-				ops: gfx_hal::pass::AttachmentOps::DONT_CARE, //TODO: Potential customisation
-				stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
-				layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
-			}],
+			&[
+				gfx_hal::pass::Attachment {
+					format: Some(format),
+					samples: 1,
+					ops: gfx_hal::pass::AttachmentOps {
+						load: gfx_hal::pass::AttachmentLoadOp::Load,
+						store: gfx_hal::pass::AttachmentStoreOp::Store,
+					},
+					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
+					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
+				},
+				gfx_hal::pass::Attachment {
+					format: Some(gfx_hal::format::Format::D32Sfloat),
+					samples: 1,
+					ops: gfx_hal::pass::AttachmentOps {
+						load: gfx_hal::pass::AttachmentLoadOp::Clear,
+						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+					},
+					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
+					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::DepthStencilAttachmentOptimal
+				}
+			],
 			&[gfx_hal::pass::SubpassDesc {
 				colors: &[(0, gfx_hal::image::Layout::ColorAttachmentOptimal)],
-				depth_stencil: None,
+				depth_stencil: Some(&(1, gfx_hal::image::Layout::DepthStencilAttachmentOptimal)),
 				inputs: &[],
 				resolves: &[],
 				preserves: &[],
@@ -172,8 +234,95 @@ impl RendererContext {
 
 		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
 		let colour_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV)) }.unwrap();
+		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
+		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
-		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[]) }.unwrap();
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
+				buffers: &[gfx_hal::pso::VertexBufferDesc {
+					binding: 0,
+					stride: std::mem::size_of::<ColorVertex>() as u32,
+					rate: gfx_hal::pso::VertexInputRate::Vertex,
+				}],
+				attributes: ColorVertex::desc(),
+				input_assembler: gfx_hal::pso::InputAssemblerDesc {
+					primitive: gfx_hal::pso::Primitive::LineList,
+					with_adjacency: false,
+					restart_index: None,
+				},
+				vertex: gfx_hal::pso::EntryPoint {
+					entry: "main",
+					module: &colour_vs_module,
+					specialization: gfx_hal::pso::Specialization {
+						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
+							id: 0,
+							range: 0..1
+						}]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
+					}
+				},
+				tessellation: None,
+				geometry: None,
+			},
+			rasterizer: gfx_hal::pso::Rasterizer {
+				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
+				cull_face: gfx_hal::pso::Face::BACK,
+				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
+				depth_clamping: false,
+				depth_bias: None,
+				conservative: false,
+				line_width: gfx_hal::pso::State::Dynamic,
+			},
+			fragment: Some(gfx_hal::pso::EntryPoint {
+				entry: "main",
+				module: &colour_fs_module,
+				specialization: gfx_hal::pso::Specialization {
+					constants: std::borrow::Cow::Borrowed(&[]),
+					data: std::borrow::Cow::Borrowed(&[]),
+				}
+			}),
+			blender: gfx_hal::pso::BlendDesc {
+				logic_op: None,
+				targets: vec![gfx_hal::pso::ColorBlendDesc {
+					mask: gfx_hal::pso::ColorMask::ALL,
+					blend: Some(gfx_hal::pso::BlendState {
+						color: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						},
+						alpha: gfx_hal::pso::BlendOp::Add {
+							src: gfx_hal::pso::Factor::SrcAlpha,
+							dst: gfx_hal::pso::Factor::OneMinusSrcAlpha,
+						}
+					})
+				}]
+			},
+			depth_stencil: gfx_hal::pso::DepthStencilDesc {
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
+					write: true,
+				}),
+				depth_bounds: false,
+				stencil: None,
+			},
+			multisampling: None,
+			baked_states: gfx_hal::pso::BakedStates {
+				viewport: None,
+				scissor: None,
+				blend_color: None,
+				depth_bounds: None,
+			},
+			layout: &stroked_graphics_pipeline_layout,
+			subpass: gfx_hal::pass::Subpass {
+				index: 0,
+				main_pass: &main_pass,
+			},
+			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
+			parent: gfx_hal::pso::BasePipeline::None,
+		}, None) }.unwrap();
+
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
@@ -235,7 +384,10 @@ impl RendererContext {
 				}]
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
-				depth: None,
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
+					write: true,
+				}),
 				depth_bounds: false,
 				stencil: None,
 			},
@@ -255,10 +407,7 @@ impl RendererContext {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
-		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
-
-		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[]) }.unwrap();
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
@@ -320,7 +469,10 @@ impl RendererContext {
 				}]
 			},
 			depth_stencil: gfx_hal::pso::DepthStencilDesc {
-				depth: None,
+				depth: Some(gfx_hal::pso::DepthTest {
+					fun: gfx_hal::pso::Comparison::GreaterEqual,
+					write: true,
+				}),
 				depth_bounds: false,
 				stencil: None,
 			},
@@ -342,18 +494,15 @@ impl RendererContext {
 
 		let render_semaphore = gpu.device.create_semaphore().unwrap();
 
-		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
-		let allocator = GpuAllocator::new(
-			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
-			alloc_props,
-		);
-
 		RendererContext {
 			instance, adapter,
 			device: gpu.device,
 			queue_groups: RefCell::new(gpu.queue_groups),
 
+			stroked_graphics_pipeline: ManuallyDrop::new(stroked_graphics_pipeline),
+			stroked_graphics_pipeline_layout: ManuallyDrop::new(stroked_graphics_pipeline_layout),
 			colour_graphics_pipeline: ManuallyDrop::new(colour_graphics_pipeline),
+			colour_graphics_pipeline_layout: ManuallyDrop::new(colour_graphics_pipeline_layout),
 			texture_graphics_pipeline: ManuallyDrop::new(texture_graphics_pipeline),
 			texture_graphics_pipeline_layout: ManuallyDrop::new(texture_graphics_pipeline_layout),
 			render_pass: ManuallyDrop::new(main_pass),
@@ -365,6 +514,10 @@ impl RendererContext {
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
+
+			depth_stencil: ManuallyDrop::new(depth_stencil),
+			depth_stencil_view: ManuallyDrop::new(depth_stencil_view),
+			depth_stencil_memory,
 
 			extent: Cell::new(extent),
 
@@ -384,11 +537,17 @@ impl Drop for RendererContext {
 
 			self.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
 
+			self.device.destroy_image_view(ManuallyDrop::take(&mut self.depth_stencil_view));
+			self.device.destroy_image(ManuallyDrop::take(&mut self.depth_stencil));
+
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
 
+			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.stroked_graphics_pipeline));
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
+			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.stroked_graphics_pipeline_layout));
+			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.colour_graphics_pipeline_layout));
 			self.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
 			
 			self.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
@@ -450,13 +609,15 @@ impl Renderer {
 		}
 	}
 
-	/// Returns the next `Frame`, which can be drawn to and will present on drop. This `Renderer` is borrowed mutably while the
-	/// frame is alive.
+	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
+	/// previous frame. This `Renderer` is borrowed mutably while the `Frame` is alive.
 	pub fn next_frame(&mut self) -> Frame<'_> {
 		let image = self.acquire_image();
 		self.generate_frame(image, None)
 	}
 
+	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will be cleared to the specified
+	/// `clear_color` (converted from sRGB with a gamma of 2.0). This `Renderer` is borrowed mutably while the `Frame` is alive
 	pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_> {
 		let image = self.acquire_image();
 		self.generate_frame(image, Some(clear_color))
@@ -489,16 +650,11 @@ impl Renderer {
 			},
 			depth: 0.0..1.0,
 		};
-		let framebuffer = unsafe { self.context.device.create_framebuffer(&self.context.render_pass, vec![image.borrow()], self.swapchain_config.extent.to_extent()) }.unwrap();
-
-		let clear_colour_linear = clear_colour.map(|clear_colour| gfx_hal::command::ClearColor {
-			float32: [
-				(clear_colour.r as f32).powi(2) / 65_025.0,
-				(clear_colour.g as f32).powi(2) / 65_025.0,
-				(clear_colour.b as f32).powi(2) / 65_025.0,
-				clear_colour.a as f32 / 255.0,
-			]
-		});
+		let framebuffer = unsafe { self.context.device.create_framebuffer(
+			&self.context.render_pass,
+			vec![image.borrow(), &*self.context.depth_stencil_view], //TODO: Remove the vector. arrayvec?
+			self.swapchain_config.extent.to_extent()
+		)}.unwrap();
 
 		let mut command_buffer = self.context.command_buffer.borrow_mut();
 
@@ -510,26 +666,35 @@ impl Renderer {
 			command_buffer.set_viewports(0, &[viewport.clone()]);
 			command_buffer.set_scissors(0, &[viewport.rect]);
 
-			if let Some(c) = clear_colour_linear {
-				command_buffer.begin_render_pass(
-					&self.context.render_pass,
-					&framebuffer,
-					viewport.rect,
-					&[gfx_hal::command::ClearValue { color: c }] as &[gfx_hal::command::ClearValue],
-					gfx_hal::command::SubpassContents::Inline
-				);
+			command_buffer.begin_render_pass(
+				&self.context.render_pass,
+				&framebuffer,
+				viewport.rect,
+				&[gfx_hal::command::ClearValue {
+					depth_stencil: gfx_hal::command::ClearDepthStencil {
+						depth: 0.0,
+						stencil: 0,
+					}
+				}] as &[gfx_hal::command::ClearValue],
+				gfx_hal::command::SubpassContents::Inline
+			);
 
+			if let Some(clear_colour) = clear_colour {
 				command_buffer.clear_attachments(
-					&[gfx_hal::command::AttachmentClear::Color { index: 0, value: c }],
+					&[
+						gfx_hal::command::AttachmentClear::Color {
+							index: 0,
+							value: gfx_hal::command::ClearColor {
+								float32: [
+									(clear_colour.r as f32).powi(2) / 65_025.0,
+									(clear_colour.g as f32).powi(2) / 65_025.0,
+									(clear_colour.b as f32).powi(2) / 65_025.0,
+									clear_colour.a as f32 / 255.0,
+								]
+							}
+						},
+					],
 					&[gfx_hal::pso::ClearRect { rect: viewport.rect, layers: 0..1 }]
-				);
-			} else {
-				command_buffer.begin_render_pass(
-					&self.context.render_pass,
-					&framebuffer,
-					viewport.rect,
-					&[],
-					gfx_hal::command::SubpassContents::Inline
 				);
 			}
 		}
@@ -737,8 +902,8 @@ impl Renderer {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
 			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
 		}
@@ -761,7 +926,7 @@ pub struct Frame<'a> {
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
-	allocations: Vec<MemoryBlock<std::sync::Arc<backend::Memory>>>,
+	allocations: Vec<MemoryBlock<Arc<backend::Memory>>>,
 }
 
 //MARK: Frame API
@@ -810,9 +975,34 @@ impl<'a> Frame<'a> {
 		(vertex_buffer, index_buffer)
 	}
 
+	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
+	/// before it.
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, transform: Matrix4) {
+		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
+
+		unsafe {
+			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
+				buffer: &index_buffer,
+				range: gfx_hal::buffer::SubRange::WHOLE,
+				index_type: gfx_hal::IndexType::U16,
+			});
+
+			command_buffer.bind_graphics_pipeline(&self.renderer.context.stroked_graphics_pipeline);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.stroked_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+			);
+			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 2, 0, 0..1);
+		}
+	}
+
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'_>) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, transform: Matrix4) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
@@ -825,6 +1015,12 @@ impl<'a> Frame<'a> {
 			});
 
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.colour_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
@@ -835,7 +1031,7 @@ impl<'a> Frame<'a> {
 	/// # Arguments
 	/// * `shape`: The `TexturedShape` to be rendered. 
 	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
-	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture) {
+	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, transform: Matrix4) {
 		if !Rc::ptr_eq(&self.renderer.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
 		}
@@ -853,13 +1049,19 @@ impl<'a> Frame<'a> {
 			
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
 			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&*texture.descriptor_set], &[0]);
+			command_buffer.push_graphics_constants(
+				&self.renderer.context.texture_graphics_pipeline_layout,
+				gfx_hal::pso::ShaderStageFlags::VERTEX,
+				0,
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
 			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
 		}
@@ -914,7 +1116,7 @@ pub struct Texture {
 	view: ManuallyDrop<backend::ImageView>,
 	sampler: ManuallyDrop<backend::Sampler>,
 	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
-	memory_block: ManuallyDrop<MemoryBlock<std::sync::Arc<backend::Memory>>>,
+	memory_block: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
 	width: u32,
 	height: u32,
 }
@@ -934,8 +1136,8 @@ impl Texture {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuPos {
-		GpuPos {
+	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
+		GpuVec2 {
 			x: x as f32 / self.width as f32,
 			y: y as f32 / self.height as f32,
 		}

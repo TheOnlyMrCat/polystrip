@@ -1,6 +1,6 @@
 use polystrip::Renderer;
-use polystrip::data::{GpuPos, Color};
-use polystrip::vertex::{TexturedShape, TextureVertex};
+use polystrip::data::{GpuVec2, Color};
+use polystrip::vertex::{TexturedShape, TextureVertex, Matrix4};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -31,16 +31,16 @@ fn main() {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(TexturedShape {
 					vertices: &[
-						TextureVertex { position: frame.pixel(50, 50), tex_coords: GpuPos { x: 0.0, y: 0.0 } },
-						TextureVertex { position: frame.pixel(50, 150), tex_coords: GpuPos { x: 0.0, y: 1.0 } },
-						TextureVertex { position: frame.pixel(150, 150), tex_coords: GpuPos { x: 1.0, y: 1.0 } },
-						TextureVertex { position: frame.pixel(150, 50), tex_coords: GpuPos { x: 1.0, y: 0.0 } },
+						TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 0.0 } },
+						TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 1.0 } },
+						TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 1.0 } },
+						TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 0.0 } },
 					],
 					indices: &[
 						[0, 1, 3],
 						[1, 2, 3],
 					]
-				}, &sandstone);
+				}, &sandstone, Matrix4::identity());
 			},
 			_ => {}
 		}
