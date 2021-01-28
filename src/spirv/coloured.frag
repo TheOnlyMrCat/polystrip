@@ -8,5 +8,5 @@ layout(location=0) out vec4 out_colour;
 
 void main() {
 	out_colour = frag_colour;
-	gl_FragDepth = 1/(1+exp(-frag_depth));
+	gl_FragDepth = frag_depth;
 }

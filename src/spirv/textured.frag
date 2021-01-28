@@ -11,5 +11,5 @@ layout(set=0, binding=1) uniform sampler samp;
 
 void main() {
 	out_colour = texture(sampler2D(tex, samp), frag_texture_coords);
-	gl_FragDepth = 1/(1+exp(-frag_depth));
+	gl_FragDepth = frag_depth;
 }
