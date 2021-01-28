@@ -142,6 +142,15 @@ mod matrix {
 			}
 		}
 
+		pub fn translate(x: f32, y: f32) -> Matrix4 {
+			Matrix4 {
+				x: [1.0, 0.0, 0.0, 0.0],
+				y: [0.0, 1.0, 0.0, 0.0],
+				z: [0.0, 0.0, 1.0, 0.0],
+				w: [ x ,  y , 0.0, 1.0],
+			}
+		}
+
 		pub fn row(&self, i: usize) -> [f32; 4] {
 			[self.x[i], self.y[i], self.z[i], self.w[i]]
 		}
