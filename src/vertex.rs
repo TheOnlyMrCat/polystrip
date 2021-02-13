@@ -1,6 +1,18 @@
 //! Vertices and shapes, the core of the rendering process.
-
-use crate::data::*;
+//! 
+//! # Linear algebra libraries
+//! A number of linear algebra libraries exist for rust. `polystrip` provides basic implementations of
+//! `Vector2`, `Vector3`, and `Matrix4` in the [`algebra` module](algebra/index.html), but can instead use definitions from
+//! [`cgmath`](https://docs.rs/cgmath) or [`mint`](https://docs.rs/mint) by enabling the respective features.
+//! 
+//! # Coordinates
+//! ## Screen space
+//! `(0.0, 0.0)` is the screen center. `(1.0, 1.0)` is the top-right corner.
+//! `(-1.0, -1.0)` is the bottom-left corner.
+//! 
+//! ## Texture space
+//! `(0.0, 0.0)` is the top-left corner
+//! `(1.0, 1.0)` is the bottom-right corner
 
 /// A vertex describing a position and a position on a texture.
 /// 
@@ -8,8 +20,8 @@ use crate::data::*;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct TextureVertex {
-	pub position: GpuVec3,
-	pub tex_coords: GpuVec2,
+	pub position: Vector3,
+	pub tex_coords: Vector2,
 }
 
 unsafe impl bytemuck::Pod for TextureVertex {}
@@ -40,13 +52,29 @@ impl TextureVertex {
 	}
 }
 
-/// A vertex describing a position and a colour.
+/// A color in the sRGB color space, with red, green, blue, and alpha components all represented with `u8`s
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+pub struct Color {
+	pub r: u8,
+	pub g: u8,
+	pub b: u8,
+	pub a: u8,
+}
+
+impl Color {
+	pub fn new(r: u8, g: u8, b: u8, a: u8) -> Color {
+		Color { r, g, b, a }
+	}
+}
+
+/// A vertex describing a position and a color.
 /// 
-/// Colours are interpolated linearly between vertices.
+/// Colors are interpolated linearly between vertices.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct ColorVertex {
-	pub position: GpuVec3,
+	pub position: Vector3,
 	pub color: Color,
 }
 
@@ -80,7 +108,7 @@ impl ColorVertex {
 
 /// A set of vertices and indices describing an outlined geometric shape as a set of lines.
 ///
-/// The colors of the lines are determined by interpolating the colours at each
+/// The colors of the lines are determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
 #[derive(Clone, Copy, Debug)]
 pub struct StrokedShape<'a> {
@@ -91,7 +119,7 @@ pub struct StrokedShape<'a> {
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
 ///
-/// The color of the shape is determined by interpolating the colours at each
+/// The color of the shape is determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
 #[derive(Clone, Copy, Debug)]
 pub struct ColoredShape<'a> {
@@ -114,10 +142,24 @@ pub struct TexturedShape<'a> {
 	pub indices: &'a [[u16; 3]], //TODO: As above
 }
 
-mod matrix {
-	/// A 4 x 4, column major matrix
-	/// 
-	/// If the `cgmath` feature is enabled, this is instead a type alias to `cgmath::Matrix4<f32>`
+/// A rectangle in pixel coordinates. (x, y) is the top-left corner; (w, h) expanding rightward and downward.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+pub struct Rect {
+	pub x: i32,
+	pub y: i32,
+	pub w: i32,
+	pub h: i32,
+}
+
+impl Rect {
+	pub fn new(x: i32, y: i32, w: i32, h: i32) -> Rect {
+		Rect { x, y, w, h }
+	}
+}
+
+/// Basic implementations of linear algebra types
+pub mod algebra {
+	/// A basic implementation of a 4 x 4, column major matrix
 	#[repr(C)]
 	#[derive(Clone, Copy, Debug)]
 	pub struct Matrix4 {
@@ -177,10 +219,87 @@ mod matrix {
 			[self.x, self.y, self.z, self.w]
 		}
 	}
+
+	/// A basic implementation of a two-dimensional vector.
+	#[repr(C)]
+	#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+	pub struct Vector2 {
+		pub x: f32,
+		pub y: f32,
+	}
+
+	impl Vector2 {
+		pub fn new(x: f32, y: f32) -> Vector2 {
+			Vector2 { x, y }
+		}
+
+		pub fn with_height(self, z: f32) -> Vector3 {
+			Vector3 { x: self.x, y: self.y, z }
+		}
+	}
+
+	/// A basic implementation of a three-dimensional vector.
+	#[repr(C)]
+	#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+	pub struct Vector3 {
+		pub x: f32,
+		pub y: f32,
+		pub z: f32,
+	}
+	
+	impl Vector3 {
+		pub fn new(x: f32, y: f32, z: f32) -> Vector3 {
+			Vector3 { x, y, z }
+		}
+	}
 }
 
-#[cfg(not(feature="cgmath"))]
-pub type Matrix4 = matrix::Matrix4;
+macro_rules! reexport_algebra {
+	($name:ident, $cgm:ty, $mint:ty, $docs:tt) => {
+		#[cfg(not(any(feature="cgmath", feature="mint")))]
+		#[doc=$docs]
+		pub type $name = algebra::$name;
+		
+		#[cfg(all(feature="cgmath", not(feature="mint")))]
+		#[doc=$docs]
+		pub type $name = $cgm;
+		
+		#[cfg(feature="mint")]
+		#[doc=$docs]
+		pub type $name = $mint;
+	}
+}
 
-#[cfg(feature="cgmath")]
-pub type Matrix4 = cgmath::Matrix4<f32>;
+reexport_algebra! {
+	Vector2,
+	cgmath::Vector2<f32>,
+	mint::Vector2<f32>,
+	"\
+A 2D vector in screen space\
+	"
+}
+
+reexport_algebra! {
+	Vector3,
+	cgmath::Vector3<f32>,
+	mint::Vector3<f32>,
+	"\
+A 3D vector in screen space
+	
+# Height
+The `z` coordinate of this vector, is uncapped linear height, used to affect the render output.
+Out of a set of shapes drawn at the same height, the one drawn last appears on top.
+Out of a set of shapes drawn at different heights, the one with the greatest height appears on top.
+
+Additionally, height interpolates linearly between vertices.\
+	"
+}
+
+reexport_algebra! {
+	Matrix4,
+	cgmath::Matrix4,
+	mint::ColumnMatrix4,
+	"\
+A 4 x 4 column major matrix in screen space\
+	"
+}

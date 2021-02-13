@@ -32,7 +32,6 @@
 //! ```
 
 pub(crate) mod backend;
-pub mod data;
 pub mod geometry;
 pub mod vertex;
 
@@ -44,7 +43,6 @@ use std::sync::Arc;
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
-use crate::data::{GpuVec2, Color};
 use crate::vertex::*;
 
 use raw_window_handle::HasRawWindowHandle;
@@ -81,7 +79,7 @@ pub struct RendererContext {
 
 	pub depth_stencil: ManuallyDrop<backend::Image>,
 	pub depth_stencil_view: ManuallyDrop<backend::ImageView>,
-	pub depth_stencil_memory: MemoryBlock<Arc<backend::Memory>>,
+	pub depth_stencil_memory: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
 
@@ -517,7 +515,7 @@ impl RendererContext {
 
 			depth_stencil: ManuallyDrop::new(depth_stencil),
 			depth_stencil_view: ManuallyDrop::new(depth_stencil_view),
-			depth_stencil_memory,
+			depth_stencil_memory: ManuallyDrop::new(depth_stencil_memory),
 
 			extent: Cell::new(extent),
 
@@ -530,6 +528,7 @@ impl Drop for RendererContext {
 	fn drop(&mut self) {
 		unsafe {
 			self.allocator.get_mut().cleanup(GfxMemoryDevice::wrap(&self.device));
+			std::mem::forget(ManuallyDrop::take(&mut self.depth_stencil_memory));
 
 			let mut command_pool = ManuallyDrop::take(self.command_pool.get_mut());
 			command_pool.free(std::iter::once(ManuallyDrop::take(self.command_buffer.get_mut())));
@@ -902,8 +901,8 @@ impl Renderer {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
-		GpuVec2 {
+	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
+		Vector2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
 			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
 		}
@@ -1060,8 +1059,8 @@ impl<'a> Frame<'a> {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
-		GpuVec2 {
+	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
+		Vector2 {
 			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
 			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
 		}
@@ -1136,8 +1135,8 @@ impl Texture {
 	}
 
 	/// Converts pixel coordinates to Gpu coordinates
-	pub fn pixel(&self, x: i32, y: i32) -> GpuVec2 {
-		GpuVec2 {
+	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
+		Vector2 {
 			x: x as f32 / self.width as f32,
 			y: y as f32 / self.height as f32,
 		}

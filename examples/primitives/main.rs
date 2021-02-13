@@ -1,5 +1,5 @@
 use polystrip::Renderer;
-use polystrip::data::{Color, Rect};
+use polystrip::vertex::{Color, Rect};
 use polystrip::geometry::FrameGeometryExt;
 
 use winit::event::{Event, WindowEvent};

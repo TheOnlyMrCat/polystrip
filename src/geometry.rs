@@ -3,7 +3,6 @@
 //! This module contains the [`FrameGeometryExt`](trait.FrameGeometryExt) trait, which adds numerous functions for simple rendering operations
 //! where full description of the shape would be unnecessarily time-consuming.
 
-use crate::data::{GpuVec2, Color, Rect};
 use crate::Frame;
 use crate::Texture;
 use crate::vertex::*;
@@ -56,10 +55,10 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 	fn draw_texture(&mut self, x: i32, y: i32, texture: &'a Texture) {
 		self.draw_textured(TexturedShape {
 			vertices: &[
-				TextureVertex { position: self.pixel(x, y).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 0.0 } },
-				TextureVertex { position: self.pixel(x, y + texture.height() as i32).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 1.0 } },
-				TextureVertex { position: self.pixel(x + texture.width() as i32, y + texture.height() as i32).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 1.0 } },
-				TextureVertex { position: self.pixel(x + texture.width() as i32, y).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 0.0 } }
+				TextureVertex { position: self.pixel(x, y).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
+				TextureVertex { position: self.pixel(x, y + texture.height() as i32).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+				TextureVertex { position: self.pixel(x + texture.width() as i32, y + texture.height() as i32).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
+				TextureVertex { position: self.pixel(x + texture.width() as i32, y).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } }
 			],
 			indices: &QUAD_INCICES
 		}, texture, Matrix4::identity());
@@ -68,10 +67,10 @@ impl<'a> FrameGeometryExt<'a> for Frame<'a> {
 	fn draw_texture_scaled(&mut self, destination: Rect, texture: &'a Texture) {
 		self.draw_textured(TexturedShape {
 			vertices: &[
-				TextureVertex { position: self.pixel(destination.x, destination.y).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 0.0 } },
-				TextureVertex { position: self.pixel(destination.x, destination.y + destination.h).with_height(0.0), tex_coords: GpuVec2 { x: 0.0, y: 1.0 } },
-				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y + destination.h).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 1.0 } },
-				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y).with_height(0.0), tex_coords: GpuVec2 { x: 1.0, y: 0.0 } }
+				TextureVertex { position: self.pixel(destination.x, destination.y).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
+				TextureVertex { position: self.pixel(destination.x, destination.y + destination.h).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y + destination.h).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
+				TextureVertex { position: self.pixel(destination.x + destination.w, destination.y).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } }
 			],
 			indices: &QUAD_INCICES
 		}, texture, Matrix4::identity());

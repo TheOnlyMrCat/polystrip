@@ -4,7 +4,7 @@ cargo build --features metal
 #/
 
 #- r
-test $1 '!=' '' && cargo run --features metal --example $1
+cargo run --features metal --example $1
 #/
 
 #test
@@ -12,9 +12,9 @@ cargo test --features metal
 #/
 
 #doc b!
-cargo doc
+cargo doc --features empty
 #/
 
 #doc
-cargo doc --open
+cargo doc --features empty --open
 #/

@@ -1,6 +1,5 @@
 use polystrip::Renderer;
-use polystrip::data::{GpuVec3, Color};
-use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Matrix4};
+use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector3, Matrix4};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -28,11 +27,11 @@ fn main() {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_stroked(StrokedShape {
 					vertices: &[
-						ColorVertex { position: GpuVec3 { x: 0.0, y: 0.5, h: 0.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: -0.375, y: 0.125, h: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: -0.25, y: -0.5, h: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: 0.25, y: -0.5, h: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: 0.375, y: 0.125, h: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 0.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: -0.375, y: 0.125, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.375, y: 0.125, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
 					],
 					indices: &[
 						[0, 1], [0, 2], [0, 3], [0, 4],
@@ -43,11 +42,11 @@ fn main() {
 				}, Matrix4::translate(0.5, 0.0));
 				frame.draw_colored(ColoredShape {
 					vertices: &[
-						ColorVertex { position: GpuVec3 { x: 0.0, y: 0.5, h: 1.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: -0.375, y: 0.125, h: 0.0 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: -0.25, y: -0.5, h: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: 0.25, y: -0.5, h: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: 0.375, y: 0.125, h: 0.0 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 1.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
+						ColorVertex { position: Vector3 { x: -0.375, y: 0.125, z: 0.0 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.375, y: 0.125, z: 0.0 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
 					],
 					// Note the vertices are specified going counter-clockwise
 					indices: &[
@@ -58,9 +57,9 @@ fn main() {
 				}, Matrix4::translate(0.5, 0.0));
 				frame.draw_colored(ColoredShape {
 					vertices: &[
-						ColorVertex { position: GpuVec3 { x: 0.0, y: 0.5, h: 0.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: -0.25, y: -0.5, h: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: GpuVec3 { x: 0.25, y: -0.5, h: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 0.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
+						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
+						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
 					],
 					indices: &[[0, 1, 2]]
 				}, Matrix4::translate(-0.5, 0.0));
