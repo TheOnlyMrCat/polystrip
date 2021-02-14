@@ -303,3 +303,11 @@ reexport_algebra! {
 A 4 x 4 column major matrix in screen space\
 	"
 }
+
+pub fn with_height(vec2: Vector2, height: f32) -> Vector3 {
+	Vector3 {
+		x: vec2.x,
+		y: vec2.y,
+		z: height,
+	}
+}

@@ -1,10 +1,11 @@
 use polystrip::Renderer;
-use polystrip::vertex::{Color, Rect};
-use polystrip::geometry::FrameGeometryExt;
+use polystrip::vertex::{Color, ColoredShape, Matrix4, Rect, TexturedShape};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
 use winit::window::WindowBuilder;
+
+const RECT_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
 
 fn main() {
 	let el = EventLoop::new();
@@ -14,6 +15,7 @@ fn main() {
 
 	let size = window.inner_size().to_logical(window.scale_factor());
 	let mut renderer = Renderer::new(&window, (size.width, size.height));
+	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = renderer.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
@@ -32,10 +34,17 @@ fn main() {
 			},
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame();
-				frame.draw_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color { r: 255, g: 0, b: 0, a: 255 });
-				frame.draw_texture_scaled(Rect { x: 70, y: 200, w: 80, h: 120 }, &sandstone);
-				frame.draw_texture_scaled(Rect { x: 70, y: 200, w: 80, h: 120 }, &player);
-				frame.draw_texture_cropped_scaled(Rect { x: 7, y: 0, w: 7, h: 16 }, Rect { x: 160, y: 200, w: 70, h: 160 }, &sandstone);
+				frame.draw_colored(ColoredShape {
+					vertices: &pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color { r: 255, g: 0, b: 0, a: 255 }),
+					indices: &RECT_INDICES,
+				}, Matrix4::identity());
+				frame.draw_textured(TexturedShape {
+					vertices: &pixel_translator.textured_rect(Rect { x: 70, y: 200, w: 80, h: 120 }),
+					indices: &RECT_INDICES,
+				}, &player, Matrix4::identity());
+				//TODO
+				// frame.draw_texture_scaled(Rect { x: 70, y: 200, w: 80, h: 120 }, &sandstone);
+				// frame.draw_texture_cropped_scaled(Rect { x: 7, y: 0, w: 7, h: 16 }, Rect { x: 160, y: 200, w: 70, h: 160 }, &sandstone);
 			},
 			_ => {}
 		}

@@ -32,8 +32,8 @@
 //! ```
 
 pub(crate) mod backend;
-pub mod geometry;
 pub mod vertex;
+pub mod pixel;
 
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
@@ -44,6 +44,7 @@ use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
 use crate::vertex::*;
+use crate::pixel::PixelTranslator;
 
 use raw_window_handle::HasRawWindowHandle;
 
@@ -900,12 +901,16 @@ impl Renderer {
 		self.swapchain_config.extent.height
 	}
 
-	/// Converts pixel coordinates to Gpu coordinates
+	/// Converts pixel coordinates to screen space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
 			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
 		}
+	}
+
+	pub fn pixel_translator(&self) -> PixelTranslator {
+		PixelTranslator::new(self.context.clone())
 	}
 }
 
@@ -1134,7 +1139,7 @@ impl Texture {
 		self.height
 	}
 
-	/// Converts pixel coordinates to Gpu coordinates
+	/// Converts pixel coordinates to texture space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2 {
 			x: x as f32 / self.width as f32,
