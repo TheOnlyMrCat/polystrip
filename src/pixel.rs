@@ -49,10 +49,10 @@ impl PixelTranslator {
 	/// ```
 	pub fn colored_rect(&self, rect: Rect, color: Color) -> [ColorVertex; 4] {
 		[
-			ColorVertex { position: with_height(self.pixel_offset(rect.x, rect.y), 0.0), color },
-			ColorVertex { position: with_height(self.pixel_offset(rect.x + rect.w, rect.y), 0.0), color },
-			ColorVertex { position: with_height(self.pixel_offset(rect.x + rect.w, rect.y + rect.h), 0.0), color },
-			ColorVertex { position: with_height(self.pixel_offset(rect.x, rect.y + rect.h), 0.0), color },
+			ColorVertex { position: with_height(self.pixel_position(rect.x, rect.y), 0.0), color },
+			ColorVertex { position: with_height(self.pixel_position(rect.x + rect.w, rect.y), 0.0), color },
+			ColorVertex { position: with_height(self.pixel_position(rect.x + rect.w, rect.y + rect.h), 0.0), color },
+			ColorVertex { position: with_height(self.pixel_position(rect.x, rect.y + rect.h), 0.0), color },
 		]
 	}
 
@@ -69,10 +69,10 @@ impl PixelTranslator {
 	/// ```
 	pub fn textured_rect(&self, rect: Rect) -> [TextureVertex; 4] {
 		[
-			TextureVertex { position: with_height(self.pixel_offset(rect.x, rect.y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(rect.x + rect.w, rect.y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(rect.x + rect.w, rect.y + rect.h), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(rect.x, rect.y + rect.h), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(rect.x, rect.y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(rect.x + rect.w, rect.y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(rect.x + rect.w, rect.y + rect.h), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(rect.x, rect.y + rect.h), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
 		]
 	}
 
@@ -86,10 +86,10 @@ impl PixelTranslator {
 	/// ```
 	pub fn texture_at(&self, texture: &Texture, x: i32, y: i32) -> [TextureVertex; 4] {
 		[
-			TextureVertex { position: with_height(self.pixel_offset(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x + texture.width() as i32, y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x + texture.width() as i32, y + texture.height() as i32), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x, y + texture.height() as i32), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x + texture.width() as i32, y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x + texture.width() as i32, y + texture.height() as i32), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x, y + texture.height() as i32), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
 		]
 	}
 
@@ -105,10 +105,50 @@ impl PixelTranslator {
 	/// ```
 	pub fn texture_scaled(&self, texture: &Texture, x: i32, y: i32, scale: f32) -> [TextureVertex; 4] {
 		[
-			TextureVertex { position: with_height(self.pixel_offset(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x + (texture.width() as f32 * scale) as i32, y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x + (texture.width() as f32 * scale) as i32, y + (texture.height() as f32 * scale) as i32), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
-			TextureVertex { position: with_height(self.pixel_offset(x, y + (texture.height() as f32 * scale) as i32), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x + (texture.width() as f32 * scale) as i32, y), 0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x + (texture.width() as f32 * scale) as i32, y + (texture.height() as f32 * scale) as i32), 0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
+			TextureVertex { position: with_height(self.pixel_position(x, y + (texture.height() as f32 * scale) as i32), 0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
+		]
+	}
+
+	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
+	/// 
+	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
+	/// is drawn at (`x`, `y`)
+	/// 
+	/// The indices of the four corners of the `Rect` are as follows:
+	/// ```
+	/// (0)---(1)
+	///  |     |
+	/// (3)---(2)
+	/// ```
+	pub fn texture_cropped(&self, texture: &Texture, x: i32, y: i32, crop: Rect) -> [TextureVertex; 4] {
+		[
+			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: texture.pixel(crop.x, crop.y) },
+			TextureVertex { position: with_height(self.pixel_position(x + texture.width() as i32, y), 0.0), tex_coords: texture.pixel(crop.x + crop.w, crop.y) },
+			TextureVertex { position: with_height(self.pixel_position(x + texture.width() as i32, y + texture.height() as i32), 0.0), tex_coords: texture.pixel(crop.x + crop.w, crop.y + crop.h) },
+			TextureVertex { position: with_height(self.pixel_position(x, y + texture.height() as i32), 0.0), tex_coords: texture.pixel(crop.x, crop.y + crop.h) },
+		]
+	}
+
+	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
+	/// 
+	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
+	/// is drawn at (`x`, `y`)
+	/// 
+	/// The indices of the four corners of the `Rect` are as follows:
+	/// ```
+	/// (0)---(1)
+	///  |     |
+	/// (3)---(2)
+	/// ```
+	pub fn texture_scaled_cropped(&self, texture: &Texture, destination: Rect, crop: Rect) -> [TextureVertex; 4] {
+		[
+			TextureVertex { position: with_height(self.pixel_position(destination.x, destination.y), 0.0), tex_coords: texture.pixel(crop.x, crop.y) },
+			TextureVertex { position: with_height(self.pixel_position(destination.x + destination.w, destination.y), 0.0), tex_coords: texture.pixel(crop.x + crop.w, crop.y) },
+			TextureVertex { position: with_height(self.pixel_position(destination.x + destination.w, destination.y + destination.h), 0.0), tex_coords: texture.pixel(crop.x + crop.w, crop.y + crop.h) },
+			TextureVertex { position: with_height(self.pixel_position(destination.x, destination.y + destination.h), 0.0), tex_coords: texture.pixel(crop.x, crop.y + crop.h) },
 		]
 	}
 }

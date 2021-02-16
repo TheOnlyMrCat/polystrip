@@ -35,6 +35,8 @@ pub(crate) mod backend;
 pub mod vertex;
 pub mod pixel;
 
+pub use gpu_alloc;
+
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -88,9 +90,9 @@ pub struct RendererContext {
 }
 
 impl RendererContext {
-	fn new(format: gfx_hal::format::Format, extent: gfx_hal::window::Extent2D) -> RendererContext {
-		//Note: Keep up-to-date.         X0.X4.X0_XX
-		const POLYSTRIP_VERSION: u32 = 0x00_04_00_00;
+	fn new(config: RendererBuilder, format: gfx_hal::format::Format, extent: gfx_hal::window::Extent2D) -> RendererContext {
+		//Note: Keep up-to-date.         X0.X6.X0_XX
+		const POLYSTRIP_VERSION: u32 = 0x00_06_00_00;
 		let instance = backend::Instance::create("polystrip", POLYSTRIP_VERSION).unwrap();
 
 		let adapter = instance.enumerate_adapters().into_iter()
@@ -141,7 +143,7 @@ impl RendererContext {
 			&[]
 		)}.unwrap();
 		let descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
-			1024,
+			config.max_textures,
 			&[
 				gfx_hal::pso::DescriptorRangeDesc {
 					ty: gfx_hal::pso::DescriptorType::Image {
@@ -149,19 +151,20 @@ impl RendererContext {
 							with_sampler: true,
 						},
 					},
-					count: 1024,
+					count: config.max_textures,
 				},
 				gfx_hal::pso::DescriptorRangeDesc {
 					ty: gfx_hal::pso::DescriptorType::Sampler,
-					count: 1024,
+					count: config.max_textures,
 				},
 			],
 			gfx_hal::pso::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
 		)}.unwrap();
 
 		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
+		let config_fn = config.alloc_config;
 		let mut allocator = GpuAllocator::new(
-			gpu_alloc::Config::i_am_prototyping(), //TODO: Choose sensible defaults
+			config_fn(&alloc_props),
 			alloc_props,
 		);
 
@@ -258,7 +261,7 @@ impl RendererContext {
 							id: 0,
 							range: 0..1
 						}]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
 				tessellation: None,
@@ -343,7 +346,7 @@ impl RendererContext {
 							id: 0,
 							range: 0..1
 						}]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
 				tessellation: None,
@@ -428,7 +431,7 @@ impl RendererContext {
 							id: 0,
 							range: 0..1
 						}]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8]),
+						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
 				tessellation: None,
@@ -555,6 +558,71 @@ impl Drop for RendererContext {
 	}
 }
 
+pub fn default_memory_config(props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
+	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
+}
+
+/// Customization options for building a Renderer
+pub struct RendererBuilder {
+	real_3d: bool,
+	max_textures: usize,
+	alloc_config: Box<dyn FnOnce(&gpu_alloc::DeviceProperties) -> gpu_alloc::Config>,
+}
+
+impl RendererBuilder {
+	pub fn new() -> RendererBuilder {
+		RendererBuilder {
+			real_3d: false,
+			max_textures: 1024,
+			alloc_config: Box::new(default_memory_config),
+		}
+	}
+
+	pub fn real_3d(mut self, real_3d: bool) -> RendererBuilder {
+		self.real_3d = real_3d;
+		self
+	}
+
+	/// Changes the allocation size of the texture pool.
+	/// 
+	/// Default: 1024
+	pub fn max_textures(mut self, max_textures: usize) -> RendererBuilder {
+		self.max_textures = max_textures;
+		self
+	}
+
+	/// Changes the memory allocator's allocation strategy.
+	/// 
+	/// Default: [default_memory_config](fn.default_memory_config.html)
+	pub fn allocation_config(mut self, alloc_config: impl FnOnce(&gpu_alloc::DeviceProperties) -> gpu_alloc::Config + 'static) -> RendererBuilder {
+		self.alloc_config = Box::new(alloc_config);
+		self
+	}
+
+	/// Builds the renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
+	/// was created legitimately. *Technically*, that's my problem, but if you're not making your window properly, I'm not
+	/// going to take responsibility for the resulting crash. (The only way I'd be able to deal with it anyway would be to
+	/// mark this method `unsafe`)
+	/// 
+	/// # Arguments
+	/// * `window`: A valid window compatible with `raw_window_handle`.
+	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
+	///           differentiate between physical and logical size, this refers to the logical size
+	pub fn build(self, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
+		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
+		let context = RendererContext::new(self, swapchain_config.format, swapchain_config.extent);
+
+		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
+		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
+
+		Renderer {
+			context: Rc::new(context),
+			surface: ManuallyDrop::new(surface),
+			swapchain_config,
+		}
+	}
+}
+
 /// An accelerated 2D renderer.
 /// 
 /// A renderer can be created for any window compatible with `raw_window_handle`. The size of this window must be updated
@@ -595,18 +663,8 @@ impl Renderer {
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
-		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
-		let context = RendererContext::new(swapchain_config.format, swapchain_config.extent);
-
-		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
-		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
-
-		Renderer {
-			context: Rc::new(context),
-			surface: ManuallyDrop::new(surface),
-			swapchain_config,
-		}
+	pub fn new(window: &impl HasRawWindowHandle, size: (u32, u32)) -> Renderer {
+		RendererBuilder::new().build(window, size)
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
