@@ -40,7 +40,8 @@ pub use gpu_alloc;
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
-use std::sync::Arc;
+
+use arrayvec::ArrayVec;
 
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
@@ -51,6 +52,18 @@ use crate::pixel::PixelTranslator;
 use raw_window_handle::HasRawWindowHandle;
 
 use gfx_hal::prelude::*;
+
+macro_rules! iter {
+	() => {
+		std::iter::empty()
+	};
+	($e:expr) => {
+		std::iter::once($e)
+	};
+	($($e:expr),+ $(,)?) => {
+		ArrayVec::from([$($e),+]).into_iter()
+	}
+}
 
 use align_data::{include_aligned, Align32};
 static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.vert.spv");
@@ -82,11 +95,11 @@ pub struct RendererContext {
 
 	pub depth_stencil: ManuallyDrop<backend::Image>,
 	pub depth_stencil_view: ManuallyDrop<backend::ImageView>,
-	pub depth_stencil_memory: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
+	pub depth_stencil_memory: ManuallyDrop<MemoryBlock<backend::Memory>>,
 	
 	pub extent: Cell<gfx_hal::window::Extent2D>,
 
-	pub allocator: RefCell<GpuAllocator<Arc<backend::Memory>>>,
+	pub allocator: RefCell<GpuAllocator<backend::Memory>>,
 }
 
 impl RendererContext {
@@ -120,7 +133,7 @@ impl RendererContext {
 		};
 
 		let texture_descriptor_set_layout = unsafe { gpu.device.create_descriptor_set_layout(
-			&[
+			iter![
 				gfx_hal::pso::DescriptorSetLayoutBinding {
 					binding: 0,
 					ty: gfx_hal::pso::DescriptorType::Image {
@@ -140,11 +153,11 @@ impl RendererContext {
 					immutable_samplers: false,
 				}
 			],
-			&[]
+			iter![]
 		)}.unwrap();
 		let descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
 			config.max_textures,
-			&[
+			iter![
 				gfx_hal::pso::DescriptorRangeDesc {
 					ty: gfx_hal::pso::DescriptorType::Image {
 						ty: gfx_hal::pso::ImageDescriptorType::Sampled {
@@ -202,12 +215,12 @@ impl RendererContext {
 		)}.unwrap();
 
 		let main_pass = unsafe { gpu.device.create_render_pass(
-			&[
+			iter![
 				gfx_hal::pass::Attachment {
 					format: Some(format),
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
-						load: gfx_hal::pass::AttachmentLoadOp::Load,
+						load: gfx_hal::pass::AttachmentLoadOp::Clear,
 						store: gfx_hal::pass::AttachmentStoreOp::Store,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
@@ -218,20 +231,20 @@ impl RendererContext {
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
 						load: gfx_hal::pass::AttachmentLoadOp::Clear,
-						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+						store: gfx_hal::pass::AttachmentStoreOp::Store,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
 					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::DepthStencilAttachmentOptimal
 				}
 			],
-			&[gfx_hal::pass::SubpassDesc {
+			iter![gfx_hal::pass::SubpassDesc {
 				colors: &[(0, gfx_hal::image::Layout::ColorAttachmentOptimal)],
 				depth_stencil: Some(&(1, gfx_hal::image::Layout::DepthStencilAttachmentOptimal)),
 				inputs: &[],
 				resolves: &[],
 				preserves: &[],
 			}],
-			&[]
+			iter![]
 		)}.unwrap();
 
 		let colour_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
@@ -239,8 +252,9 @@ impl RendererContext {
 		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
 		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
-		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
 		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			label: Some("polystrip_stroked_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
 					binding: 0,
@@ -324,8 +338,9 @@ impl RendererContext {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(&[], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			label: Some("polystrip_colour_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
 					binding: 0,
@@ -409,8 +424,9 @@ impl RendererContext {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(vec![&texture_descriptor_set_layout], &[(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![&texture_descriptor_set_layout], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
+			label: Some("polystrip_texture_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
 				buffers: &[gfx_hal::pso::VertexBufferDesc {
 					binding: 0,
@@ -685,7 +701,7 @@ impl Renderer {
 	fn acquire_image(&mut self) -> backend::SwapchainImage {
 		match unsafe { self.surface.acquire_image(1_000_000 /* 1 ms */) } {
 			Ok((image, _)) => image,
-			Err(gfx_hal::window::AcquireError::OutOfDate) => {
+			Err(gfx_hal::window::AcquireError::OutOfDate(_)) => {
 				unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
 				match unsafe { self.surface.acquire_image(0) } {
 					Ok((image, _)) => image,
@@ -710,7 +726,12 @@ impl Renderer {
 		};
 		let framebuffer = unsafe { self.context.device.create_framebuffer(
 			&self.context.render_pass,
-			vec![image.borrow(), &*self.context.depth_stencil_view], //TODO: Remove the vector. arrayvec?
+			iter![gfx_hal::image::FramebufferAttachment {
+				usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
+				view_caps: gfx_hal::image::ViewCapabilities::empty(),
+				format: self.swapchain_config.format,
+			}],
+			// iter![image.borrow(), &*self.context.depth_stencil_view],
 			self.swapchain_config.extent.to_extent()
 		)}.unwrap();
 
@@ -721,40 +742,45 @@ impl Renderer {
 
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 					
-			command_buffer.set_viewports(0, &[viewport.clone()]);
-			command_buffer.set_scissors(0, &[viewport.rect]);
+			command_buffer.set_viewports(0, iter![viewport.clone()]);
+			command_buffer.set_scissors(0, iter![viewport.rect]);
 
 			command_buffer.begin_render_pass(
 				&self.context.render_pass,
 				&framebuffer,
 				viewport.rect,
-				&[gfx_hal::command::ClearValue {
-					depth_stencil: gfx_hal::command::ClearDepthStencil {
-						depth: 0.0,
-						stencil: 0,
-					}
-				}] as &[gfx_hal::command::ClearValue],
-				gfx_hal::command::SubpassContents::Inline
-			);
-
-			if let Some(clear_colour) = clear_colour {
-				command_buffer.clear_attachments(
-					&[
-						gfx_hal::command::AttachmentClear::Color {
-							index: 0,
-							value: gfx_hal::command::ClearColor {
-								float32: [
+				iter![
+					gfx_hal::command::RenderAttachmentInfo {
+						image_view: image.borrow(),
+						clear_value: gfx_hal::command::ClearValue {
+							color: gfx_hal::command::ClearColor {
+								float32:
+								if let Some(clear_colour) = clear_colour {[
 									(clear_colour.r as f32).powi(2) / 65_025.0,
 									(clear_colour.g as f32).powi(2) / 65_025.0,
 									(clear_colour.b as f32).powi(2) / 65_025.0,
 									clear_colour.a as f32 / 255.0,
-								]
+								]} else {[
+									0.0,
+									0.0,
+									0.0,
+									0.0,
+								]}
 							}
-						},
-					],
-					&[gfx_hal::pso::ClearRect { rect: viewport.rect, layers: 0..1 }]
-				);
-			}
+						}
+					},
+					gfx_hal::command::RenderAttachmentInfo {
+						image_view: &*self.context.depth_stencil_view,
+						clear_value: gfx_hal::command::ClearValue {
+							depth_stencil: gfx_hal::command::ClearDepthStencil {
+								depth: 0.0,
+								stencil: 0,
+							}
+						}
+					}
+				],
+				gfx_hal::command::SubpassContents::Inline
+			);
 		}
 
 		std::mem::drop(command_buffer);
@@ -777,7 +803,7 @@ impl Renderer {
 	pub fn texture_from_rgba(&self, data: &[u8], (width, height): (u32, u32)) -> Texture {
 		let context = self.context.clone();
 
-		let descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_set(&self.context.texture_descriptor_set_layout) }.unwrap();
+		let mut descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_one(&self.context.texture_descriptor_set_layout) }.unwrap();
 		let mut command_buffer = unsafe { context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary) };
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
 
@@ -806,7 +832,7 @@ impl Renderer {
 
 		let mut buffer = unsafe { context.device.create_buffer(img_req.size, gfx_hal::buffer::Usage::TRANSFER_SRC) }.unwrap();
 		let buf_req = unsafe { context.device.get_buffer_requirements(&buffer) };
-		let buf_block = unsafe { context.allocator.borrow_mut().alloc(
+		let mut buf_block = unsafe { context.allocator.borrow_mut().alloc(
 			memory_device,
 			Request {
 				size: buf_req.size,
@@ -824,7 +850,7 @@ impl Renderer {
 			command_buffer.pipeline_barrier(
 				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
 				gfx_hal::memory::Dependencies::empty(),
-				&[gfx_hal::memory::Barrier::Image {
+				iter![gfx_hal::memory::Barrier::Image {
 					states:
 						(gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
 						..
@@ -844,7 +870,7 @@ impl Renderer {
 				&buffer,
 				&image,
 				gfx_hal::image::Layout::TransferDstOptimal,
-				&[gfx_hal::command::BufferImageCopy {
+				iter![gfx_hal::command::BufferImageCopy {
 					buffer_offset: 0,
 					buffer_width: width,
 					buffer_height: height,
@@ -863,7 +889,7 @@ impl Renderer {
 			command_buffer.pipeline_barrier(
 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
 				gfx_hal::memory::Dependencies::empty(),
-				&[gfx_hal::memory::Barrier::Image {
+				iter![gfx_hal::memory::Barrier::Image {
 					states:
 						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
 						..
@@ -881,8 +907,8 @@ impl Renderer {
 			);
 			command_buffer.finish();
 
-			let fence = context.device.create_fence(false).unwrap();
-			context.queue_groups.borrow_mut()[0].queues[0].submit_without_semaphores(&[command_buffer], Some(&fence));
+			let mut fence = context.device.create_fence(false).unwrap();
+			context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
 			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
 			context.device.destroy_fence(fence);
@@ -913,15 +939,15 @@ impl Renderer {
 		let sampler = unsafe { context.device.create_sampler(&gfx_hal::image::SamplerDesc::new(gfx_hal::image::Filter::Nearest, gfx_hal::image::WrapMode::Tile)) }.unwrap();
 
 		unsafe {
-			context.device.write_descriptor_sets(vec![gfx_hal::pso::DescriptorSetWrite {
-				set: &descriptor_set,
+			context.device.write_descriptor_set(gfx_hal::pso::DescriptorSetWrite {
+				set: &mut descriptor_set,
 				binding: 0,
 				array_offset: 0,
-				descriptors: &[
-					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::General),
+				descriptors: iter![
+					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					gfx_hal::pso::Descriptor::Sampler(&sampler),
 				]
-			}])
+			})
 		}
 
 		Texture {
@@ -988,7 +1014,7 @@ pub struct Frame<'a> {
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
-	allocations: Vec<MemoryBlock<Arc<backend::Memory>>>,
+	allocations: Vec<MemoryBlock<backend::Memory>>,
 }
 
 //MARK: Frame API
@@ -1004,7 +1030,7 @@ impl<'a> Frame<'a> {
 		let index_mem_req = unsafe { self.renderer.context.device.get_buffer_requirements(&index_buffer) };
 
 		let memory_device = GfxMemoryDevice::wrap(&self.renderer.context.device);
-		let vertex_block = unsafe {
+		let mut vertex_block = unsafe {
 			self.renderer.context.allocator.borrow_mut().alloc(
 				memory_device,
 				Request {
@@ -1015,7 +1041,7 @@ impl<'a> Frame<'a> {
 				}
 			)
 		}.unwrap();
-		let index_block = unsafe {
+		let mut index_block = unsafe {
 			self.renderer.context.allocator.borrow_mut().alloc(
 				memory_device,
 				Request {
@@ -1044,12 +1070,12 @@ impl<'a> Frame<'a> {
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &index_buffer,
-				range: gfx_hal::buffer::SubRange::WHOLE,
-				index_type: gfx_hal::IndexType::U16,
-			});
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(
+				&index_buffer,
+				gfx_hal::buffer::SubRange::WHOLE,
+				gfx_hal::IndexType::U16,
+			);
 
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.stroked_graphics_pipeline);
 			command_buffer.push_graphics_constants(
@@ -1069,12 +1095,12 @@ impl<'a> Frame<'a> {
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &index_buffer,
-				range: gfx_hal::buffer::SubRange::WHOLE,
-				index_type: gfx_hal::IndexType::U16,
-			});
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(
+				&index_buffer,
+				gfx_hal::buffer::SubRange::WHOLE,
+				gfx_hal::IndexType::U16,
+			);
 
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.colour_graphics_pipeline);
 			command_buffer.push_graphics_constants(
@@ -1102,15 +1128,15 @@ impl<'a> Frame<'a> {
 		let mut command_buffer = self.renderer.context.command_buffer.borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, vec![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(gfx_hal::buffer::IndexBufferView {
-				buffer: &index_buffer,
-				range: gfx_hal::buffer::SubRange::WHOLE,
-				index_type: gfx_hal::IndexType::U16,
-			});
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(
+				&index_buffer,
+				gfx_hal::buffer::SubRange::WHOLE,
+				gfx_hal::IndexType::U16,
+			);
 			
 			command_buffer.bind_graphics_pipeline(&self.renderer.context.texture_graphics_pipeline);
-			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, vec![&*texture.descriptor_set], &[0]);
+			command_buffer.bind_graphics_descriptor_sets(&self.renderer.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![]);
 			command_buffer.push_graphics_constants(
 				&self.renderer.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
@@ -1148,11 +1174,9 @@ impl<'a> Drop for Frame<'a> {
 			unsafe {
 				let mut queue_groups = self.renderer.context.queue_groups.borrow_mut();
 				queue_groups[0].queues[0].submit(
-					gfx_hal::queue::Submission {
-						command_buffers: vec![&**self.renderer.context.command_buffer.borrow()],
-						wait_semaphores: vec![],
-						signal_semaphores: vec![&*self.renderer.context.render_semaphore],
-					},
+					iter![&**self.renderer.context.command_buffer.borrow()],
+					iter![],
+					iter![&*self.renderer.context.render_semaphore],
 					None
 				);
 
@@ -1178,7 +1202,7 @@ pub struct Texture {
 	view: ManuallyDrop<backend::ImageView>,
 	sampler: ManuallyDrop<backend::Sampler>,
 	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
-	memory_block: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
+	memory_block: ManuallyDrop<MemoryBlock<backend::Memory>>,
 	width: u32,
 	height: u32,
 }
