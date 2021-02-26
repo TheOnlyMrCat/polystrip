@@ -269,7 +269,7 @@ impl RendererContext {
 			},
 			rasterizer: gfx_hal::pso::Rasterizer {
 				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
-				cull_face: gfx_hal::pso::Face::BACK,
+				cull_face: gfx_hal::pso::Face::NONE,
 				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
 				depth_clamping: false,
 				depth_bias: None,
@@ -354,7 +354,7 @@ impl RendererContext {
 			},
 			rasterizer: gfx_hal::pso::Rasterizer {
 				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
-				cull_face: gfx_hal::pso::Face::BACK,
+				cull_face: gfx_hal::pso::Face::NONE,
 				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
 				depth_clamping: false,
 				depth_bias: None,
@@ -439,7 +439,7 @@ impl RendererContext {
 			},
 			rasterizer: gfx_hal::pso::Rasterizer {
 				polygon_mode: gfx_hal::pso::PolygonMode::Fill,
-				cull_face: gfx_hal::pso::Face::BACK,
+				cull_face: gfx_hal::pso::Face::NONE,
 				front_face: gfx_hal::pso::FrontFace::CounterClockwise,
 				depth_clamping: false,
 				depth_bias: None,
