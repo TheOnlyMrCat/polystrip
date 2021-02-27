@@ -1,4 +1,4 @@
-use polystrip::Renderer;
+use polystrip::WindowTarget;
 use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector3, Matrix4};
 
 use winit::event::{Event, WindowEvent};
@@ -12,7 +12,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = Renderer::new(&window, (size.width, size.height));
+	let mut renderer = WindowTarget::new(&window, (size.width, size.height));
 	
 	el.run(move |event, _, control_flow| {
 		match event {

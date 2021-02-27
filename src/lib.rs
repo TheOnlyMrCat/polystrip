@@ -58,7 +58,7 @@ static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.frag
 static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.vert.spv");
 static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag.spv");
 
-pub struct RendererContext {
+pub struct Renderer {
 	pub instance: backend::Instance,
 	pub device: backend::Device,
 	pub queue_groups: RefCell<Vec<gfx_hal::queue::family::QueueGroup<backend::Backend>>>,
@@ -80,17 +80,11 @@ pub struct RendererContext {
 	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
 	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
 
-	pub depth_stencil: ManuallyDrop<backend::Image>,
-	pub depth_stencil_view: ManuallyDrop<backend::ImageView>,
-	pub depth_stencil_memory: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
-	
-	pub extent: Cell<gfx_hal::window::Extent2D>,
-
 	pub allocator: RefCell<GpuAllocator<Arc<backend::Memory>>>,
 }
 
-impl RendererContext {
-	fn new(config: RendererBuilder, format: gfx_hal::format::Format, extent: gfx_hal::window::Extent2D) -> RendererContext {
+impl Renderer {
+	fn new(config: RendererBuilder) -> Renderer {
 		//Note: Keep up-to-date.         X0.X6.X0_XX
 		const POLYSTRIP_VERSION: u32 = 0x00_06_00_00;
 		let instance = backend::Instance::create("polystrip", POLYSTRIP_VERSION).unwrap();
@@ -168,43 +162,10 @@ impl RendererContext {
 			alloc_props,
 		);
 
-		let mut depth_stencil = unsafe { gpu.device.create_image(
-			gfx_hal::image::Kind::D2(extent.width, extent.height, 1, 1),
-			1,
-			gfx_hal::format::Format::D32Sfloat,
-			gfx_hal::image::Tiling::Optimal,
-			gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
-			gfx_hal::image::ViewCapabilities::empty()
-		)}.unwrap();
-		let depth_stencil_req = unsafe { gpu.device.get_image_requirements(&depth_stencil) };
-		let depth_stencil_memory = unsafe { allocator.alloc(
-			GfxMemoryDevice::wrap(&gpu.device),
-			Request {
-				size: depth_stencil_req.size,
-				align_mask: depth_stencil_req.alignment,
-				memory_types: depth_stencil_req.type_mask,
-				usage: UsageFlags::FAST_DEVICE_ACCESS,
-			}
-		)}.unwrap();
-		unsafe { gpu.device.bind_image_memory(&depth_stencil_memory.memory(), depth_stencil_memory.offset(), &mut depth_stencil) }.unwrap();
-		let depth_stencil_view = unsafe { gpu.device.create_image_view(
-			&depth_stencil,
-			gfx_hal::image::ViewKind::D2,
-			gfx_hal::format::Format::D32Sfloat,
-			gfx_hal::format::Swizzle::NO,
-			gfx_hal::image::SubresourceRange {
-				aspects: gfx_hal::format::Aspects::DEPTH,
-				level_start: 0,
-				level_count: None,
-				layer_start: 0,
-				layer_count: None,
-			}
-		)}.unwrap();
-
 		let main_pass = unsafe { gpu.device.create_render_pass(
 			&[
 				gfx_hal::pass::Attachment {
-					format: Some(format),
+					format: Some(gfx_hal::format::Format::Rgba8Srgb),
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
 						load: gfx_hal::pass::AttachmentLoadOp::Load,
@@ -496,7 +457,7 @@ impl RendererContext {
 
 		let render_semaphore = gpu.device.create_semaphore().unwrap();
 
-		RendererContext {
+		Renderer {
 			instance, adapter,
 			device: gpu.device,
 			queue_groups: RefCell::new(gpu.queue_groups),
@@ -517,31 +478,21 @@ impl RendererContext {
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
 
-			depth_stencil: ManuallyDrop::new(depth_stencil),
-			depth_stencil_view: ManuallyDrop::new(depth_stencil_view),
-			depth_stencil_memory: ManuallyDrop::new(depth_stencil_memory),
-
-			extent: Cell::new(extent),
-
 			allocator: RefCell::new(allocator),
 		}
 	}
 }
 
-impl Drop for RendererContext {
+impl Drop for Renderer {
 	fn drop(&mut self) {
 		unsafe {
 			self.allocator.get_mut().cleanup(GfxMemoryDevice::wrap(&self.device));
-			std::mem::forget(ManuallyDrop::take(&mut self.depth_stencil_memory));
 
 			let mut command_pool = ManuallyDrop::take(self.command_pool.get_mut());
 			command_pool.free(std::iter::once(ManuallyDrop::take(self.command_buffer.get_mut())));
 			self.device.destroy_command_pool(command_pool);
 
 			self.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
-
-			self.device.destroy_image_view(ManuallyDrop::take(&mut self.depth_stencil_view));
-			self.device.destroy_image(ManuallyDrop::take(&mut self.depth_stencil));
 
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
@@ -608,18 +559,8 @@ impl RendererBuilder {
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn build(self, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> Renderer {
-		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
-		let context = RendererContext::new(self, swapchain_config.format, swapchain_config.extent);
-
-		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
-		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
-
-		Renderer {
-			context: Rc::new(context),
-			surface: ManuallyDrop::new(surface),
-			swapchain_config,
-		}
+	pub fn build(self) -> Renderer {
+		Renderer::new(self)
 	}
 }
 
@@ -646,14 +587,19 @@ impl RendererBuilder {
 ///     }
 /// });
 /// ```
-pub struct Renderer {
-	context: Rc<RendererContext>,
+pub struct WindowTarget {
+	context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
+	extent: Rc<Cell<gfx_hal::window::Extent2D>>,
+
+	depth_stencil: ManuallyDrop<backend::Image>,
+	depth_stencil_view: ManuallyDrop<backend::ImageView>,
+	depth_stencil_memory: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
 }
 
 //TODO: Builder pattern, to allow for more configuration?
-impl Renderer {
+impl WindowTarget {
 	/// Creates a new renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
 	/// was created legitimately. *Technically*, that's my problem, but if you're not making your window properly, I'm not
 	/// going to take responsibility for the resulting crash. (The only way I'd be able to deal with it anyway would be to
@@ -663,8 +609,62 @@ impl Renderer {
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn new(window: &impl HasRawWindowHandle, size: (u32, u32)) -> Renderer {
-		RendererBuilder::new().build(window, size)
+	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
+		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Rgba8Srgb, 2);
+		let context = RendererBuilder::new().build();
+
+		let (depth_stencil, depth_stencil_view, depth_stencil_memory) = Self::create_depth_stencil(&context, width, height);
+
+		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
+		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
+
+		WindowTarget {
+			context: Rc::new(context),
+			surface: ManuallyDrop::new(surface),
+			swapchain_config,
+			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
+
+			depth_stencil: ManuallyDrop::new(depth_stencil),
+			depth_stencil_view: ManuallyDrop::new(depth_stencil_view),
+			depth_stencil_memory: ManuallyDrop::new(depth_stencil_memory),
+		}
+	}
+
+	fn create_depth_stencil(context: &Renderer, width: u32, height: u32) -> (backend::Image, backend::ImageView, MemoryBlock<Arc<backend::Memory>>) {
+		let mut depth_stencil = unsafe { context.device.create_image(
+			gfx_hal::image::Kind::D2(width, height, 1, 1),
+			1,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+			gfx_hal::image::ViewCapabilities::empty()
+		)}.unwrap();
+		let depth_stencil_req = unsafe { context.device.get_image_requirements(&depth_stencil) };
+		let depth_stencil_memory = unsafe { context.allocator.borrow_mut().alloc(
+			GfxMemoryDevice::wrap(&context.device),
+			Request {
+				size: depth_stencil_req.size,
+				align_mask: depth_stencil_req.alignment,
+				memory_types: depth_stencil_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+		unsafe { context.device.bind_image_memory(&depth_stencil_memory.memory(), depth_stencil_memory.offset(), &mut depth_stencil) }.unwrap();
+		let depth_stencil_view = unsafe { context.device.create_image_view(
+			&depth_stencil,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::D32Sfloat,
+			gfx_hal::format::Swizzle::NO,
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::DEPTH,
+				level_start: 0,
+				level_count: None,
+				layer_start: 0,
+				layer_count: None,
+			}
+		)}.unwrap();
+
+		(depth_stencil, depth_stencil_view, depth_stencil_memory)
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
@@ -710,7 +710,7 @@ impl Renderer {
 		};
 		let framebuffer = unsafe { self.context.device.create_framebuffer(
 			&self.context.render_pass,
-			vec![image.borrow(), &*self.context.depth_stencil_view], //TODO: Remove the vector. arrayvec?
+			vec![image.borrow(), &*self.depth_stencil_view], //TODO: Remove the vector. arrayvec?
 			self.swapchain_config.extent.to_extent()
 		)}.unwrap();
 
@@ -935,18 +935,31 @@ impl Renderer {
 		}
 	}
 	
-	/// Resizes the internal swapchain
+	/// Resizes the internal swapchain and depth texture
 	/// 
 	/// Call this method in your window's event loop whenever the window gets resized
 	/// 
 	/// # Arguments
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn resize(&mut self, size: (u32, u32)) {
-		self.swapchain_config.extent.width = size.0;
-		self.swapchain_config.extent.height = size.1;
-		self.context.extent.set(self.swapchain_config.extent);
+	pub fn resize(&mut self, (width, height): (u32, u32)) {
+		self.swapchain_config.extent.width = width;
+		self.swapchain_config.extent.height = height;
 		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
+		self.extent.set(self.swapchain_config.extent);
+
+		unsafe {
+			self.context.device.destroy_image_view(ManuallyDrop::take(&mut self.depth_stencil_view));
+			self.context.device.destroy_image(ManuallyDrop::take(&mut self.depth_stencil));
+			self.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&self.context.device), ManuallyDrop::take(&mut self.depth_stencil_memory));
+		}
+		
+		let (depth_stencil, depth_stencil_view, depth_stencil_memory) = Self::create_depth_stencil(&self.context, width, height);
+
+		self.depth_stencil = ManuallyDrop::new(depth_stencil);
+		self.depth_stencil_view = ManuallyDrop::new(depth_stencil_view);
+		self.depth_stencil_memory = ManuallyDrop::new(depth_stencil_memory);
+
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
@@ -968,13 +981,17 @@ impl Renderer {
 	}
 
 	pub fn pixel_translator(&self) -> PixelTranslator {
-		PixelTranslator::new(self.context.clone())
+		PixelTranslator::new(self.extent.clone())
 	}
 }
 
-impl Drop for Renderer {
+impl Drop for WindowTarget {
 	fn drop(&mut self) {
 		unsafe {
+			self.context.device.destroy_image_view(ManuallyDrop::take(&mut self.depth_stencil_view));
+			self.context.device.destroy_image(ManuallyDrop::take(&mut self.depth_stencil));
+			self.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&self.context.device), ManuallyDrop::take(&mut self.depth_stencil_memory));
+
 			self.context.instance.destroy_surface(ManuallyDrop::take(&mut self.surface));
 		}
 	}
@@ -984,7 +1001,7 @@ impl Drop for Renderer {
 /// 
 /// More methods are implemented in the [`FrameGeometryExt`](geometry/trait.FrameGeometryExt.html) trait.
 pub struct Frame<'a> {
-	renderer: &'a mut Renderer,
+	renderer: &'a mut WindowTarget,
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	viewport: gfx_hal::pso::Viewport,
@@ -1173,7 +1190,7 @@ impl<'a> Drop for Frame<'a> {
 /// 
 /// It can be used only with the [`Renderer`](struct.Renderer.html) which created it.
 pub struct Texture {
-	context: Rc<RendererContext>,
+	context: Rc<Renderer>,
 	image: ManuallyDrop<backend::Image>,
 	view: ManuallyDrop<backend::ImageView>,
 	sampler: ManuallyDrop<backend::Sampler>,

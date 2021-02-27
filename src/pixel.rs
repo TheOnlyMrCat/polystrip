@@ -1,29 +1,33 @@
 //! Methods for converting between screen space and pixel coordinates
 //! 
 //! This module defines the [`PixelTranslator`] type, which is created from a [`Renderer`] and translates
-//! coordinates based on the size of the renderer's viewport
+//! coordinates based on the ize of the renderer's viewport
 
+use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::{RendererContext, Texture};
+use gfx_hal::window::Extent2D;
+
+use crate::Texture;
 use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 use crate::vertex::with_height;
 
 pub struct PixelTranslator {
-	context: Rc<RendererContext>,
+	extent: Rc<Cell<Extent2D>>,
 }
 
 impl PixelTranslator {
-	pub(crate) fn new(context: Rc<RendererContext>) -> PixelTranslator {
+	pub(crate) fn new(extent: Rc<Cell<Extent2D>>) -> PixelTranslator {
 		PixelTranslator {
-			context
+			extent: extent
 		}
 	}
 
-	/// Converts a pixel value into an absolute screen space position. Doing operations with absolute screen space positions
-	/// will not give expected values. See the [`pixel_offset`](#method.pixel_offset) method to create screen space offsets
+	/// Converts a pixel value into an absolute screen space position. Doing arithmetic operations with absolute screen space
+	/// positions will not give expected values. See the [`pixel_offset`](#method.pixel_offset) method to create screen space
+	/// offsets
 	pub fn pixel_position(&self, x: i32, y: i32) -> Vector2 {
-		let extent = self.context.extent.get();
+		let extent = self.extent.get();
 		Vector2 {
 			x: (x * 2) as f32 / extent.width as f32 - 1.0,
 			y: -((y * 2) as f32 / extent.height as f32 - 1.0),
@@ -32,7 +36,7 @@ impl PixelTranslator {
 
 	/// Converts a pixel value into a screen space offset.
 	pub fn pixel_offset(&self, x: i32, y: i32) -> Vector2 {
-		let extent = self.context.extent.get();
+		let extent = self.extent.get();
 		Vector2 {
 			x: (x * 2) as f32 / extent.width as f32,
 			y: -((y * 2) as f32 / extent.height as f32),
