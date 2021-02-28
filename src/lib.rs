@@ -157,7 +157,7 @@ impl Renderer {
 
 		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
 		let config_fn = config.alloc_config;
-		let mut allocator = GpuAllocator::new(
+		let allocator = GpuAllocator::new(
 			config_fn(&alloc_props),
 			alloc_props,
 		);
@@ -645,7 +645,7 @@ impl Renderer {
 			sampler: ManuallyDrop::new(sampler),
 			descriptor_set: ManuallyDrop::new(descriptor_set),
 			memory_block: ManuallyDrop::new(img_block),
-			width, height,
+			extent: gfx_hal::window::Extent2D { width, height },
 		}
 	}
 }
@@ -676,7 +676,7 @@ impl Drop for Renderer {
 	}
 }
 
-pub fn default_memory_config(props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
+pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
 	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
 
@@ -1180,30 +1180,87 @@ pub struct Texture {
 	sampler: ManuallyDrop<backend::Sampler>,
 	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
 	memory_block: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
-	width: u32,
-	height: u32,
+	extent: gfx_hal::window::Extent2D,
 }
 
 impl Texture {
 	/// Get the dimensions of this texture, in (width, height) order.
 	pub fn dimensions(&self) -> (u32, u32) {
-		(self.width, self.height)
+		(self.extent.width, self.extent.height)
 	}
 
 	pub fn width(&self) -> u32 {
-		self.width
+		self.extent.width
 	}
 
 	pub fn height(&self) -> u32 {
-		self.height
+		self.extent.height
 	}
 
 	/// Converts pixel coordinates to texture space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2 {
-			x: x as f32 / self.width as f32,
-			y: y as f32 / self.height as f32,
+			x: x as f32 / self.extent.width as f32,
+			y: y as f32 / self.extent.height as f32,
 		}
+	}
+}
+
+impl<'a> RenderTarget<'a> for Texture {
+	type FrameDrop = TextureFrame<'a>;
+
+	fn create_frame(&'a mut self) -> Frame<'a, TextureFrame<'a>> {
+		let viewport = gfx_hal::pso::Viewport {
+			rect: gfx_hal::pso::Rect {
+				x: 0,
+				y: 0,
+				w: self.extent.width as i16,
+				h: self.extent.height as i16,
+			},
+			depth: 0.0..1.0,
+		};
+
+		let depth_texture = DepthTexture::new(self.context.clone(), self.extent);
+
+		let framebuffer = unsafe { self.context.device.create_framebuffer(
+			&self.context.render_pass,
+			vec![&*self.view, &*depth_texture.view], //TODO: Remove the vector. arrayvec?
+			self.extent.to_extent()
+		)}.unwrap();
+
+		let mut command_buffer = self.context.command_buffer.borrow_mut();
+
+		unsafe {
+			command_buffer.reset(false);
+
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+					
+			command_buffer.set_viewports(0, &[viewport.clone()]);
+			command_buffer.set_scissors(0, &[viewport.rect]);
+
+			command_buffer.begin_render_pass(
+				&self.context.render_pass,
+				&framebuffer,
+				viewport.rect,
+				&[gfx_hal::command::ClearValue {
+					depth_stencil: gfx_hal::command::ClearDepthStencil {
+						depth: 0.0,
+						stencil: 0,
+					}
+				}] as &[gfx_hal::command::ClearValue],
+				gfx_hal::command::SubpassContents::Inline
+			);
+		}
+
+		Frame::new(
+			self.context.clone(),
+			TextureFrame {
+				framebuffer: ManuallyDrop::new(framebuffer),
+				depth_texture,
+				_marker: std::marker::PhantomData,
+			},
+			viewport
+		)
 	}
 }
 
@@ -1222,8 +1279,23 @@ impl Drop for Texture {
 	}
 }
 
+pub struct TextureFrame<'a> {
+	framebuffer: ManuallyDrop<backend::Framebuffer>,
+	#[allow(dead_code)] // Must be kept alive while the framebuffer is still using its ImageView.
+	depth_texture: DepthTexture, //TODO: ManuallyDrop
+	_marker: std::marker::PhantomData<&'a backend::ImageView>,
+}
+
+impl<'a> RenderDrop<'a> for TextureFrame<'a> {
+	fn cleanup(&mut self, context: &Renderer) {
+		unsafe {
+			context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
+		}
+	}
+}
+
 pub struct DepthTexture {
-	context: Rc<Renderer>,
+	context: Rc<Renderer>, //TODO: Force users to manually drop and give it a context?
 	image: ManuallyDrop<backend::Image>,
 	view: ManuallyDrop<backend::ImageView>,
 	memory: ManuallyDrop<MemoryBlock<Arc<backend::Memory>>>,
