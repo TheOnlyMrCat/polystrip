@@ -15,7 +15,7 @@ fn main() {
 	let mut renderer = WindowTarget::new(&window, (size.width, size.height));
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = renderer.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
+	let sandstone = renderer.context.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
 
 	el.run(move |event, _, control_flow| {
 		match event {
