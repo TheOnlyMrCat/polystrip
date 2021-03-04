@@ -17,6 +17,8 @@ fn main() {
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = renderer.context.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
 
+	assert_eq!(*sandstone_img, *sandstone.get_data());
+
 	el.run(move |event, _, control_flow| {
 		match event {
 			Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {

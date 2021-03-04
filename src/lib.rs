@@ -1257,10 +1257,9 @@ impl Texture {
 	}
 
 	pub fn get_data(&self) -> Box<[u8]> {
-		//TODO: row_pitch
 		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
 
-		let mut buffer = unsafe { self.context.device.create_buffer(self.memory_block.size(), gfx_hal::buffer::Usage::TRANSFER_DST) }.unwrap();
+		let mut buffer = unsafe { self.context.device.create_buffer((self.extent.width * self.extent.height) as u64 * 4, gfx_hal::buffer::Usage::TRANSFER_DST) }.unwrap();
 		let buf_req = unsafe { self.context.device.get_buffer_requirements(&buffer) };
 		let mut buf_block = unsafe { self.context.allocator.borrow_mut().alloc(
 			memory_device,
