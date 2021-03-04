@@ -88,7 +88,8 @@ pub struct Renderer {
 	pub command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
 	pub command_buffer: RefCell<ManuallyDrop<backend::CommandBuffer>>,
 
-	pub render_semaphore: ManuallyDrop<backend::Semaphore>,
+	pub render_semaphore: RefCell<ManuallyDrop<backend::Semaphore>>,
+	pub render_fence: RefCell<ManuallyDrop<backend::Fence>>,
 
 	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
 	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
@@ -472,6 +473,7 @@ impl Renderer {
 		}, None) }.unwrap();
 
 		let render_semaphore = gpu.device.create_semaphore().unwrap();
+		let render_fence = gpu.device.create_fence(false).unwrap();
 
 		Renderer {
 			instance, adapter,
@@ -489,7 +491,8 @@ impl Renderer {
 			command_pool: RefCell::new(ManuallyDrop::new(command_pool)),
 			command_buffer: RefCell::new(ManuallyDrop::new(command_buffer)),
 
-			render_semaphore: ManuallyDrop::new(render_semaphore),
+			render_semaphore: RefCell::new(ManuallyDrop::new(render_semaphore)),
+			render_fence: RefCell::new(ManuallyDrop::new(render_fence)),
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
@@ -700,7 +703,8 @@ impl Drop for Renderer {
 			command_pool.free(std::iter::once(ManuallyDrop::take(self.command_buffer.get_mut())));
 			self.device.destroy_command_pool(command_pool);
 
-			self.device.destroy_semaphore(ManuallyDrop::take(&mut self.render_semaphore));
+			self.device.destroy_semaphore(ManuallyDrop::take(self.render_semaphore.get_mut()));
+			self.device.destroy_fence(ManuallyDrop::take(self.render_fence.get_mut()));
 
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
@@ -1029,7 +1033,7 @@ impl<'a> RenderDrop<'a> for WindowFrame<'a> {
 		if !std::thread::panicking() {
 			unsafe {
 				let mut queue_groups = context.queue_groups.borrow_mut();
-				queue_groups[0].queues[0].present(&mut self.surface, ManuallyDrop::take(&mut self.swap_chain_frame), None).unwrap();
+				queue_groups[0].queues[0].present(&mut self.surface, ManuallyDrop::take(&mut self.swap_chain_frame), Some(&mut *context.render_semaphore.borrow_mut())).unwrap();
 			}
 		} else {
 			unsafe {
@@ -1180,7 +1184,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			);
 			
 			command_buffer.bind_graphics_pipeline(&self.context.texture_graphics_pipeline);
-			command_buffer.bind_graphics_descriptor_sets(&self.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![0]);
+			// command_buffer.bind_graphics_descriptor_sets(&self.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![]);
 			command_buffer.push_graphics_constants(
 				&self.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
@@ -1211,9 +1215,10 @@ impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 				queue_groups[0].queues[0].submit(
 					iter![&**command_buffer],
 					iter![],
-					iter![&*self.context.render_semaphore],
-					None
+					iter![&**self.context.render_semaphore.borrow()],
+					Some(&mut **self.context.render_fence.borrow_mut())
 				);
+			self.context.device.wait_for_fence(&mut **self.context.render_fence.borrow_mut(), u64::MAX).unwrap();
 		}
 
 		for block in self.allocations.drain(..) { //TODO: ManuallyDrop the vec?
