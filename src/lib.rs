@@ -133,7 +133,7 @@ impl Renderer {
 					binding: 0,
 					ty: gfx_hal::pso::DescriptorType::Image {
 						ty: gfx_hal::pso::ImageDescriptorType::Sampled {
-							with_sampler: true,
+							with_sampler: false,
 						},
 					},
 					count: 1,
@@ -156,7 +156,7 @@ impl Renderer {
 				gfx_hal::pso::DescriptorRangeDesc {
 					ty: gfx_hal::pso::DescriptorType::Image {
 						ty: gfx_hal::pso::ImageDescriptorType::Sampled {
-							with_sampler: true,
+							with_sampler: false,
 						},
 					},
 					count: config.max_textures,
@@ -519,7 +519,7 @@ impl Renderer {
 			gfx_hal::format::Format::Rgba8Srgb,
 			gfx_hal::image::Tiling::Optimal,
 			gfx_hal::image::Usage::TRANSFER_SRC | gfx_hal::image::Usage::TRANSFER_DST | gfx_hal::image::Usage::SAMPLED,
-			gfx_hal::image::ViewCapabilities::empty(),
+			gfx_hal::image::ViewCapabilities::MUTABLE_FORMAT,
 		)}.unwrap();
 		let img_req = unsafe { context.device.get_image_requirements(&image) };
 
@@ -543,8 +543,7 @@ impl Renderer {
 		unsafe {
 			let mapping = buf_block.map(memory_device, 0, upload_size as usize).unwrap();
 			for y in 0..height as usize {
-                let row = &data[y * (width as usize) * 4
-                    ..(y + 1) * (width as usize) * 4];
+                let row = &data[y * (width as usize) * 4..(y + 1) * (width as usize) * 4];
                 std::ptr::copy_nonoverlapping(
                     row.as_ptr(),
                     mapping.as_ptr().offset(y as isize * row_pitch as isize),
@@ -599,12 +598,11 @@ impl Renderer {
 					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					gfx_hal::pso::Descriptor::Sampler(&sampler),
 				]
-			})
+			});
 		}
 
+		let mut fence = context.device.create_fence(false).unwrap();
 		unsafe {
-			let mut fence = context.device.create_fence(false).unwrap();
-
 			let mut command_buffer = context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
@@ -1184,7 +1182,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			);
 			
 			command_buffer.bind_graphics_pipeline(&self.context.texture_graphics_pipeline);
-			// command_buffer.bind_graphics_descriptor_sets(&self.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![]);
+			command_buffer.bind_graphics_descriptor_sets(&self.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![]);
 			command_buffer.push_graphics_constants(
 				&self.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
