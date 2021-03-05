@@ -11,7 +11,7 @@ cargo run --features metal --example $1
 #/
 
 #test
-cargo test --features metal
+cargo test --features empty
 #/
 
 #doc b!

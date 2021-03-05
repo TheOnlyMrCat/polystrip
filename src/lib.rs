@@ -9,12 +9,12 @@
 //! # Example with `winit`
 //! ```no_run
 //! # use winit::event::{Event, WindowEvent};
-//! # use polystrip::Renderer;
+//! # use polystrip::WindowTarget;
 //! let event_loop = winit::event_loop::EventLoop::new();
 //! let window = winit::window::Window::new(&event_loop).unwrap();
 //! 
 //! let window_size = window.inner_size().to_logical(window.scale_factor());
-//! let mut renderer = Renderer::new(&window, (window_size.width, window_size.height));
+//! let mut renderer = WindowTarget::new_default(&window, (window_size.width, window_size.height));
 //! 
 //! event_loop.run(move |event, _, control_flow| {
 //!     match event {
@@ -723,7 +723,15 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
 
-/// Customization options for building a Renderer. Options are detailed on builder methods
+/// Customization options for building a Renderer. Options are detailed on builder methods.
+/// 
+/// ```no_run
+/// # use polystrip::RendererBuilder;
+/// let renderer = RendererBuilder::new()
+/// 	.real_3d(true)
+/// 	.max_textures(2048)
+/// 	.build();
+/// ```
 pub struct RendererBuilder {
 	real_3d: bool,
 	max_textures: usize,
@@ -769,17 +777,17 @@ impl RendererBuilder {
 	}
 }
 
-/// An accelerated 2D renderer.
+/// A target for drawing to a window.
 /// 
-/// A renderer can be created for any window compatible with `raw_window_handle`. The size of this window must be updated
-/// in the event loop, and specified on creation. For example, using `winit`:
+/// A `WindowTarget` can be created for any window compatible with `raw_window_handle`. The size of this window must be updated
+/// in the event loop, and specified on creation. For example, in `winit`:
 /// ```no_run
 /// # use winit::event::{Event, WindowEvent};
-/// # use polystrip::Renderer;
+/// # use polystrip::WindowTarget;
 /// # let event_loop = winit::event_loop::EventLoop::new();
 /// # let window = winit::window::Window::new(&event_loop).unwrap();
 /// let window_size = window.inner_size().to_logical(window.scale_factor());
-/// let mut renderer = Renderer::new(&window, (window_size.width, window_size.height));
+/// let mut renderer = WindowTarget::new_default(&window, (window_size.width, window_size.height));
 /// 
 /// event_loop.run(move |event, _, control_flow| {
 ///     match event {
@@ -808,11 +816,18 @@ impl WindowTarget {
 	/// you're not making your window properly, I'm not going to take responsibility for the resulting crash. (The
 	/// only way I'd be able to deal with it anyway would be to mark this method `unsafe`)
 	/// 
-	/// # Arguments
-	/// * `context`: A `Rc` to the renderer with which this window will render.
-	/// * `window`: A valid window compatible with `raw_window_handle`.
-	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
-	///           differentiate between physical and logical size, this refers to the logical size
+	/// ```no_run
+	/// # use std::rc::Rc;
+	/// # use polystrip::{RendererBuilder, WindowTarget};
+	/// # let event_loop = winit::event_loop::EventLoop::new();
+	/// # let window = winit::window::Window::new(&event_loop).unwrap();
+	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
+	/// let renderer = WindowTarget::new(
+	/// 	Rc::new(RendererBuilder::new().max_textures(2048).build()),
+	/// 	&window,
+	/// 	(window_size.width, window_size.height)
+	/// );
+	/// ```
 	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
 		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
@@ -1162,10 +1177,6 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	/// 
-	/// # Arguments
-	/// * `shape`: The `TexturedShape` to be rendered. 
-	/// * `texture`: The `Texture` to be drawn to the geometry of the shape.
 	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, transform: Matrix4) {
 		if !Rc::ptr_eq(&self.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
