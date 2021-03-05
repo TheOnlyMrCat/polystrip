@@ -723,7 +723,7 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
 
-/// Customization options for building a Renderer
+/// Customization options for building a Renderer. Options are detailed on builder methods
 pub struct RendererBuilder {
 	real_3d: bool,
 	max_textures: usize,
@@ -739,6 +739,9 @@ impl RendererBuilder {
 		}
 	}
 
+	/// If `true`, allows transform matrices to affect sprite depth. This clamps the depth between `0.0` and `1.0`
+	/// 
+	/// Default: false
 	pub fn real_3d(mut self, real_3d: bool) -> RendererBuilder {
 		self.real_3d = real_3d;
 		self
@@ -760,15 +763,7 @@ impl RendererBuilder {
 		self
 	}
 
-	/// Builds the renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
-	/// was created legitimately. *Technically*, that's my problem, but if you're not making your window properly, I'm not
-	/// going to take responsibility for the resulting crash. (The only way I'd be able to deal with it anyway would be to
-	/// mark this method `unsafe`)
-	/// 
-	/// # Arguments
-	/// * `window`: A valid window compatible with `raw_window_handle`.
-	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
-	///           differentiate between physical and logical size, this refers to the logical size
+	/// Builds the renderer, initialising the `gfx_hal` backend.
 	pub fn build(self) -> Renderer {
 		Renderer::new(self)
 	}
@@ -807,32 +802,38 @@ pub struct WindowTarget {
 
 //TODO: Builder pattern, to allow for more configuration?
 impl WindowTarget {
-	/// Creates a new renderer, initialising the `gfx_hal` backend. This method assumes the raw window handle
-	/// was created legitimately. *Technically*, that's my problem, but if you're not making your window properly, I'm not
-	/// going to take responsibility for the resulting crash. (The only way I'd be able to deal with it anyway would be to
-	/// mark this method `unsafe`)
+	/// Creates a new window target for the given `Renderer`.
+	/// 
+	/// This method assumes the raw window handle was created legitimately. *Technically*, that's my problem, but if
+	/// you're not making your window properly, I'm not going to take responsibility for the resulting crash. (The
+	/// only way I'd be able to deal with it anyway would be to mark this method `unsafe`)
 	/// 
 	/// # Arguments
+	/// * `context`: A `Rc` to the renderer with which this window will render.
 	/// * `window`: A valid window compatible with `raw_window_handle`.
 	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
 	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn new(window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
+	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
 		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
-		let context = RendererBuilder::new().build();
-
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
 		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
 
-		let context_rc = Rc::new(context);
-		let depth_texture = DepthTexture::new(context_rc.clone(), swapchain_config.extent);
+		let depth_texture = DepthTexture::new(context.clone(), swapchain_config.extent);
 
 		WindowTarget {
-			context: context_rc,
+			context,
 			surface: ManuallyDrop::new(surface),
 			swapchain_config,
 			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
 			depth_texture,
 		}
+	}
+
+	/// Creates a new window target and a default renderer.
+	/// 
+	/// See [new](#method.new) for more details
+	pub fn new_default(window: &impl HasRawWindowHandle, size: (u32, u32)) -> WindowTarget {
+		WindowTarget::new(Rc::new(RendererBuilder::new().build()), window, size)
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the

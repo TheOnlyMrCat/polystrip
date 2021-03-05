@@ -12,7 +12,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new(&window, (size.width, size.height));
+	let mut renderer = WindowTarget::new_default(&window, (size.width, size.height));
 	
 	el.run(move |event, _, control_flow| {
 		match event {

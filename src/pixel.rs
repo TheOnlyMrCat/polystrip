@@ -1,6 +1,6 @@
 //! Methods for converting between screen space and pixel coordinates
 //! 
-//! This module defines the [`PixelTranslator`] type, which is created from a [`Renderer`] and translates
+//! This module defines the [`PixelTranslator`] type, which is created from a [`WindowTarget`] and translates
 //! coordinates based on the ize of the renderer's viewport
 
 use std::cell::Cell;
@@ -12,6 +12,16 @@ use crate::Texture;
 use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 use crate::vertex::with_height;
 
+/// When constructed from a `WindowTarget`, tracks the window's size and provides methods which
+/// convert between pixel space and screen space for that window.
+/// 
+/// # Rectangles
+/// The various rectangle methods defined on this struct output vertices in the following layout:
+/// ```text
+/// (0)---(1)
+///  |     |
+/// (3)---(2)
+/// ```
 pub struct PixelTranslator {
 	extent: Rc<Cell<Extent2D>>,
 }
@@ -44,13 +54,6 @@ impl PixelTranslator {
 	}
 
 	/// Converts a `Rect` into a set of `ColorVertex`es with the given `Color` and height `0.0`.
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn colored_rect(&self, rect: Rect, color: Color) -> [ColorVertex; 4] {
 		[
 			ColorVertex { position: with_height(self.pixel_position(rect.x, rect.y), 0.0), color },
@@ -60,17 +63,12 @@ impl PixelTranslator {
 		]
 	}
 
+	//TODO: Better names for these functions
+
 	/// Converts a `Rect` into a set of `TextureVertex`es with height `0.0`.
 	/// 
 	/// The texture will be scaled to fit entirely onto the `Rect`. If that is not expected, use one of
 	/// [`texture_at`], [`texture_scaled`], [`texture_cropped`], or [`texture_scaled_cropped`] instead.
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn textured_rect(&self, rect: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(rect.x, rect.y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
@@ -81,13 +79,6 @@ impl PixelTranslator {
 	}
 
 	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn texture_at(&self, texture: &Texture, x: i32, y: i32) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
@@ -100,13 +91,6 @@ impl PixelTranslator {
 	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
 	/// 
 	/// The dimensions of the texture will be scaled by the provided `scale` factor. The `x` and `y` positions will not change.
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn texture_scaled(&self, texture: &Texture, x: i32, y: i32, scale: f32) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
@@ -120,13 +104,6 @@ impl PixelTranslator {
 	/// 
 	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
 	/// is drawn at (`x`, `y`)
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn texture_cropped(&self, texture: &Texture, x: i32, y: i32, crop: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(x, y), 0.0), tex_coords: texture.pixel(crop.x, crop.y) },
@@ -140,13 +117,6 @@ impl PixelTranslator {
 	/// 
 	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
 	/// is drawn at (`x`, `y`)
-	/// 
-	/// The indices of the four corners of the `Rect` are as follows:
-	/// ```
-	/// (0)---(1)
-	///  |     |
-	/// (3)---(2)
-	/// ```
 	pub fn texture_scaled_cropped(&self, texture: &Texture, destination: Rect, crop: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(destination.x, destination.y), 0.0), tex_coords: texture.pixel(crop.x, crop.y) },

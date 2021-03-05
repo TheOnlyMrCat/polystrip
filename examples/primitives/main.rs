@@ -14,7 +14,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new(&window, (size.width, size.height));
+	let mut renderer = WindowTarget::new_default(&window, (size.width, size.height));
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
