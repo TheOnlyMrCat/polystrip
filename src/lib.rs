@@ -233,10 +233,16 @@ impl Renderer {
 					entry: "main",
 					module: &colour_vs_module,
 					specialization: gfx_hal::pso::Specialization {
-						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
-							id: 0,
-							range: 0..1
-						}]),
+						constants: std::borrow::Cow::Borrowed(&[
+							gfx_hal::pso::SpecializationConstant {
+								id: 0,
+								range: 0..1
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 1,
+								range: 1..2,
+							}
+						]),
 						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
@@ -319,10 +325,16 @@ impl Renderer {
 					entry: "main",
 					module: &colour_vs_module,
 					specialization: gfx_hal::pso::Specialization {
-						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
-							id: 0,
-							range: 0..1
-						}]),
+						constants: std::borrow::Cow::Borrowed(&[
+							gfx_hal::pso::SpecializationConstant {
+								id: 0,
+								range: 0..1
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 1,
+								range: 1..2,
+							}
+						]),
 						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
@@ -405,10 +417,16 @@ impl Renderer {
 					entry: "main",
 					module: &texture_vs_module,
 					specialization: gfx_hal::pso::Specialization {
-						constants: std::borrow::Cow::Borrowed(&[gfx_hal::pso::SpecializationConstant {
-							id: 0,
-							range: 0..1
-						}]),
+						constants: std::borrow::Cow::Borrowed(&[
+							gfx_hal::pso::SpecializationConstant {
+								id: 0,
+								range: 0..1
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 1,
+								range: 1..2,
+							}
+						]),
 						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
 					}
 				},
@@ -840,7 +858,7 @@ impl WindowTarget {
 			surface: ManuallyDrop::new(surface),
 			swapchain_config,
 			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
-			depth_texture,
+			depth_texture: depth_texture,
 		}
 	}
 
@@ -906,7 +924,6 @@ impl WindowTarget {
 					format: gfx_hal::format::Format::D32Sfloat,
 				}
 			],
-			// iter![image.borrow(), &*self.context.depth_stencil_view],
 			self.swapchain_config.extent.to_extent()
 		)}.unwrap();
 
@@ -997,7 +1014,8 @@ impl WindowTarget {
 		self.swapchain_config.extent.height
 	}
 
-	/// Converts pixel coordinates to screen space coordinates
+	/// Converts pixel coordinates to screen space coordinates. Alternatively, a [`PixelTranslator`] can be constructed
+	/// with the [`pixel_translator`] method.
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
@@ -1065,7 +1083,7 @@ pub struct Frame<'a, T: RenderDrop<'a>> {
 	context: Rc<Renderer>,
 	renderer: T,
 	viewport: gfx_hal::pso::Viewport,
-	allocations: Vec<MemoryBlock<backend::Memory>>,
+	allocations: ManuallyDrop<Vec<MemoryBlock<backend::Memory>>>,
 	_marker: std::marker::PhantomData<&'a T>,
 }
 
@@ -1076,7 +1094,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			context,
 			renderer,
 			viewport,
-			allocations: Vec::new(),
+			allocations: ManuallyDrop::new(Vec::new()),
 			_marker: std::marker::PhantomData,
 		}
 	}
@@ -1231,9 +1249,10 @@ impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 			self.context.device.wait_for_fence(&mut **self.context.render_fence.borrow_mut(), u64::MAX).unwrap();
 		}
 
-		for block in self.allocations.drain(..) { //TODO: ManuallyDrop the vec?
+		let mem_device = GfxMemoryDevice::wrap(&self.context.device);
+		for block in unsafe { ManuallyDrop::take(&mut self.allocations) } {
 			unsafe {
-				self.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&self.context.device), block);
+				self.context.allocator.borrow_mut().dealloc(mem_device, block);
 			}
 		}
 
@@ -1479,7 +1498,7 @@ impl Drop for Texture {
 pub struct TextureFrame<'a> {
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	#[allow(dead_code)] // Must be kept alive while the framebuffer is still using its ImageView.
-	depth_texture: DepthTexture, //TODO: ManuallyDrop
+	depth_texture: DepthTexture,
 	_marker: std::marker::PhantomData<&'a backend::ImageView>,
 }
 
@@ -1492,7 +1511,7 @@ impl<'a> RenderDrop<'a> for TextureFrame<'a> {
 }
 
 pub struct DepthTexture {
-	context: Rc<Renderer>, //TODO: Force users to manually drop and give it a context?
+	context: Rc<Renderer>,
 	image: ManuallyDrop<backend::Image>,
 	view: ManuallyDrop<backend::ImageView>,
 	memory: ManuallyDrop<MemoryBlock<backend::Memory>>,

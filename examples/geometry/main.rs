@@ -1,4 +1,6 @@
-use polystrip::WindowTarget;
+use std::rc::Rc;
+
+use polystrip::{RendererBuilder, WindowTarget};
 use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector3, Matrix4};
 
 use winit::event::{Event, WindowEvent};
@@ -12,7 +14,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new_default(&window, (size.width, size.height));
+	let mut renderer = WindowTarget::new(Rc::new(RendererBuilder::new().real_3d(true).build()), &window, (size.width, size.height));
 	
 	el.run(move |event, _, control_flow| {
 		match event {
