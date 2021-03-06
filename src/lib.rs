@@ -40,6 +40,7 @@ pub use gpu_alloc;
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use arrayvec::ArrayVec;
 
@@ -77,22 +78,25 @@ pub struct Renderer {
 	pub queue_groups: RefCell<Vec<gfx_hal::queue::family::QueueGroup<backend::Backend>>>,
 	pub adapter: gfx_hal::adapter::Adapter<backend::Backend>,
 
-	pub stroked_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
-	pub stroked_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
-	pub colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
-	pub colour_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
-	pub texture_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
-	pub texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
-	pub render_pass: ManuallyDrop<backend::RenderPass>,
+	stroked_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	stroked_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
+	colour_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	colour_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
+	texture_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
+	texture_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
+	render_pass: ManuallyDrop<backend::RenderPass>,
 
-	pub command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
-	pub command_buffer: RefCell<ManuallyDrop<backend::CommandBuffer>>,
+	render_command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
+	texture_command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
+	
+	frames_in_flight: u32,
+	current_frame: AtomicU32,
+	render_command_buffers: ManuallyDrop<Vec<RefCell<backend::CommandBuffer>>>,
+	render_semaphores: ManuallyDrop<Vec<RefCell<backend::Semaphore>>>,
+	render_fences: ManuallyDrop<Vec<RefCell<backend::Fence>>>,
 
-	pub render_semaphore: RefCell<ManuallyDrop<backend::Semaphore>>,
-	pub render_fence: RefCell<ManuallyDrop<backend::Fence>>,
-
-	pub texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
-	pub descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
+	texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
+	descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
 
 	pub allocator: RefCell<GpuAllocator<backend::Memory>>,
 }
@@ -121,10 +125,22 @@ impl Renderer {
 			).unwrap()		
 		};
 
-		let (command_pool, command_buffer) = unsafe {
-			let mut command_pool = gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()).unwrap();
-			let command_buffer = command_pool.allocate_one(gfx_hal::command::Level::Primary);
-			(command_pool, command_buffer)
+		let texture_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()) }.unwrap();
+		let mut render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()) }.unwrap();
+		let render_command_buffers = {
+			let mut buffers = Vec::with_capacity(config.frames_in_flight as usize);
+			unsafe { render_command_pool.allocate(config.frames_in_flight as usize, gfx_hal::command::Level::Primary, &mut buffers); }
+			buffers
+		}.into_iter().map(RefCell::new).collect();
+
+		let (render_semaphores, render_fences) = {
+			let mut semaphores = Vec::with_capacity(config.frames_in_flight as usize);
+			let mut fences = Vec::with_capacity(config.frames_in_flight as usize);
+			for _ in 0..config.frames_in_flight {
+				semaphores.push(RefCell::new(gpu.device.create_semaphore().unwrap()));
+				fences.push(RefCell::new(gpu.device.create_fence(false).unwrap()));
+			}
+			(semaphores, fences)
 		};
 
 		let texture_descriptor_set_layout = unsafe { gpu.device.create_descriptor_set_layout(
@@ -490,9 +506,6 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let render_semaphore = gpu.device.create_semaphore().unwrap();
-		let render_fence = gpu.device.create_fence(false).unwrap();
-
 		Renderer {
 			instance, adapter,
 			device: gpu.device,
@@ -506,11 +519,14 @@ impl Renderer {
 			texture_graphics_pipeline_layout: ManuallyDrop::new(texture_graphics_pipeline_layout),
 			render_pass: ManuallyDrop::new(main_pass),
 
-			command_pool: RefCell::new(ManuallyDrop::new(command_pool)),
-			command_buffer: RefCell::new(ManuallyDrop::new(command_buffer)),
-
-			render_semaphore: RefCell::new(ManuallyDrop::new(render_semaphore)),
-			render_fence: RefCell::new(ManuallyDrop::new(render_fence)),
+			texture_command_pool: RefCell::new(ManuallyDrop::new(texture_command_pool)),
+			render_command_pool: RefCell::new(ManuallyDrop::new(render_command_pool)),
+			
+			frames_in_flight: config.frames_in_flight,
+			current_frame: AtomicU32::new(0),
+			render_command_buffers: ManuallyDrop::new(render_command_buffers),
+			render_semaphores: ManuallyDrop::new(render_semaphores),
+			render_fences: ManuallyDrop::new(render_fences),
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
@@ -621,7 +637,7 @@ impl Renderer {
 
 		let mut fence = context.device.create_fence(false).unwrap();
 		unsafe {
-			let mut command_buffer = context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer = context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
 			command_buffer.pipeline_barrier(
@@ -688,6 +704,8 @@ impl Renderer {
 			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
 			context.device.destroy_fence(fence);
+
+			context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
 		}
 		
 		unsafe {
@@ -708,19 +726,33 @@ impl Renderer {
 			extent: gfx_hal::window::Extent2D { width, height },
 		}
 	}
+
+	/// Returns the index of the next frame to be rendered, to be used when selecting the command buffer, semaphores
+	/// and fences.
+	pub fn next_frame_idx(&self) -> usize {
+		let frames_in_flight = self.frames_in_flight;
+		self.current_frame.fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| Some((x + 1) % frames_in_flight)).unwrap() as usize
+	}
 }
 
 impl Drop for Renderer {
 	fn drop(&mut self) {
 		unsafe {
+			self.device.wait_idle().unwrap();
+
 			self.allocator.get_mut().cleanup(GfxMemoryDevice::wrap(&self.device));
 
-			let mut command_pool = ManuallyDrop::take(self.command_pool.get_mut());
-			command_pool.free(std::iter::once(ManuallyDrop::take(self.command_buffer.get_mut())));
-			self.device.destroy_command_pool(command_pool);
+			let render_command_pool = self.render_command_pool.get_mut();
+			render_command_pool.free(ManuallyDrop::take(&mut self.render_command_buffers).into_iter().map(RefCell::into_inner));
+			self.device.destroy_command_pool(ManuallyDrop::take(render_command_pool));
 
-			self.device.destroy_semaphore(ManuallyDrop::take(self.render_semaphore.get_mut()));
-			self.device.destroy_fence(ManuallyDrop::take(self.render_fence.get_mut()));
+			for semaphore in ManuallyDrop::take(&mut self.render_semaphores) {
+				self.device.destroy_semaphore(semaphore.into_inner());
+			}
+
+			for fence in ManuallyDrop::take(&mut self.render_fences) {
+				self.device.destroy_fence(fence.into_inner());
+			}
 
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
 			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
@@ -753,6 +785,7 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 pub struct RendererBuilder {
 	real_3d: bool,
 	max_textures: usize,
+	frames_in_flight: u32,
 	alloc_config: Box<dyn FnOnce(&gpu_alloc::DeviceProperties) -> gpu_alloc::Config>,
 }
 
@@ -761,6 +794,7 @@ impl RendererBuilder {
 		RendererBuilder {
 			real_3d: false,
 			max_textures: 1024,
+			frames_in_flight: 3,
 			alloc_config: Box::new(default_memory_config),
 		}
 	}
@@ -773,7 +807,7 @@ impl RendererBuilder {
 		self
 	}
 
-	/// Changes the allocation size of the texture pool.
+	/// The allocation size of the texture pool.
 	/// 
 	/// Default: 1024
 	pub fn max_textures(mut self, max_textures: usize) -> RendererBuilder {
@@ -781,7 +815,15 @@ impl RendererBuilder {
 		self
 	}
 
-	/// Changes the memory allocator's allocation strategy.
+	/// The number of frames that can be dispatched simultaneously
+	/// 
+	/// Default: 3
+	pub fn frames_in_flight(mut self, frames_in_flight: u32) -> RendererBuilder {
+		self.frames_in_flight = frames_in_flight;
+		self
+	}
+
+	/// The memory allocator's allocation strategy.
 	/// 
 	/// Default: [default_memory_config](fn.default_memory_config.html)
 	pub fn allocation_config(mut self, alloc_config: impl FnOnce(&gpu_alloc::DeviceProperties) -> gpu_alloc::Config + 'static) -> RendererBuilder {
@@ -821,6 +863,7 @@ impl RendererBuilder {
 pub struct WindowTarget {
 	pub context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
+	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
 	extent: Rc<Cell<gfx_hal::window::Extent2D>>,
 	depth_texture: DepthTexture,
@@ -847,15 +890,39 @@ impl WindowTarget {
 	/// );
 	/// ```
 	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
-		let swapchain_config = gfx_hal::window::SwapchainConfig::new(width, height, gfx_hal::format::Format::Bgra8Srgb, 2);
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
+		let caps = surface.capabilities(&context.adapter.physical_device);
+		let swapchain_config = gfx_hal::window::SwapchainConfig::from_caps(
+				&caps,
+				gfx_hal::format::Format::Bgra8Srgb,
+				gfx_hal::window::Extent2D { width, height }
+			)
+			.with_image_count(context.frames_in_flight.max(*caps.image_count.start()).min(*caps.image_count.end()));
 		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
 
 		let depth_texture = DepthTexture::new(context.clone(), swapchain_config.extent);
 
+		let framebuffer = unsafe { context.device.create_framebuffer(
+			&context.render_pass,
+			iter![
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: swapchain_config.format,
+				},
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: gfx_hal::format::Format::D32Sfloat,
+				}
+			],
+			swapchain_config.extent.to_extent()
+		)}.unwrap();
+
 		WindowTarget {
 			context,
 			surface: ManuallyDrop::new(surface),
+			framebuffer: ManuallyDrop::new(framebuffer),
 			swapchain_config,
 			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
 			depth_texture: depth_texture,
@@ -864,7 +931,7 @@ impl WindowTarget {
 
 	/// Creates a new window target and a default renderer.
 	/// 
-	/// See [new](#method.new) for more details
+	/// See [`new`] for more details
 	pub fn new_default(window: &impl HasRawWindowHandle, size: (u32, u32)) -> WindowTarget {
 		WindowTarget::new(Rc::new(RendererBuilder::new().build()), window, size)
 	}
@@ -885,10 +952,10 @@ impl WindowTarget {
 
 
 	fn acquire_image(&mut self) -> backend::SwapchainImage {
-		match unsafe { self.surface.acquire_image(1_000_000 /* 1 ms */) } {
+		match unsafe { self.surface.acquire_image(u64::MAX) } {
 			Ok((image, _)) => image,
 			Err(gfx_hal::window::AcquireError::OutOfDate(_)) => {
-				unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
+				self.reconfigure_swapchain();
 				match unsafe { self.surface.acquire_image(0) } {
 					Ok((image, _)) => image,
 					Err(e) => panic!("{}", e),
@@ -910,24 +977,14 @@ impl WindowTarget {
 			},
 			depth: 0.0..1.0,
 		};
-		let framebuffer = unsafe { self.context.device.create_framebuffer(
-			&self.context.render_pass,
-			iter![
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: self.swapchain_config.format,
-				},
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: gfx_hal::format::Format::D32Sfloat,
-				}
-			],
-			self.swapchain_config.extent.to_extent()
-		)}.unwrap();
+		
+		let frame_idx = self.context.next_frame_idx();
 
-		let mut command_buffer = self.context.command_buffer.borrow_mut();
+		unsafe {
+			self.context.device.wait_for_fence(&mut *self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
+			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
+		}
+		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
 
 		unsafe {
 			command_buffer.reset(false);
@@ -939,7 +996,7 @@ impl WindowTarget {
 
 			command_buffer.begin_render_pass(
 				&self.context.render_pass,
-				&framebuffer,
+				&self.framebuffer,
 				viewport.rect,
 				iter![
 					gfx_hal::command::RenderAttachmentInfo {
@@ -979,13 +1036,33 @@ impl WindowTarget {
 
 		Frame::new(
 			self.context.clone(),
+			frame_idx,
 			WindowFrame {
 				surface: &mut self.surface,
 				swap_chain_frame: ManuallyDrop::new(image),
-				framebuffer: ManuallyDrop::new(framebuffer),
 			},
 			viewport,
 		)
+	}
+
+	fn reconfigure_swapchain(&mut self) {
+		self.framebuffer = ManuallyDrop::new(unsafe { self.context.device.create_framebuffer(
+			&self.context.render_pass,
+			iter![
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: gfx_hal::format::Format::Bgra8Srgb,
+				},
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: gfx_hal::format::Format::D32Sfloat,
+				}
+			],
+			self.extent.get().to_extent()
+		)}.unwrap());
+		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
 	}
 	
 	/// Resizes the internal swapchain and depth texture
@@ -998,8 +1075,8 @@ impl WindowTarget {
 	pub fn resize(&mut self, (width, height): (u32, u32)) {
 		self.swapchain_config.extent.width = width;
 		self.swapchain_config.extent.height = height;
-		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
 		self.extent.set(self.swapchain_config.extent);
+		self.reconfigure_swapchain();
 
 		self.depth_texture = DepthTexture::new(self.context.clone(), self.swapchain_config.extent);
 	}
@@ -1031,7 +1108,9 @@ impl WindowTarget {
 impl Drop for WindowTarget {
 	fn drop(&mut self) {
 		unsafe {
-			self.context.instance.destroy_surface(ManuallyDrop::take(&mut self.surface));
+			let mut surface = ManuallyDrop::take(&mut self.surface);
+			surface.unconfigure_swapchain(&self.context.device);
+			self.context.instance.destroy_surface(surface);
 		}
 	}
 }
@@ -1051,29 +1130,25 @@ impl<'a> RenderTarget<'a> for WindowTarget {
 }
 
 pub trait RenderDrop<'a> {
-	fn cleanup(&mut self, context: &Renderer);
+	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
 }
 
 pub struct WindowFrame<'a> {
 	surface: &'a mut backend::Surface,
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
-	framebuffer: ManuallyDrop<backend::Framebuffer>,
 }
 
 impl<'a> RenderDrop<'a> for WindowFrame<'a> {
-	fn cleanup(&mut self, context: &Renderer) {
+	fn cleanup(&mut self, context: &Renderer, frame_idx: usize) {
 		if !std::thread::panicking() {
 			unsafe {
 				let mut queue_groups = context.queue_groups.borrow_mut();
-				queue_groups[0].queues[0].present(&mut self.surface, ManuallyDrop::take(&mut self.swap_chain_frame), Some(&mut *context.render_semaphore.borrow_mut())).unwrap();
+				queue_groups[0].queues[0].present(&mut self.surface, ManuallyDrop::take(&mut self.swap_chain_frame), Some(&mut *context.render_semaphores[frame_idx].borrow_mut())).unwrap();
 			}
 		} else {
 			unsafe {
 				ManuallyDrop::drop(&mut self.swap_chain_frame);
 			}
-		}
-		unsafe {
-			context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
 		}
 	}
 }
@@ -1081,6 +1156,7 @@ impl<'a> RenderDrop<'a> for WindowFrame<'a> {
 /// A frame to be drawn to. The frame gets presented on drop.
 pub struct Frame<'a, T: RenderDrop<'a>> {
 	context: Rc<Renderer>,
+	frame_idx: usize,
 	renderer: T,
 	viewport: gfx_hal::pso::Viewport,
 	allocations: ManuallyDrop<Vec<MemoryBlock<backend::Memory>>>,
@@ -1089,9 +1165,10 @@ pub struct Frame<'a, T: RenderDrop<'a>> {
 
 //MARK: Frame API
 impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
-	pub fn new(context: Rc<Renderer>, renderer: T, viewport: gfx_hal::pso::Viewport) -> Frame<'a, T> {
+	pub fn new(context: Rc<Renderer>, frame_idx: usize, renderer: T, viewport: gfx_hal::pso::Viewport) -> Frame<'a, T> {
 		Frame {
 			context,
+			frame_idx,
 			renderer,
 			viewport,
 			allocations: ManuallyDrop::new(Vec::new()),
@@ -1147,7 +1224,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	/// before it.
 	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, transform: Matrix4) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
-		let mut command_buffer = self.context.command_buffer.borrow_mut();
+		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
 			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
@@ -1172,7 +1249,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, transform: Matrix4) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
-		let mut command_buffer = self.context.command_buffer.borrow_mut();
+		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
 			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
@@ -1201,7 +1278,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 		}
 
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
-		let mut command_buffer = self.context.command_buffer.borrow_mut();
+		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
 			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
@@ -1235,18 +1312,17 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 	fn drop(&mut self) {
 		unsafe {		
-			let mut command_buffer = self.context.command_buffer.borrow_mut();
+			let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 			command_buffer.end_render_pass();
 			command_buffer.finish();
 
 			let mut queue_groups = self.context.queue_groups.borrow_mut();
 				queue_groups[0].queues[0].submit(
-					iter![&**command_buffer],
+					iter![&*command_buffer],
 					iter![],
-					iter![&**self.context.render_semaphore.borrow()],
-					Some(&mut **self.context.render_fence.borrow_mut())
+					iter![&*self.context.render_semaphores[self.frame_idx].borrow()],
+					Some(&mut *self.context.render_fences[self.frame_idx].borrow_mut())
 				);
-			self.context.device.wait_for_fence(&mut **self.context.render_fence.borrow_mut(), u64::MAX).unwrap();
 		}
 
 		let mem_device = GfxMemoryDevice::wrap(&self.context.device);
@@ -1256,7 +1332,7 @@ impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 			}
 		}
 
-		self.renderer.cleanup(&self.context);
+		self.renderer.cleanup(&self.context, self.frame_idx);
 	}
 }
 
@@ -1305,7 +1381,7 @@ impl Texture {
 		unsafe {
 			self.context.device.bind_buffer_memory(buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
 
-			let mut command_buffer = self.context.command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer = self.context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			let mut fence = self.context.device.create_fence(false).unwrap();
 
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
@@ -1431,7 +1507,12 @@ impl<'a> RenderTarget<'a> for Texture {
 			self.extent.to_extent()
 		)}.unwrap();
 
-		let mut command_buffer = self.context.command_buffer.borrow_mut();
+		let frame_idx = self.context.next_frame_idx();
+
+		unsafe {
+			self.context.device.wait_for_fence(&mut *self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
+		}
+		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
 
 		unsafe {
 			command_buffer.reset(false);
@@ -1470,6 +1551,7 @@ impl<'a> RenderTarget<'a> for Texture {
 
 		Frame::new(
 			self.context.clone(),
+			frame_idx,
 			TextureFrame {
 				framebuffer: ManuallyDrop::new(framebuffer),
 				depth_texture,
@@ -1503,7 +1585,7 @@ pub struct TextureFrame<'a> {
 }
 
 impl<'a> RenderDrop<'a> for TextureFrame<'a> {
-	fn cleanup(&mut self, context: &Renderer) {
+	fn cleanup(&mut self, context: &Renderer, _frame_idx: usize) {
 		unsafe {
 			context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
 		}
