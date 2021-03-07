@@ -29,7 +29,7 @@ pub struct PixelTranslator {
 impl PixelTranslator {
 	pub(crate) fn new(extent: Rc<Cell<Extent2D>>) -> PixelTranslator {
 		PixelTranslator {
-			extent: extent
+			extent
 		}
 	}
 

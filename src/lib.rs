@@ -765,9 +765,9 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 /// ```no_run
 /// # use polystrip::RendererBuilder;
 /// let renderer = RendererBuilder::new()
-/// 	.real_3d(true)
-/// 	.max_textures(2048)
-/// 	.build();
+///     .real_3d(true)
+///     .max_textures(2048)
+///     .build();
 /// ```
 pub struct RendererBuilder {
 	real_3d: bool,
@@ -885,9 +885,9 @@ impl WindowTarget {
 	/// # let window = winit::window::Window::new(&event_loop).unwrap();
 	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
 	/// let renderer = WindowTarget::new(
-	/// 	Rc::new(RendererBuilder::new().max_textures(2048).build()),
-	/// 	&window,
-	/// 	(window_size.width, window_size.height)
+	///     Rc::new(RendererBuilder::new().max_textures(2048).build()),
+	///     &window,
+	///     (window_size.width, window_size.height)
 	/// );
 	/// ```
 	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, (width, height): (u32, u32)) -> WindowTarget {
@@ -926,7 +926,7 @@ impl WindowTarget {
 			framebuffer: ManuallyDrop::new(framebuffer),
 			swapchain_config,
 			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
-			depth_texture: depth_texture,
+			depth_texture,
 		}
 	}
 
@@ -975,7 +975,7 @@ impl WindowTarget {
 		let frame_idx = self.context.next_frame_idx();
 
 		unsafe {
-			self.context.device.wait_for_fence(&mut *self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
+			self.context.device.wait_for_fence(&*self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
 			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
 		}
 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
@@ -1506,7 +1506,7 @@ impl<'a> RenderTarget<'a> for Texture {
 		let frame_idx = self.context.next_frame_idx();
 
 		unsafe {
-			self.context.device.wait_for_fence(&mut *self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
+			self.context.device.wait_for_fence(&*self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
 		}
 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
 
