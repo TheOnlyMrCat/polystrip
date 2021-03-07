@@ -1,4 +1,4 @@
-use polystrip::{Renderer, WindowTarget};
+use polystrip::{Renderer, Texture, WindowTarget};
 use polystrip::vertex::{TexturedShape, TextureVertex, Color, Vector2, Matrix4};
 
 use winit::event::{Event, WindowEvent};
@@ -15,7 +15,7 @@ fn main() {
 	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = renderer.context.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
+	let sandstone = Texture::new_from_rgba(renderer.context.clone(), &*sandstone_img, sandstone_img.dimensions());
 
 	assert_eq!(*sandstone_img, *sandstone.get_data());
 

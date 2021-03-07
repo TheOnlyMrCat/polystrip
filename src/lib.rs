@@ -522,198 +522,6 @@ impl Renderer {
 		Rc::new(self)
 	}
 
-	/// Create a new texture from the given rgba data, associated with this `Renderer`.
-	/// 
-	/// # Arguments
-	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
-	///           the sRGB color space, in row-major order.
-	/// * `size`: The size of the texture, in pixels, in (width, height) order.
-	pub fn texture_from_rgba(self: &Rc<Self>, data: &[u8], (width, height): (u32, u32)) -> Texture {
-		let context = self.clone();
-
-		let mut descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
-		let memory_device = GfxMemoryDevice::wrap(&context.device);
-
-		let mut image = unsafe { context.device.create_image(
-			gfx_hal::image::Kind::D2(width, height, 1, 1),
-			1,
-			gfx_hal::format::Format::Rgba8Srgb,
-			gfx_hal::image::Tiling::Optimal,
-			gfx_hal::image::Usage::TRANSFER_SRC | gfx_hal::image::Usage::TRANSFER_DST | gfx_hal::image::Usage::SAMPLED,
-			gfx_hal::image::ViewCapabilities::MUTABLE_FORMAT,
-		)}.unwrap();
-		let img_req = unsafe { context.device.get_image_requirements(&image) };
-
-		//TODO: Use non_coherent_atom_size as well
-		let row_alignment_mask = self.adapter.physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
-        let row_pitch = (width * 4 + row_alignment_mask) & !row_alignment_mask;
-		let upload_size = (height * row_pitch) as u64;
-
-		let mut buffer = unsafe { context.device.create_buffer(upload_size, gfx_hal::buffer::Usage::TRANSFER_SRC) }.unwrap();
-		let buf_req = unsafe { context.device.get_buffer_requirements(&buffer) };
-		let mut buf_block = unsafe { context.allocator.borrow_mut().alloc(
-			memory_device,
-			Request {
-				size: buf_req.size,
-				align_mask: buf_req.alignment,
-				memory_types: buf_req.type_mask,
-				usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
-			}
-		)}.unwrap();
-
-		unsafe {
-			let mapping = buf_block.map(memory_device, 0, upload_size as usize).unwrap();
-			for y in 0..height as usize {
-                let row = &data[y * (width as usize) * 4..(y + 1) * (width as usize) * 4];
-                std::ptr::copy_nonoverlapping(
-                    row.as_ptr(),
-                    mapping.as_ptr().offset(y as isize * row_pitch as isize),
-                    width as usize * 4,
-                );
-            }
-			use gpu_alloc::MemoryDevice;
-			memory_device.flush_memory_ranges(&[gpu_alloc::MappedMemoryRange {
-				memory: &buf_block.memory(),
-				offset: buf_block.offset(),
-				size: upload_size,
-			}]).unwrap();
-			context.device.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
-		}
-
-		let img_block = unsafe { context.allocator.borrow_mut().alloc(
-			memory_device,
-			Request {
-				size: img_req.size,
-				align_mask: img_req.alignment,
-				memory_types: img_req.type_mask,
-				usage: UsageFlags::FAST_DEVICE_ACCESS,
-			}
-		)}.unwrap();
-
-		unsafe {
-			context.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
-		}
-
-		let view = unsafe { context.device.create_image_view(
-			&image,
-			gfx_hal::image::ViewKind::D2,
-			gfx_hal::format::Format::Bgra8Srgb,
-			gfx_hal::format::Swizzle(gfx_hal::format::Component::B, gfx_hal::format::Component::G, gfx_hal::format::Component::R, gfx_hal::format::Component::A),
-			gfx_hal::image::SubresourceRange {
-				aspects: gfx_hal::format::Aspects::COLOR,
-				level_start: 0,
-				level_count: None,
-				layer_start: 0,
-				layer_count: None,
-			},
-		)}.unwrap();
-
-		let sampler = unsafe { context.device.create_sampler(&gfx_hal::image::SamplerDesc::new(gfx_hal::image::Filter::Nearest, gfx_hal::image::WrapMode::Tile)) }.unwrap();
-
-		unsafe {
-			context.device.write_descriptor_set(gfx_hal::pso::DescriptorSetWrite {
-				set: &mut descriptor_set,
-				binding: 0,
-				array_offset: 0,
-				descriptors: iter![
-					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
-					gfx_hal::pso::Descriptor::Sampler(&sampler),
-				]
-			});
-		}
-
-		let mut fence = context.device.create_fence(false).unwrap();
-		unsafe {
-			let mut command_buffer = context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
-			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
-
-			command_buffer.pipeline_barrier(
-				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
-				gfx_hal::memory::Dependencies::empty(),
-				iter![gfx_hal::memory::Barrier::Image {
-					states:
-						(gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
-						..
-						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
-					target: &image,
-					range: gfx_hal::image::SubresourceRange {
-						aspects: gfx_hal::format::Aspects::COLOR,
-						level_start: 0,
-						level_count: None,
-						layer_start: 0,
-						layer_count: None,
-					},
-					families: None,
-				}]
-			);
-			command_buffer.copy_buffer_to_image(
-				&buffer,
-				&image,
-				gfx_hal::image::Layout::TransferDstOptimal,
-				iter![gfx_hal::command::BufferImageCopy {
-					buffer_offset: 0,
-					buffer_width: width,
-					buffer_height: height,
-					image_layers: gfx_hal::image::SubresourceLayers {
-						aspects: gfx_hal::format::Aspects::COLOR,
-						level: 0,
-						layers: 0..1,
-					},
-					image_offset: gfx_hal::image::Offset::ZERO,
-					image_extent: gfx_hal::image::Extent {
-						width, height,
-						depth: 1,
-					}
-				}]
-			);
-			command_buffer.pipeline_barrier(
-				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
-				gfx_hal::memory::Dependencies::empty(),
-				iter![gfx_hal::memory::Barrier::Image {
-					states:
-						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
-						..
-						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
-					target: &image,
-					range: gfx_hal::image::SubresourceRange {
-						aspects: gfx_hal::format::Aspects::COLOR,
-						level_start: 0,
-						level_count: None,
-						layer_start: 0,
-						layer_count: None,
-					},
-					families: None,
-				}]
-			);
-			command_buffer.finish();
-
-			context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
-			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
-
-			context.device.destroy_fence(fence);
-
-			context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
-		}
-		
-		unsafe {
-			context.device.destroy_buffer(buffer);
-			context.allocator.borrow_mut().dealloc(
-				GfxMemoryDevice::wrap(&context.device),
-				buf_block
-			);
-		}
-
-		Texture {
-			context,
-			image: ManuallyDrop::new(image),
-			view: ManuallyDrop::new(view),
-			sampler: ManuallyDrop::new(sampler),
-			descriptor_set: ManuallyDrop::new(descriptor_set),
-			memory_block: ManuallyDrop::new(img_block),
-			extent: gfx_hal::window::Extent2D { width, height },
-		}
-	}
-
 	/// Returns the index of the next frame to be rendered, to be used when selecting the command buffer, semaphores
 	/// and fences.
 	pub fn next_frame_idx(&self) -> usize {
@@ -849,7 +657,7 @@ impl Default for RendererBuilder {
 /// # let event_loop = winit::event_loop::EventLoop::new();
 /// # let window = winit::window::Window::new(&event_loop).unwrap();
 /// let window_size = window.inner_size().to_logical(window.scale_factor());
-/// let mut renderer = WindowTarget::new_default(&window, (window_size.width, window_size.height));
+/// let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (window_size.width, window_size.height));
 /// 
 /// event_loop.run(move |event, _, control_flow| {
 ///     match event {
@@ -1346,6 +1154,196 @@ pub struct Texture {
 }
 
 impl Texture {
+	/// Create a new texture from the given rgba data, associated with this `Renderer`.
+	/// 
+	/// # Arguments
+	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
+	///           the sRGB color space, in row-major order.
+	/// * `size`: The size of the texture, in pixels, in (width, height) order.
+	pub fn new_from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
+		let mut descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
+		let memory_device = GfxMemoryDevice::wrap(&context.device);
+
+		let mut image = unsafe { context.device.create_image(
+			gfx_hal::image::Kind::D2(width, height, 1, 1),
+			1,
+			gfx_hal::format::Format::Rgba8Srgb,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::TRANSFER_SRC | gfx_hal::image::Usage::TRANSFER_DST | gfx_hal::image::Usage::SAMPLED,
+			gfx_hal::image::ViewCapabilities::MUTABLE_FORMAT,
+		)}.unwrap();
+		let img_req = unsafe { context.device.get_image_requirements(&image) };
+
+		//TODO: Use non_coherent_atom_size as well
+		let row_alignment_mask = context.adapter.physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
+        let row_pitch = (width * 4 + row_alignment_mask) & !row_alignment_mask;
+		let upload_size = (height * row_pitch) as u64;
+
+		let mut buffer = unsafe { context.device.create_buffer(upload_size, gfx_hal::buffer::Usage::TRANSFER_SRC) }.unwrap();
+		let buf_req = unsafe { context.device.get_buffer_requirements(&buffer) };
+		let mut buf_block = unsafe { context.allocator.borrow_mut().alloc(
+			memory_device,
+			Request {
+				size: buf_req.size,
+				align_mask: buf_req.alignment,
+				memory_types: buf_req.type_mask,
+				usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
+			}
+		)}.unwrap();
+
+		unsafe {
+			let mapping = buf_block.map(memory_device, 0, upload_size as usize).unwrap();
+			for y in 0..height as usize {
+                let row = &data[y * (width as usize) * 4..(y + 1) * (width as usize) * 4];
+                std::ptr::copy_nonoverlapping(
+                    row.as_ptr(),
+                    mapping.as_ptr().offset(y as isize * row_pitch as isize),
+                    width as usize * 4,
+                );
+            }
+			use gpu_alloc::MemoryDevice;
+			memory_device.flush_memory_ranges(&[gpu_alloc::MappedMemoryRange {
+				memory: &buf_block.memory(),
+				offset: buf_block.offset(),
+				size: upload_size,
+			}]).unwrap();
+			context.device.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
+		}
+
+		let img_block = unsafe { context.allocator.borrow_mut().alloc(
+			memory_device,
+			Request {
+				size: img_req.size,
+				align_mask: img_req.alignment,
+				memory_types: img_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+
+		unsafe {
+			context.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
+		}
+
+		let view = unsafe { context.device.create_image_view(
+			&image,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::Bgra8Srgb,
+			gfx_hal::format::Swizzle(gfx_hal::format::Component::B, gfx_hal::format::Component::G, gfx_hal::format::Component::R, gfx_hal::format::Component::A),
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::COLOR,
+				level_start: 0,
+				level_count: None,
+				layer_start: 0,
+				layer_count: None,
+			},
+		)}.unwrap();
+
+		let sampler = unsafe { context.device.create_sampler(&gfx_hal::image::SamplerDesc::new(gfx_hal::image::Filter::Nearest, gfx_hal::image::WrapMode::Tile)) }.unwrap();
+
+		unsafe {
+			context.device.write_descriptor_set(gfx_hal::pso::DescriptorSetWrite {
+				set: &mut descriptor_set,
+				binding: 0,
+				array_offset: 0,
+				descriptors: iter![
+					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					gfx_hal::pso::Descriptor::Sampler(&sampler),
+				]
+			});
+		}
+
+		let mut fence = context.device.create_fence(false).unwrap();
+		unsafe {
+			let mut command_buffer = context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
+						..
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+			command_buffer.copy_buffer_to_image(
+				&buffer,
+				&image,
+				gfx_hal::image::Layout::TransferDstOptimal,
+				iter![gfx_hal::command::BufferImageCopy {
+					buffer_offset: 0,
+					buffer_width: width,
+					buffer_height: height,
+					image_layers: gfx_hal::image::SubresourceLayers {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level: 0,
+						layers: 0..1,
+					},
+					image_offset: gfx_hal::image::Offset::ZERO,
+					image_extent: gfx_hal::image::Extent {
+						width, height,
+						depth: 1,
+					}
+				}]
+			);
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..
+						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+			command_buffer.finish();
+
+			context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
+			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+
+			context.device.destroy_fence(fence);
+
+			context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
+		}
+		
+		unsafe {
+			context.device.destroy_buffer(buffer);
+			context.allocator.borrow_mut().dealloc(
+				GfxMemoryDevice::wrap(&context.device),
+				buf_block
+			);
+		}
+
+		Texture {
+			context,
+			image: ManuallyDrop::new(image),
+			view: ManuallyDrop::new(view),
+			sampler: ManuallyDrop::new(sampler),
+			descriptor_set: ManuallyDrop::new(descriptor_set),
+			memory_block: ManuallyDrop::new(img_block),
+			extent: gfx_hal::window::Extent2D { width, height },
+		}
+	}
+
 	/// Get the dimensions of this texture, in (width, height) order.
 	pub fn dimensions(&self) -> (u32, u32) {
 		(self.extent.width, self.extent.height)

@@ -1,4 +1,4 @@
-use polystrip::{Renderer, WindowTarget};
+use polystrip::{Renderer, Texture, WindowTarget};
 use polystrip::vertex::{Color, ColoredShape, Matrix4, Rect, TexturedShape};
 
 use winit::event::{Event, WindowEvent};
@@ -18,10 +18,10 @@ fn main() {
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = renderer.context.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());
+	let sandstone = Texture::new_from_rgba(renderer.context.clone(), &*sandstone_img, sandstone_img.dimensions());
 
 	let player_img = image::load_from_memory(include_bytes!("player.png")).unwrap().to_rgba();
-	let player = renderer.context.texture_from_rgba(&*player_img, player_img.dimensions());
+	let player = Texture::new_from_rgba(renderer.context.clone(), &*player_img, player_img.dimensions());
 	
 	el.run(move |event, _, control_flow| {
 		match event {
