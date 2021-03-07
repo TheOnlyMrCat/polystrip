@@ -1,4 +1,4 @@
-use polystrip::WindowTarget;
+use polystrip::{Renderer, WindowTarget};
 use polystrip::vertex::{TexturedShape, TextureVertex, Color, Vector2, Matrix4};
 
 use winit::event::{Event, WindowEvent};
@@ -12,7 +12,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new_default(&window, (size.width, size.height));
+	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = renderer.context.texture_from_rgba(&*sandstone_img, sandstone_img.dimensions());

@@ -1,7 +1,7 @@
 //! Methods for converting between screen space and pixel coordinates
 //! 
-//! This module defines the [`PixelTranslator`] type, which is created from a [`WindowTarget`] and translates
-//! coordinates based on the ize of the renderer's viewport
+//! This module defines the [`PixelTranslator`] type, which is created from a [`WindowTarget`](crate::WindowTarget)
+//! and translates coordinates based on the most recently given size (See [`WindowTarget::resize()`](crate::WindowTarget::resize))
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,7 +12,7 @@ use crate::Texture;
 use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 use crate::vertex::with_height;
 
-/// When constructed from a `WindowTarget`, tracks the window's size and provides methods which
+/// When constructed from a [`WindowTarget`](crate::WindowTarget), tracks the window's size and provides methods which
 /// convert between pixel space and screen space for that window.
 /// 
 /// # Rectangles
@@ -34,7 +34,7 @@ impl PixelTranslator {
 	}
 
 	/// Converts a pixel value into an absolute screen space position. Doing arithmetic operations with absolute screen space
-	/// positions will not give expected values. See the [`pixel_offset`](#method.pixel_offset) method to create screen space
+	/// positions will not give expected values. See the [`pixel_offset`](PixelTranslator::pixel_offset) method to create screen space
 	/// offsets
 	pub fn pixel_position(&self, x: i32, y: i32) -> Vector2 {
 		let extent = self.extent.get();
@@ -67,8 +67,7 @@ impl PixelTranslator {
 
 	/// Converts a `Rect` into a set of `TextureVertex`es with height `0.0`.
 	/// 
-	/// The texture will be scaled to fit entirely onto the `Rect`. If that is not expected, use one of
-	/// [`texture_at`], [`texture_scaled`], [`texture_cropped`], or [`texture_scaled_cropped`] instead.
+	/// The texture will be scaled to fit entirely onto the `Rect`.
 	pub fn textured_rect(&self, rect: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex { position: with_height(self.pixel_position(rect.x, rect.y), 0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },

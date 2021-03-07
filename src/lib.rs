@@ -1,35 +1,12 @@
-//! Polystrip is an accelerated 2D graphics library with similar capabilities to SDL's graphics system, which
-//! it intends to be a replacement for.
+//! Polystrip is an accelerated 2D graphics library built on `gfx_hal`, which intends to be a pure-rust
+//! replacement for SDL2.
 //! 
-//! # The `Renderer`
-//! The [`Renderer`](renderer/struct.Renderer.html) is the core of `polystrip`. It can be built on top of any window compatible with `raw_window_handle`,
-//! but must have its size managed manually. A `Renderer` allows one to create [`Frame`](renderer/struct.Frame.html)s,
-//! which can be drawn onto and will present themselves when they are dropped.
-//! 
-//! # Example with `winit`
-//! ```no_run
-//! # use winit::event::{Event, WindowEvent};
-//! # use polystrip::WindowTarget;
-//! let event_loop = winit::event_loop::EventLoop::new();
-//! let window = winit::window::Window::new(&event_loop).unwrap();
-//! 
-//! let window_size = window.inner_size().to_logical(window.scale_factor());
-//! let mut renderer = WindowTarget::new_default(&window, (window_size.width, window_size.height));
-//! 
-//! event_loop.run(move |event, _, control_flow| {
-//!     match event {
-//!         Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
-//!             let window_size = new_size.to_logical(window.scale_factor());
-//!             renderer.resize((window_size.width, window_size.height));
-//!         },
-//!         Event::MainEventsCleared => {
-//!             let mut frame = renderer.next_frame();
-//!             // Render in here
-//!         },
-//!         _ => {}
-//!     }
-//! });
-//! ```
+//! # Quick breakdown
+//! - [`Renderer`]: Contains data types from the `gfx_hal` backend.
+//! - [`WindowTarget`]: Holds data for rendering to a `raw_window_handle` window.
+//! - [`Frame`]: The struct everything is drawn onto, generally created from a `WindowTarget`
+//! - [`*Shape`](vertex): Primitives to be rendered to `Frame`s
+//! - [`Texture`]: An image in GPU memory, ready to be rendered to a frame
 
 pub(crate) mod backend;
 pub mod vertex;
@@ -102,7 +79,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-	fn new(config: RendererBuilder) -> Renderer {
+	pub fn new() -> Renderer {
+		Renderer::with_config(RendererBuilder::new())
+	}
+
+	fn with_config(config: RendererBuilder) -> Renderer {
 		//Note: Keep up-to-date.         X0.X6.X0_XX
 		const POLYSTRIP_VERSION: u32 = 0x00_06_00_00;
 		let instance = backend::Instance::create("polystrip", POLYSTRIP_VERSION).unwrap();
@@ -535,6 +516,12 @@ impl Renderer {
 		}
 	}
 
+	/// Convenience method to create an `Rc<Renderer>` in a builder method chain.
+	/// See also [`RendererBuilder::build_rc`]
+	pub fn wrap(self) -> Rc<Renderer> {
+		Rc::new(self)
+	}
+
 	/// Create a new texture from the given rgba data, associated with this `Renderer`.
 	/// 
 	/// # Arguments
@@ -790,13 +777,9 @@ pub struct RendererBuilder {
 }
 
 impl RendererBuilder {
+	/// Creates a new `RendererBuilder` with default values
 	pub fn new() -> RendererBuilder {
-		RendererBuilder {
-			real_3d: false,
-			max_textures: 1024,
-			frames_in_flight: 3,
-			alloc_config: Box::new(default_memory_config),
-		}
+		Default::default()
 	}
 
 	/// If `true`, allows transform matrices to affect sprite depth. This clamps the depth between `0.0` and `1.0`
@@ -833,11 +816,30 @@ impl RendererBuilder {
 
 	/// Builds the renderer, initialising the `gfx_hal` backend.
 	pub fn build(self) -> Renderer {
-		Renderer::new(self)
+		Renderer::with_config(self)
+	}
+
+	/// Builds the renderer, initialising the `gfx_hal` backend, returning a `Rc<Renderer>` which can be
+	/// used more easily with the rest of the API.
+	/// 
+	/// See also [`Renderer::wrap`]
+	pub fn build_rc(self) -> Rc<Renderer> {
+		Rc::new(Renderer::with_config(self))
 	}
 }
 
-/// A target for drawing to a window.
+impl Default for RendererBuilder {
+	fn default() -> RendererBuilder {
+		RendererBuilder {
+			real_3d: false,
+			max_textures: 1024,
+			frames_in_flight: 3,
+			alloc_config: Box::new(default_memory_config),
+		}
+	}
+}
+
+/// A target for drawing to a `raw_window_handle` window.
 /// 
 /// A `WindowTarget` can be created for any window compatible with `raw_window_handle`. The size of this window must be updated
 /// in the event loop, and specified on creation. For example, in `winit`:
@@ -869,7 +871,6 @@ pub struct WindowTarget {
 	depth_texture: DepthTexture,
 }
 
-//TODO: Builder pattern, to allow for more configuration?
 impl WindowTarget {
 	/// Creates a new window target for the given `Renderer`.
 	/// 
@@ -929,13 +930,6 @@ impl WindowTarget {
 		}
 	}
 
-	/// Creates a new window target and a default renderer.
-	/// 
-	/// See [`new`] for more details
-	pub fn new_default(window: &impl HasRawWindowHandle, size: (u32, u32)) -> WindowTarget {
-		WindowTarget::new(Rc::new(RendererBuilder::new().build()), window, size)
-	}
-
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
 	/// previous frame. This `Renderer` is borrowed mutably while the `Frame` is alive.
 	pub fn next_frame(&mut self) -> Frame<'_, WindowFrame> {
@@ -956,7 +950,7 @@ impl WindowTarget {
 			Ok((image, _)) => image,
 			Err(gfx_hal::window::AcquireError::OutOfDate(_)) => {
 				self.reconfigure_swapchain();
-				match unsafe { self.surface.acquire_image(0) } {
+				match unsafe { self.surface.acquire_image(u64::MAX) } {
 					Ok((image, _)) => image,
 					Err(e) => panic!("{}", e),
 				}
@@ -1092,7 +1086,7 @@ impl WindowTarget {
 	}
 
 	/// Converts pixel coordinates to screen space coordinates. Alternatively, a [`PixelTranslator`] can be constructed
-	/// with the [`pixel_translator`] method.
+	/// with the [`pixel_translator`](WindowTarget::pixel_translator) method.
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2 {
 			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
@@ -1100,6 +1094,8 @@ impl WindowTarget {
 		}
 	}
 
+	/// Creates a `PixelTranslator` for this window's size. The `PixelTranslator` will track this `WindowTarget`'s size
+	/// even after [`resize`](WindowTarget::resize) calls
 	pub fn pixel_translator(&self) -> PixelTranslator {
 		PixelTranslator::new(self.extent.clone())
 	}
