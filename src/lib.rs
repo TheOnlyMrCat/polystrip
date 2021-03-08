@@ -568,6 +568,16 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
 
+pub trait HasRenderer {
+	fn clone_context(&self) -> Rc<Renderer>;
+}
+
+impl HasRenderer for Rc<Renderer> {
+	fn clone_context(&self) -> Rc<Renderer> {
+		self.clone()
+	}
+}
+
 /// Customization options for building a Renderer. Options are detailed on builder methods.
 /// 
 /// ```no_run
@@ -909,6 +919,12 @@ impl WindowTarget {
 	}
 }
 
+impl HasRenderer for WindowTarget {
+	fn clone_context(&self) -> Rc<Renderer> {
+		self.context.clone()
+	}
+}
+
 impl Drop for WindowTarget {
 	fn drop(&mut self) {
 		unsafe {
@@ -967,7 +983,6 @@ pub struct Frame<'a, T: RenderDrop<'a>> {
 	_marker: std::marker::PhantomData<&'a T>,
 }
 
-//MARK: Frame API
 impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	pub fn new(context: Rc<Renderer>, frame_idx: usize, renderer: T, viewport: gfx_hal::pso::Viewport) -> Frame<'a, T> {
 		Frame {
@@ -1113,6 +1128,12 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	}
 }
 
+impl<'a, T: RenderDrop<'a>> HasRenderer for Frame<'a, T> {
+	fn clone_context(&self) -> Rc<Renderer> {
+		self.context.clone()
+	}
+}
+
 impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 	fn drop(&mut self) {
 		unsafe {		
@@ -1160,7 +1181,11 @@ impl Texture {
 	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
 	///           the sRGB color space, in row-major order.
 	/// * `size`: The size of the texture, in pixels, in (width, height) order.
-	pub fn new_from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
+	pub fn new_from_rgba(context: &impl HasRenderer, data: &[u8], size: (u32, u32)) -> Texture {
+		Self::_from_rgba(context.clone_context(), data, size)
+	}
+
+	fn _from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
 		let mut descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
 
@@ -1468,6 +1493,12 @@ impl Texture {
 	}
 }
 
+impl HasRenderer for Texture {
+	fn clone_context(&self) -> Rc<Renderer> {
+		self.context.clone()
+	}
+}
+
 impl<'a> RenderTarget<'a> for Texture {
 	type FrameDrop = TextureFrame<'a>;
 
@@ -1634,6 +1665,12 @@ impl DepthTexture {
 			view: ManuallyDrop::new(view),
 			memory: ManuallyDrop::new(memory),
 		}
+	}
+}
+
+impl HasRenderer for DepthTexture {
+	fn clone_context(&self) -> Rc<Renderer> {
+		self.context.clone()
 	}
 }
 

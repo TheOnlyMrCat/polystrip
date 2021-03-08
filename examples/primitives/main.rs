@@ -18,10 +18,10 @@ fn main() {
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = Texture::new_from_rgba(renderer.context.clone(), &*sandstone_img, sandstone_img.dimensions());
+	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
 
 	let player_img = image::load_from_memory(include_bytes!("player.png")).unwrap().to_rgba();
-	let player = Texture::new_from_rgba(renderer.context.clone(), &*player_img, player_img.dimensions());
+	let player = Texture::new_from_rgba(&renderer, &*player_img, player_img.dimensions());
 	
 	el.run(move |event, _, control_flow| {
 		match event {
