@@ -40,6 +40,12 @@ fn main() {
 						[3, 4],
 					]
 				}, Matrix4::translate(0.5, 0.0));
+				frame.set_global_transform(Matrix4 {
+					x: [std::f32::consts::PI.cos(), std::f32::consts::PI.sin(), 0., 0.],
+					y: [-std::f32::consts::PI.sin(), std::f32::consts::PI.cos(), 0., 0.],
+					z: [0., 0., 1., 0.],
+					w: [0., 0., 0., 1.],
+				});
 				frame.draw_colored(ColoredShape {
 					vertices: &[
 						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 1.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},

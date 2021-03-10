@@ -184,6 +184,7 @@ pub mod algebra {
 			}
 		}
 
+		/// Returns a matrix that translates by the given X and Y values, in screen space
 		pub fn translate(x: f32, y: f32) -> Matrix4 {
 			Matrix4 {
 				x: [1.0, 0.0, 0.0, 0.0],

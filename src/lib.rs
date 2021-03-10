@@ -73,7 +73,7 @@ pub struct Renderer {
 	render_fences: ManuallyDrop<Vec<RefCell<backend::Fence>>>,
 
 	texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
-	descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
+	texture_descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
 
 	pub allocator: RefCell<GpuAllocator<backend::Memory>>,
 }
@@ -84,6 +84,7 @@ impl Renderer {
 	}
 
 	fn with_config(config: RendererBuilder) -> Renderer {
+	// - Physical and logical devices
 		//Note: Keep up-to-date.         X0.X6.X0_XX
 		const POLYSTRIP_VERSION: u32 = 0x00_06_00_00;
 		let instance = backend::Instance::create("polystrip", POLYSTRIP_VERSION).unwrap();
@@ -106,8 +107,9 @@ impl Renderer {
 			).unwrap()		
 		};
 
-		let texture_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()) }.unwrap();
-		let mut render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::empty()) }.unwrap();
+	// - Command pools, buffers, semaphores, fences
+		let texture_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::TRANSIENT) }.unwrap();
+		let mut render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::RESET_INDIVIDUAL) }.unwrap();
 		let render_command_buffers = {
 			let mut buffers = Vec::with_capacity(config.frames_in_flight as usize);
 			unsafe { render_command_pool.allocate(config.frames_in_flight as usize, gfx_hal::command::Level::Primary, &mut buffers); }
@@ -124,6 +126,7 @@ impl Renderer {
 			(semaphores, fences)
 		};
 
+	// - Descriptor set and pool
 		let texture_descriptor_set_layout = unsafe { gpu.device.create_descriptor_set_layout(
 			iter![
 				gfx_hal::pso::DescriptorSetLayoutBinding {
@@ -147,7 +150,7 @@ impl Renderer {
 			],
 			iter![]
 		)}.unwrap();
-		let descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
+		let texture_descriptor_pool = unsafe { gpu.device.create_descriptor_pool(
 			config.max_textures,
 			iter![
 				gfx_hal::pso::DescriptorRangeDesc {
@@ -165,14 +168,15 @@ impl Renderer {
 			],
 			gfx_hal::pso::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
 		)}.unwrap();
-
+	// - Memory allocator
 		let alloc_props = gpu_alloc_gfx::gfx_device_properties(&adapter);
 		let config_fn = config.alloc_config;
 		let allocator = GpuAllocator::new(
 			config_fn(&alloc_props),
 			alloc_props,
 		);
-
+	
+	// - Passes and pipelines
 		let main_pass = unsafe { gpu.device.create_render_pass(
 			iter![
 				gfx_hal::pass::Attachment {
@@ -211,7 +215,7 @@ impl Renderer {
 		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
 		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
-		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
 		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_stroked_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -303,7 +307,7 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_colour_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -395,7 +399,7 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![&texture_descriptor_set_layout], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32)]) }.unwrap();
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![&texture_descriptor_set_layout], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_texture_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -486,7 +490,8 @@ impl Renderer {
 			flags: gfx_hal::pso::PipelineCreationFlags::empty(),
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
-
+	
+	// - Final construction
 		Renderer {
 			instance, adapter,
 			device: gpu.device,
@@ -510,7 +515,7 @@ impl Renderer {
 			render_fences: ManuallyDrop::new(render_fences),
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
-			descriptor_pool: RefCell::new(ManuallyDrop::new(descriptor_pool)),
+			texture_descriptor_pool: RefCell::new(ManuallyDrop::new(texture_descriptor_pool)),
 
 			allocator: RefCell::new(allocator),
 		}
@@ -550,7 +555,7 @@ impl Drop for Renderer {
 			}
 
 			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
-			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.descriptor_pool.get_mut()));
+			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.texture_descriptor_pool.get_mut()));
 
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.stroked_graphics_pipeline));
 			self.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
@@ -564,10 +569,6 @@ impl Drop for Renderer {
 	}
 }
 
-pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
-	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
-}
-
 pub trait HasRenderer {
 	fn clone_context(&self) -> Rc<Renderer>;
 }
@@ -576,6 +577,10 @@ impl HasRenderer for Rc<Renderer> {
 	fn clone_context(&self) -> Rc<Renderer> {
 		self.clone()
 	}
+}
+
+pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
+	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
 
 /// Customization options for building a Renderer. Options are detailed on builder methods.
@@ -597,7 +602,12 @@ pub struct RendererBuilder {
 impl RendererBuilder {
 	/// Creates a new `RendererBuilder` with default values
 	pub fn new() -> RendererBuilder {
-		Default::default()
+		RendererBuilder {
+			real_3d: false,
+			max_textures: 1024,
+			frames_in_flight: 3,
+			alloc_config: Box::new(default_memory_config),
+		}
 	}
 
 	/// If `true`, allows transform matrices to affect sprite depth. This clamps the depth between `0.0` and `1.0`
@@ -648,12 +658,7 @@ impl RendererBuilder {
 
 impl Default for RendererBuilder {
 	fn default() -> RendererBuilder {
-		RendererBuilder {
-			real_3d: false,
-			max_textures: 1024,
-			frames_in_flight: 3,
-			alloc_config: Box::new(default_memory_config),
-		}
+		RendererBuilder::new()
 	}
 }
 
@@ -980,6 +985,7 @@ pub struct Frame<'a, T: RenderDrop<'a>> {
 	renderer: T,
 	viewport: gfx_hal::pso::Viewport,
 	allocations: ManuallyDrop<Vec<MemoryBlock<backend::Memory>>>,
+	world_transform: Matrix4,
 	_marker: std::marker::PhantomData<&'a T>,
 }
 
@@ -991,6 +997,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			renderer,
 			viewport,
 			allocations: ManuallyDrop::new(Vec::new()),
+			world_transform: Matrix4::identity(),
 			_marker: std::marker::PhantomData,
 		}
 	}
@@ -1039,9 +1046,18 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 		(vertex_buffer, index_buffer)
 	}
 
+	/// Sets the global transform matrix for draw calls after this method call.
+	/// 
+	/// If this method is called multiple times, draw calls will use the matrix provided most recently.
+	/// 
+	/// Draw calls made before this method call use the identity matrix as the global transform matrix.
+	pub fn set_global_transform(&mut self, matrix: Matrix4) {
+		self.world_transform = matrix;
+	}
+
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, transform: Matrix4) {
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transform: Matrix4) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
@@ -1058,7 +1074,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 				&self.context.stroked_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
 			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 2, 0, 0..1);
 		}
@@ -1066,7 +1082,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, transform: Matrix4) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, obj_transform: Matrix4) {
 		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
@@ -1083,7 +1099,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 				&self.context.colour_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
 			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
@@ -1091,7 +1107,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, transform: Matrix4) {
+	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, obj_transform: Matrix4) {
 		if !Rc::ptr_eq(&self.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
 		}
@@ -1108,12 +1124,17 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			);
 			
 			command_buffer.bind_graphics_pipeline(&self.context.texture_graphics_pipeline);
-			command_buffer.bind_graphics_descriptor_sets(&self.context.texture_graphics_pipeline_layout, 0, iter![&*texture.descriptor_set], iter![]);
+			command_buffer.bind_graphics_descriptor_sets(
+				&self.context.texture_graphics_pipeline_layout,
+				0,
+				iter![&*texture.descriptor_set],
+				iter![],
+			);
 			command_buffer.push_graphics_constants(
 				&self.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
 			);
 			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
 		}
@@ -1148,6 +1169,7 @@ impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 					iter![&*self.context.render_semaphores[self.frame_idx].borrow()],
 					Some(&mut *self.context.render_fences[self.frame_idx].borrow_mut())
 				);
+			self.context.device.wait_for_fence(&self.context.render_fences[self.frame_idx].borrow(), u64::MAX).unwrap();
 		}
 
 		let mem_device = GfxMemoryDevice::wrap(&self.context.device);
@@ -1186,7 +1208,7 @@ impl Texture {
 	}
 
 	fn _from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
-		let mut descriptor_set = unsafe { context.descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
+		let mut descriptor_set = unsafe { context.texture_descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
 
 		let mut image = unsafe { context.device.create_image(
@@ -1467,7 +1489,7 @@ impl Texture {
 			command_buffer.finish();
 
 			self.context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
-			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap(); //TODO: Add to next frame resource waiting
 
 			self.context.device.destroy_fence(fence);
 		}
@@ -1590,10 +1612,7 @@ impl<'a> RenderTarget<'a> for Texture {
 impl Drop for Texture {
 	fn drop(&mut self) {
 		unsafe {
-			self.context.descriptor_pool.borrow_mut().free(std::iter::once(ManuallyDrop::take(&mut self.descriptor_set)));
-		}
-		
-		unsafe {
+			self.context.texture_descriptor_pool.borrow_mut().free(std::iter::once(ManuallyDrop::take(&mut self.descriptor_set)));
 			self.context.device.destroy_sampler(ManuallyDrop::take(&mut self.sampler));
 			self.context.device.destroy_image_view(ManuallyDrop::take(&mut self.view));
 			self.context.device.destroy_image(ManuallyDrop::take(&mut self.image));
