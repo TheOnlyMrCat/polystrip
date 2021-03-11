@@ -71,6 +71,7 @@ pub struct Renderer {
 	render_command_buffers: ManuallyDrop<Vec<RefCell<backend::CommandBuffer>>>,
 	render_semaphores: ManuallyDrop<Vec<RefCell<backend::Semaphore>>>,
 	render_fences: ManuallyDrop<Vec<RefCell<backend::Fence>>>,
+	render_frame_resources: ManuallyDrop<Vec<ManuallyDrop<RefCell<Vec<RenderResource>>>>>,
 
 	texture_descriptor_set_layout: ManuallyDrop<backend::DescriptorSetLayout>,
 	texture_descriptor_pool: RefCell<ManuallyDrop<backend::DescriptorPool>>,
@@ -107,7 +108,7 @@ impl Renderer {
 			).unwrap()		
 		};
 
-	// - Command pools, buffers, semaphores, fences
+	// - Command pools, frame resources
 		let texture_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::TRANSIENT) }.unwrap();
 		let mut render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::RESET_INDIVIDUAL) }.unwrap();
 		let render_command_buffers = {
@@ -116,14 +117,16 @@ impl Renderer {
 			buffers
 		}.into_iter().map(RefCell::new).collect();
 
-		let (render_semaphores, render_fences) = {
+		let (render_semaphores, render_fences, render_frame_resources) = {
 			let mut semaphores = Vec::with_capacity(config.frames_in_flight as usize);
 			let mut fences = Vec::with_capacity(config.frames_in_flight as usize);
+			let mut resources = Vec::with_capacity(config.frames_in_flight as usize);
 			for _ in 0..config.frames_in_flight {
 				semaphores.push(RefCell::new(gpu.device.create_semaphore().unwrap()));
 				fences.push(RefCell::new(gpu.device.create_fence(false).unwrap()));
+				resources.push(ManuallyDrop::new(RefCell::new(Vec::new())));
 			}
-			(semaphores, fences)
+			(semaphores, fences, resources)
 		};
 
 	// - Descriptor set and pool
@@ -184,7 +187,7 @@ impl Renderer {
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
 						load: gfx_hal::pass::AttachmentLoadOp::Clear,
-						store: gfx_hal::pass::AttachmentStoreOp::Store,
+						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
 					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
@@ -194,7 +197,7 @@ impl Renderer {
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
 						load: gfx_hal::pass::AttachmentLoadOp::Clear,
-						store: gfx_hal::pass::AttachmentStoreOp::Store,
+						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
 					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::DepthStencilAttachmentOptimal
@@ -513,6 +516,7 @@ impl Renderer {
 			render_command_buffers: ManuallyDrop::new(render_command_buffers),
 			render_semaphores: ManuallyDrop::new(render_semaphores),
 			render_fences: ManuallyDrop::new(render_fences),
+			render_frame_resources: ManuallyDrop::new(render_frame_resources),
 
 			texture_descriptor_set_layout: ManuallyDrop::new(texture_descriptor_set_layout),
 			texture_descriptor_pool: RefCell::new(ManuallyDrop::new(texture_descriptor_pool)),
@@ -525,6 +529,29 @@ impl Renderer {
 	/// See also [`RendererBuilder::build_rc`]
 	pub fn wrap(self) -> Rc<Renderer> {
 		Rc::new(self)
+	}
+
+	/// Waits for the next frame to finish rendering, deallocates its resources, and returns its index.
+	/// 
+	/// Generally, this won't need to be called in application code, since it is done by [`RenderTarget`]s before creating
+	/// a [`Frame`].
+	pub fn wait_next_frame(&self) -> usize {
+		let frame_idx = self.next_frame_idx();
+		unsafe {
+			self.device.wait_for_fence(&self.render_fences[frame_idx].borrow(), u64::MAX).unwrap();
+		}
+
+		let mut allocator = self.allocator.borrow_mut();
+		let mem_device = GfxMemoryDevice::wrap(&self.device);
+		for resource in self.render_frame_resources[frame_idx].replace(Vec::new()) {
+			match resource {
+				RenderResource::Buffer(buffer, memory) => unsafe {
+					allocator.dealloc(mem_device, memory);
+					self.device.destroy_buffer(buffer);
+				}
+			}
+		}
+		frame_idx
 	}
 
 	/// Returns the index of the next frame to be rendered, to be used when selecting the command buffer, semaphores
@@ -540,7 +567,19 @@ impl Drop for Renderer {
 		unsafe {
 			self.device.wait_idle().unwrap();
 
-			self.allocator.get_mut().cleanup(GfxMemoryDevice::wrap(&self.device));
+			let allocator = self.allocator.get_mut();
+			let mem_device = GfxMemoryDevice::wrap(&self.device);
+
+			for resource in ManuallyDrop::take(&mut self.render_frame_resources).into_iter().flat_map(|mut i| ManuallyDrop::take(&mut i).into_inner()) {
+				match resource {
+					RenderResource::Buffer(buf, block) => {
+						self.device.destroy_buffer(buf);
+						allocator.dealloc(mem_device, block)
+					}
+				}
+			}
+
+			allocator.cleanup(mem_device);
 
 			let render_command_pool = self.render_command_pool.get_mut();
 			render_command_pool.free(ManuallyDrop::take(&mut self.render_command_buffers).into_iter().map(RefCell::into_inner));
@@ -795,10 +834,9 @@ impl WindowTarget {
 			depth: 0.0..1.0,
 		};
 		
-		let frame_idx = self.context.next_frame_idx();
+		let frame_idx = self.context.wait_next_frame();
 
 		unsafe {
-			self.context.device.wait_for_fence(&*self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
 			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
 		}
 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
@@ -978,31 +1016,44 @@ impl<'a> RenderDrop<'a> for WindowFrame<'a> {
 	}
 }
 
+enum RenderResource {
+	Buffer(backend::Buffer, MemoryBlock<backend::Memory>),
+	// Expecting expansion
+}
+
+impl RenderResource {
+	fn unwrap_buffer_ref(&self) -> (&backend::Buffer, &MemoryBlock<backend::Memory>) {
+		match self {
+			Self::Buffer(b, m) => (b, m),
+		}
+	}
+}
+
 /// A frame to be drawn to. The frame gets presented on drop.
 pub struct Frame<'a, T: RenderDrop<'a>> {
 	context: Rc<Renderer>,
 	frame_idx: usize,
-	renderer: T,
+	resources: T,
 	viewport: gfx_hal::pso::Viewport,
-	allocations: ManuallyDrop<Vec<MemoryBlock<backend::Memory>>>,
 	world_transform: Matrix4,
 	_marker: std::marker::PhantomData<&'a T>,
 }
 
 impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
-	pub fn new(context: Rc<Renderer>, frame_idx: usize, renderer: T, viewport: gfx_hal::pso::Viewport) -> Frame<'a, T> {
+	pub fn new(context: Rc<Renderer>, frame_idx: usize, resources: T, viewport: gfx_hal::pso::Viewport) -> Frame<'a, T> {
 		Frame {
 			context,
 			frame_idx,
-			renderer,
+			resources,
 			viewport,
-			allocations: ManuallyDrop::new(Vec::new()),
 			world_transform: Matrix4::identity(),
 			_marker: std::marker::PhantomData,
 		}
 	}
 
-	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) -> (backend::Buffer, backend::Buffer) {
+	/// Creates a vertex buffer and an index buffer from the supplied data. The buffers will be placed into the current
+	/// frame's resources at the end, vertex buffer first, index buffer second.
+	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) {
 		let mut vertex_buffer = unsafe {
 			self.context.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
 		}.unwrap();
@@ -1041,9 +1092,9 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			self.context.device.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer).unwrap();
 			self.context.device.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer).unwrap();
 		}
-		self.allocations.push(vertex_block);
-		self.allocations.push(index_block);
-		(vertex_buffer, index_buffer)
+		let mut frame_res = self.context.render_frame_resources[self.frame_idx].borrow_mut();
+		frame_res.push(RenderResource::Buffer(vertex_buffer, vertex_block));
+		frame_res.push(RenderResource::Buffer(index_buffer, index_block));
 	}
 
 	/// Sets the global transform matrix for draw calls after this method call.
@@ -1058,13 +1109,16 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transform: Matrix4) {
-		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
+		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
+		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
 		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			command_buffer.bind_index_buffer(
-				&index_buffer,
+				index_buffer,
 				gfx_hal::buffer::SubRange::WHOLE,
 				gfx_hal::IndexType::U16,
 			);
@@ -1083,13 +1137,16 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, obj_transform: Matrix4) {
-		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
+		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
+		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
 		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			command_buffer.bind_index_buffer(
-				&index_buffer,
+				index_buffer,
 				gfx_hal::buffer::SubRange::WHOLE,
 				gfx_hal::IndexType::U16,
 			);
@@ -1112,13 +1169,16 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			panic!("Texture was not made with renderer that made this frame");
 		}
 
-		let (vertex_buffer, index_buffer) = self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
+		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
+		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
 		let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
 			command_buffer.bind_index_buffer(
-				&index_buffer,
+				index_buffer,
 				gfx_hal::buffer::SubRange::WHOLE,
 				gfx_hal::IndexType::U16,
 			);
@@ -1169,17 +1229,9 @@ impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 					iter![&*self.context.render_semaphores[self.frame_idx].borrow()],
 					Some(&mut *self.context.render_fences[self.frame_idx].borrow_mut())
 				);
-			self.context.device.wait_for_fence(&self.context.render_fences[self.frame_idx].borrow(), u64::MAX).unwrap();
 		}
 
-		let mem_device = GfxMemoryDevice::wrap(&self.context.device);
-		for block in unsafe { ManuallyDrop::take(&mut self.allocations) } {
-			unsafe {
-				self.context.allocator.borrow_mut().dealloc(mem_device, block);
-			}
-		}
-
-		self.renderer.cleanup(&self.context, self.frame_idx);
+		self.resources.cleanup(&self.context, self.frame_idx);
 	}
 }
 
@@ -1554,10 +1606,10 @@ impl<'a> RenderTarget<'a> for Texture {
 			self.extent.to_extent()
 		)}.unwrap();
 
-		let frame_idx = self.context.next_frame_idx();
+		let frame_idx = self.context.wait_next_frame();
 
 		unsafe {
-			self.context.device.wait_for_fence(&*self.context.render_fences[frame_idx].borrow_mut(), u64::MAX).unwrap();
+			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
 		}
 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
 

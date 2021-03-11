@@ -2,8 +2,9 @@
 - Update `gfx-hal` to 0.7
 - Restructure `RendererContext` and `Renderer` into `Renderer` and `WindowTarget`, respectively
 - Allow rendering to and getting data from `Texture`s
-- Allow multiple frames to be buffered for render simultaneously
+- Add global transform matrices
 - Add `RendererBuilder`, with three modifiable settings
+- Allow multiple frames to be buffered for render simultaneously
 - Collapse `data` module into `vertex` module
 
 # 0.5
