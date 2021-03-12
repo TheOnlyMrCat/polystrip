@@ -39,7 +39,7 @@ fn main() {
 						[2, 3], [2, 4],
 						[3, 4],
 					]
-				}, Matrix4::translate(0.5, 0.0));
+				}, &[Matrix4::translate(0.5, 0.0)]);
 				frame.set_global_transform(Matrix4 {
 					x: [std::f32::consts::PI.cos(), std::f32::consts::PI.sin(), 0., 0.],
 					y: [-std::f32::consts::PI.sin(), std::f32::consts::PI.cos(), 0., 0.],
@@ -60,7 +60,7 @@ fn main() {
 						[1, 2, 4],
 						[2, 3, 4],
 					]
-				}, Matrix4::translate(0.5, 0.0));
+				}, &[Matrix4::translate(0.5, 0.0)]);
 				frame.draw_colored(ColoredShape {
 					vertices: &[
 						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 0.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
@@ -68,7 +68,7 @@ fn main() {
 						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
 					],
 					indices: &[[0, 1, 2]]
-				}, Matrix4::translate(-0.5, 0.0));
+				}, &[Matrix4::translate(-0.5, 0.0)]);
 			},
 			_ => {}
 		}

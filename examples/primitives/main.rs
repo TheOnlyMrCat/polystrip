@@ -37,19 +37,19 @@ fn main() {
 				frame.draw_colored(ColoredShape {
 					vertices: &pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color { r: 255, g: 0, b: 0, a: 255 }),
 					indices: &RECT_INDICES,
-				}, Matrix4::identity());
+				}, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
 					vertices: &pixel_translator.textured_rect(Rect { x: 70, y: 200, w: 80, h: 120 }),
 					indices: &RECT_INDICES,
-				}, &sandstone, Matrix4::identity());
+				}, &sandstone, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
 					vertices: &pixel_translator.texture_scaled(&player, 70, 200, 6.0),
 					indices: &RECT_INDICES,
-				}, &player, Matrix4::identity());
+				}, &player, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
 					vertices: &pixel_translator.texture_scaled_cropped(&sandstone, Rect { x: 160, y: 200, w: 70, h: 160 }, Rect { x: 7, y: 0, w: 7, h: 16 }),
 					indices: &RECT_INDICES,
-				}, &sandstone, Matrix4::identity());
+				}, &sandstone, &[Matrix4::identity()]);
 			},
 			_ => {}
 		}

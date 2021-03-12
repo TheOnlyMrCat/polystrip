@@ -67,6 +67,8 @@ pub struct Renderer {
 	texture_command_pool: RefCell<ManuallyDrop<backend::CommandPool>>,
 	
 	frames_in_flight: u32,
+	matrix_array_size: u32,
+
 	current_frame: AtomicU32,
 	render_command_buffers: ManuallyDrop<Vec<RefCell<backend::CommandBuffer>>>,
 	render_semaphores: ManuallyDrop<Vec<RefCell<backend::Semaphore>>>,
@@ -180,6 +182,10 @@ impl Renderer {
 		);
 	
 	// - Passes and pipelines
+		// The number of object transform matrices we can store in push constants, and therefore how many objects we can draw at once
+		// Equal to the number of matrices we can store, minus 1 for the world matrix
+		let matrix_array_size = (adapter.physical_device.limits().max_push_constants_size / std::mem::size_of::<Matrix4>() - 1).min((u32::MAX - 1) as usize) as u32;
+
 		let main_pass = unsafe { gpu.device.create_render_pass(
 			iter![
 				gfx_hal::pass::Attachment {
@@ -218,7 +224,7 @@ impl Renderer {
 		let texture_vs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
 		let texture_fs_module = unsafe { gpu.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
-		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
+		let stroked_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * (matrix_array_size + 1))]) }.unwrap();
 		let stroked_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_stroked_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -245,9 +251,14 @@ impl Renderer {
 							gfx_hal::pso::SpecializationConstant {
 								id: 1,
 								range: 1..2,
-							}
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 2,
+								range: 4..8,
+							},
 						]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
+						// * Can use the two zeros to store other spec constants when necessary
+						data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0], matrix_array_size.to_ne_bytes()])),
 					}
 				},
 				tessellation: None,
@@ -310,7 +321,7 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
+		let colour_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * (matrix_array_size + 1))]) }.unwrap();
 		let colour_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_colour_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -337,9 +348,13 @@ impl Renderer {
 							gfx_hal::pso::SpecializationConstant {
 								id: 1,
 								range: 1..2,
-							}
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 2,
+								range: 4..8,
+							},
 						]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
+						data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0], matrix_array_size.to_ne_bytes()])),
 					}
 				},
 				tessellation: None,
@@ -402,7 +417,7 @@ impl Renderer {
 			parent: gfx_hal::pso::BasePipeline::None,
 		}, None) }.unwrap();
 
-		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![&texture_descriptor_set_layout], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * 2)]) }.unwrap();
+		let texture_graphics_pipeline_layout = unsafe { gpu.device.create_pipeline_layout(iter![&texture_descriptor_set_layout], iter![(gfx_hal::pso::ShaderStageFlags::VERTEX, 0..std::mem::size_of::<Matrix4>() as u32 * (matrix_array_size + 1))]) }.unwrap();
 		let texture_graphics_pipeline = unsafe { gpu.device.create_graphics_pipeline(&gfx_hal::pso::GraphicsPipelineDesc {
 			label: Some("polystrip_texture_pipeline"),
 			primitive_assembler: gfx_hal::pso::PrimitiveAssemblerDesc::Vertex {
@@ -429,9 +444,13 @@ impl Renderer {
 							gfx_hal::pso::SpecializationConstant {
 								id: 1,
 								range: 1..2,
-							}
+							},
+							gfx_hal::pso::SpecializationConstant {
+								id: 2,
+								range: 4..8,
+							},
 						]),
-						data: std::borrow::Cow::Borrowed(&[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8]),
+						data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0], matrix_array_size.to_ne_bytes()])),
 					}
 				},
 				tessellation: None,
@@ -512,6 +531,8 @@ impl Renderer {
 			render_command_pool: RefCell::new(ManuallyDrop::new(render_command_pool)),
 			
 			frames_in_flight: config.frames_in_flight,
+			matrix_array_size,
+
 			current_frame: AtomicU32::new(0),
 			render_command_buffers: ManuallyDrop::new(render_command_buffers),
 			render_semaphores: ManuallyDrop::new(render_semaphores),
@@ -707,7 +728,7 @@ impl Default for RendererBuilder {
 /// in the event loop, and specified on creation. For example, in `winit`:
 /// ```no_run
 /// # use winit::event::{Event, WindowEvent};
-/// # use polystrip::WindowTarget;
+/// # use polystrip::{Renderer, WindowTarget};
 /// # let event_loop = winit::event_loop::EventLoop::new();
 /// # let window = winit::window::Window::new(&event_loop).unwrap();
 /// let window_size = window.inner_size().to_logical(window.scale_factor());
@@ -1108,7 +1129,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transform: Matrix4) {
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transforms: &[Matrix4]) {
 		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
@@ -1128,15 +1149,26 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 				&self.context.stroked_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into()]),
 			);
-			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 2, 0, 0..1);
+		}
+
+		for chunk in obj_transforms.chunks(self.context.matrix_array_size as usize) {
+			unsafe {
+				command_buffer.push_graphics_constants(
+					&self.context.stroked_graphics_pipeline_layout,
+					gfx_hal::pso::ShaderStageFlags::VERTEX,
+					std::mem::size_of::<Matrix4>() as u32,
+					bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+				);
+				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
+			}
 		}
 	}
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, obj_transform: Matrix4) {
+	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, obj_transforms: &[Matrix4]) {
 		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
@@ -1156,15 +1188,26 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 				&self.context.colour_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into()]),
 			);
-			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
+		}
+
+		for chunk in obj_transforms.chunks(self.context.matrix_array_size as usize) {
+			unsafe {
+				command_buffer.push_graphics_constants(
+					&self.context.colour_graphics_pipeline_layout,
+					gfx_hal::pso::ShaderStageFlags::VERTEX,
+					std::mem::size_of::<Matrix4>() as u32,
+					bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+				);
+				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
+			}
 		}
 	}
 
 	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, obj_transform: Matrix4) {
+	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, obj_transforms: &[Matrix4]) {
 		if !Rc::ptr_eq(&self.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
 		}
@@ -1194,9 +1237,20 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 				&self.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
 				0,
-				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into(), obj_transform.into()]),
+				bytemuck::cast_slice::<[[f32; 4]; 4], _>(&[self.world_transform.into()]),
 			);
-			command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..1);
+		}
+
+		for chunk in obj_transforms.chunks(self.context.matrix_array_size as usize) {
+			unsafe {
+				command_buffer.push_graphics_constants(
+					&self.context.texture_graphics_pipeline_layout,
+					gfx_hal::pso::ShaderStageFlags::VERTEX,
+					std::mem::size_of::<Matrix4>() as u32,
+					bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+				);
+				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
+			}
 		}
 	}
 

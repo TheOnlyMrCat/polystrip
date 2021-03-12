@@ -19,6 +19,14 @@ fn main() {
 
 	assert_eq!(*sandstone_img, *sandstone.get_data());
 
+	let mut matrices = Vec::new();
+	for y in 0..10 {
+		for x in 0..16 {
+			let Vector2 { x, y } = renderer.pixel(x * 100, y * 100);
+			matrices.push(Matrix4::translate(x + 1.0, y + 1.0))
+		}
+	}
+
 	el.run(move |event, _, control_flow| {
 		match event {
 			Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
@@ -27,6 +35,13 @@ fn main() {
 			Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
 				let window_size = new_size.to_logical(window.scale_factor());
 				renderer.resize((window_size.width, window_size.height));
+				matrices = Vec::new();
+				for y in 0..10 {
+					for x in 0..16 {
+						let Vector2 { x, y } = renderer.pixel(x * 100, y * 100);
+						matrices.push(Matrix4::translate(x + 1.0, y + 1.0))
+					}
+				}
 			},
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
@@ -41,7 +56,7 @@ fn main() {
 						[0, 1, 3],
 						[1, 2, 3],
 					]
-				}, &sandstone, Matrix4::identity());
+				}, &sandstone, &matrices);
 			},
 			_ => {}
 		}
