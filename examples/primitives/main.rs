@@ -10,7 +10,7 @@ const RECT_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
 fn main() {
 	let el = EventLoop::new();
 	let window = WindowBuilder::new()
-		.with_title("Geometry")
+		.with_title("Primitives")
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
@@ -35,7 +35,7 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame();
 				frame.draw_colored(ColoredShape {
-					vertices: &pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color { r: 255, g: 0, b: 0, a: 255 }),
+					vertices: &pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color::RED),
 					indices: &RECT_INDICES,
 				}, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {

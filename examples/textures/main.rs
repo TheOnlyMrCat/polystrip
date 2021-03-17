@@ -22,8 +22,7 @@ fn main() {
 	let mut matrices = Vec::new();
 	for y in 0..10 {
 		for x in 0..16 {
-			let Vector2 { x, y } = renderer.pixel(x * 100, y * 100);
-			matrices.push(Matrix4::translate(x + 1.0, y + 1.0))
+			matrices.push(Matrix4::translate(renderer.pixel(x * 100, y * 100)))
 		}
 	}
 
@@ -38,8 +37,7 @@ fn main() {
 				matrices = Vec::new();
 				for y in 0..10 {
 					for x in 0..16 {
-						let Vector2 { x, y } = renderer.pixel(x * 100, y * 100);
-						matrices.push(Matrix4::translate(x + 1.0, y + 1.0))
+						matrices.push(Matrix4::translate(renderer.pixel(x * 100, y * 100)))
 					}
 				}
 			},
@@ -47,10 +45,10 @@ fn main() {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(TexturedShape {
 					vertices: &[
-						TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 0.0 } },
-						TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2 { x: 0.0, y: 1.0 } },
-						TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 1.0 } },
-						TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2 { x: 1.0, y: 0.0 } },
+						TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
+						TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
+						TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
+						TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
 					],
 					indices: &[
 						[0, 1, 3],

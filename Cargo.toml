@@ -20,6 +20,7 @@ empty = ["gfx-backend-empty"]
 
 [dependencies]
 bytemuck = "1.5"
+mint = "0.5"
 raw-window-handle = "0.3"
 arrayvec = "0.5"
 align-data = "0.1"
@@ -31,9 +32,6 @@ gfx-backend-vulkan = { version = "0.7", optional = true }
 gfx-backend-metal = { version = "0.7", optional = true }
 gfx-backend-dx12 = { version = "0.7", optional = true }
 gfx-backend-empty = { version = "0.7", optional = true }
-
-mint = { version = "0.5", optional = true }
-cgmath = { version = "0.18", optional = true }
 
 [dev-dependencies]
 winit = "0.23"

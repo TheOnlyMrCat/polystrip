@@ -1,5 +1,5 @@
 use polystrip::{RendererBuilder, WindowTarget};
-use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector3, Matrix4};
+use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector2, Vector3, Matrix4};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -27,11 +27,11 @@ fn main() {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_stroked(StrokedShape {
 					vertices: &[
-						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 0.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: Vector3 { x: -0.375, y: 0.125, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
-						ColorVertex { position: Vector3 { x: 0.375, y: 0.125, z: 2.0 }, color: Color { r: 255, g: 255, b: 255, a: 255 }},
+						ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::WHITE},
+						ColorVertex { position: Vector3::new(-0.375, 0.125, 2.0), color: Color::WHITE},
+						ColorVertex { position: Vector3::new(-0.25, -0.5, 2.0), color: Color::WHITE},
+						ColorVertex { position: Vector3::new(0.25, -0.5, 2.0), color: Color::WHITE},
+						ColorVertex { position: Vector3::new(0.375, 0.125, 2.0), color: Color::WHITE},
 					],
 					indices: &[
 						[0, 1], [0, 2], [0, 3], [0, 4],
@@ -39,20 +39,15 @@ fn main() {
 						[2, 3], [2, 4],
 						[3, 4],
 					]
-				}, &[Matrix4::translate(0.5, 0.0)]);
-				frame.set_global_transform(Matrix4 {
-					x: [std::f32::consts::PI.cos(), std::f32::consts::PI.sin(), 0., 0.],
-					y: [-std::f32::consts::PI.sin(), std::f32::consts::PI.cos(), 0., 0.],
-					z: [0., 0., 1., 0.],
-					w: [0., 0., 0., 1.],
-				});
+				}, &[Matrix4::translate(Vector2::new(0.5, 0.0))]);
+				frame.set_global_transform(Matrix4::rotate(std::f32::consts::PI));
 				frame.draw_colored(ColoredShape {
 					vertices: &[
-						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 1.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: Vector3 { x: -0.375, y: 0.125, z: 0.0 }, color: Color { r: 255, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
-						ColorVertex { position: Vector3 { x: 0.375, y: 0.125, z: 0.0 }, color: Color { r: 255, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::RED },
+						ColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
+						ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+						ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
+						ColorVertex { position: Vector3::new(0.375, 0.125, 0.0), color: Color::MAGENTA },
 					],
 					// Note the vertices are specified going counter-clockwise
 					indices: &[
@@ -60,15 +55,15 @@ fn main() {
 						[1, 2, 4],
 						[2, 3, 4],
 					]
-				}, &[Matrix4::translate(0.5, 0.0)]);
+				}, &[Matrix4::translate(Vector2::new(0.5, 0.0))]);
 				frame.draw_colored(ColoredShape {
 					vertices: &[
-						ColorVertex { position: Vector3 { x: 0.0, y: 0.5, z: 0.0 }, color: Color { r: 255, g: 0, b: 0, a: 255 }},
-						ColorVertex { position: Vector3 { x: -0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 255, b: 0, a: 255 }},
-						ColorVertex { position: Vector3 { x: 0.25, y: -0.5, z: 0.0 }, color: Color { r: 0, g: 0, b: 255, a: 255 }},
+						ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
+						ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+						ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
 					],
 					indices: &[[0, 1, 2]]
-				}, &[Matrix4::translate(-0.5, 0.0)]);
+				}, &[Matrix4::translate(Vector2::new(-0.5, 0.0))]);
 			},
 			_ => {}
 		}

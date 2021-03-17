@@ -7,6 +7,9 @@
 //! - [`Frame`]: The struct everything is drawn onto, generally created from a `WindowTarget`
 //! - [`*Shape`](vertex): Primitives to be rendered to `Frame`s
 //! - [`Texture`]: An image in GPU memory, ready to be rendered to a frame
+//! 
+//! # Quick example
+//! An example with `winit` is available in the documentation for `WindowTarget`.
 
 pub(crate) mod backend;
 pub mod vertex;
@@ -629,6 +632,7 @@ impl Drop for Renderer {
 	}
 }
 
+/// Holds a shared `Renderer`
 pub trait HasRenderer {
 	fn clone_context(&self) -> Rc<Renderer>;
 }
@@ -768,7 +772,7 @@ impl WindowTarget {
 	/// # let window = winit::window::Window::new(&event_loop).unwrap();
 	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
 	/// let renderer = WindowTarget::new(
-	///     Rc::new(RendererBuilder::new().max_textures(2048).build()),
+	///     RendererBuilder::new().max_textures(2048).build_rc(),
 	///     &window,
 	///     (window_size.width, window_size.height)
 	/// );
@@ -970,10 +974,7 @@ impl WindowTarget {
 	/// Converts pixel coordinates to screen space coordinates. Alternatively, a [`PixelTranslator`] can be constructed
 	/// with the [`pixel_translator`](WindowTarget::pixel_translator) method.
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
-		Vector2 {
-			x: (x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0,
-			y: -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0),
-		}
+		Vector2::new((x * 2) as f32 / self.swapchain_config.extent.width as f32 - 1.0, -((y * 2) as f32 / self.swapchain_config.extent.height as f32 - 1.0))
 	}
 
 	/// Creates a `PixelTranslator` for this window's size. The `PixelTranslator` will track this `WindowTarget`'s size
@@ -999,6 +1000,7 @@ impl Drop for WindowTarget {
 	}
 }
 
+/// Can be rendered to by a `Frame`
 pub trait RenderTarget<'a> {
 	type FrameDrop: RenderDrop<'a>;
 
@@ -1013,10 +1015,17 @@ impl<'a> RenderTarget<'a> for WindowTarget {
 	}
 }
 
+/// Cleanup for a `RenderTarget`.
+/// 
+/// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
 pub trait RenderDrop<'a> {
 	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
 }
 
+/// Implementation detail of the `RenderTarget` system.
+/// 
+/// See [`Frame`]
+#[doc(hidden)]
 pub struct WindowFrame<'a> {
 	surface: &'a mut backend::Surface,
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
@@ -1198,7 +1207,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 					&self.context.colour_graphics_pipeline_layout,
 					gfx_hal::pso::ShaderStageFlags::VERTEX,
 					std::mem::size_of::<Matrix4>() as u32,
-					bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+					bytemuck::cast_slice(&chunk),
 				);
 				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
 			}
@@ -1247,7 +1256,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 					&self.context.texture_graphics_pipeline_layout,
 					gfx_hal::pso::ShaderStageFlags::VERTEX,
 					std::mem::size_of::<Matrix4>() as u32,
-					bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+					bytemuck::cast_slice(&chunk),
 				);
 				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
 			}
@@ -1256,10 +1265,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Converts pixel coordinates to Gpu coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
-		Vector2 {
-			x: (x * 2) as f32 / self.viewport.rect.w as f32 - 1.0,
-			y: -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0),
-		}
+		Vector2::new((x * 2) as f32 / self.viewport.rect.w as f32 - 1.0, -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0))
 	}
 }
 
@@ -1595,7 +1601,7 @@ impl Texture {
 			command_buffer.finish();
 
 			self.context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
-			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap(); //TODO: Add to next frame resource waiting
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
 			self.context.device.destroy_fence(fence);
 		}
@@ -1614,10 +1620,7 @@ impl Texture {
 
 	/// Converts pixel coordinates to texture space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
-		Vector2 {
-			x: x as f32 / self.extent.width as f32,
-			y: y as f32 / self.extent.height as f32,
-		}
+		Vector2::new(x as f32 / self.extent.width as f32, y as f32 / self.extent.height as f32)
 	}
 }
 
@@ -1727,6 +1730,10 @@ impl Drop for Texture {
 	}
 }
 
+/// Implementation detail of the `RenderTarget` system
+/// 
+/// See [`Frame`]
+#[doc(hidden)]
 pub struct TextureFrame<'a> {
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	#[allow(dead_code)] // Must be kept alive while the framebuffer is still using its ImageView.
@@ -1742,6 +1749,7 @@ impl<'a> RenderDrop<'a> for TextureFrame<'a> {
 	}
 }
 
+/// Wrapper for a depth texture, necessary for custom `RenderTarget`s
 pub struct DepthTexture {
 	context: Rc<Renderer>,
 	image: ManuallyDrop<backend::Image>,
