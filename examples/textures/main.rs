@@ -13,6 +13,7 @@ fn main() {
 
 	let size = window.inner_size().to_logical(window.scale_factor());
 	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
+	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
@@ -22,7 +23,7 @@ fn main() {
 	let mut matrices = Vec::new();
 	for y in 0..10 {
 		for x in 0..16 {
-			matrices.push(Matrix4::translate(renderer.pixel(x * 100, y * 100)))
+			matrices.push(Matrix4::translate(pixel_translator.pixel_offset(x * 100, y * 100)))
 		}
 	}
 
@@ -37,7 +38,7 @@ fn main() {
 				matrices = Vec::new();
 				for y in 0..10 {
 					for x in 0..16 {
-						matrices.push(Matrix4::translate(renderer.pixel(x * 100, y * 100)))
+						matrices.push(Matrix4::translate(pixel_translator.pixel_offset(x * 100, y * 100)))
 					}
 				}
 			},

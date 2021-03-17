@@ -1306,6 +1306,7 @@ pub struct Texture {
 	descriptor_set: ManuallyDrop<backend::DescriptorSet>,
 	memory_block: ManuallyDrop<MemoryBlock<backend::Memory>>,
 	extent: gfx_hal::window::Extent2D,
+	fence: ManuallyDrop<RefCell<backend::Fence>>,
 }
 
 impl Texture {
@@ -1479,8 +1480,6 @@ impl Texture {
 			context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
 			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
-			context.device.destroy_fence(fence);
-
 			context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
 		}
 		
@@ -1500,6 +1499,7 @@ impl Texture {
 			descriptor_set: ManuallyDrop::new(descriptor_set),
 			memory_block: ManuallyDrop::new(img_block),
 			extent: gfx_hal::window::Extent2D { width, height },
+			fence: ManuallyDrop::new(RefCell::new(fence)),
 		}
 	}
 
@@ -1534,8 +1534,10 @@ impl Texture {
 		unsafe {
 			self.context.device.bind_buffer_memory(buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
 
+			let mut fence = self.fence.borrow_mut();
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+			self.context.device.reset_fence(&mut fence).unwrap();
 			let mut command_buffer = self.context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
-			let mut fence = self.context.device.create_fence(false).unwrap();
 
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
@@ -1601,12 +1603,11 @@ impl Texture {
 			command_buffer.finish();
 
 			self.context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
-			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
-
-			self.context.device.destroy_fence(fence);
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap(); // To ensure data validity for download
 		}
 
 		let size = buf_req.size as usize;
+		//TODO: replace with Box::new_uninit_slice when stabilised
 		let mut mem = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(std::alloc::alloc(std::alloc::Layout::array::<u8>(size).expect("Array allocation size overflow")), size) as *mut [u8]) };
 
 		unsafe {
@@ -1666,6 +1667,9 @@ impl<'a> RenderTarget<'a> for Texture {
 		let frame_idx = self.context.wait_next_frame();
 
 		unsafe {
+			let mut fence = self.fence.borrow_mut();
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+			self.context.device.reset_fence(&mut fence).unwrap();
 			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
 		}
 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();

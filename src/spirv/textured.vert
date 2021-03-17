@@ -17,7 +17,8 @@ uniform Transform {
 };
 
 void main() {
-	gl_Position = w_transform * o_transform[gl_InstanceIndex] * vec4(in_position.x, FLIP_Y ? -in_position.y : in_position.y, REAL_Z ? in_position.z : 0.0, 1.0);
+	vec4 transform_position = w_transform * o_transform[gl_InstanceIndex] * vec4(in_position.xy, REAL_Z ? in_position.z : 0.0, 1.0);
+	gl_Position = vec4(transform_position.x, FLIP_Y ? -transform_position.y : transform_position.y, transform_position.zw);
 	frag_texture_coords = in_texture_coords;
-	frag_depth = REAL_Z ? gl_Position.z : in_position.z;
+	frag_depth = REAL_Z ? transform_position.z : in_position.z;
 }
