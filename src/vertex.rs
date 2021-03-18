@@ -171,7 +171,7 @@ use std::ops::{Deref, DerefMut};
 /// A 2D vector in screen space
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Vector2(mint::Vector2<f32>);
+pub struct Vector2(pub mint::Vector2<f32>);
 
 unsafe impl bytemuck::Zeroable for Vector2 {}
 unsafe impl bytemuck::Pod for Vector2 {}
@@ -195,6 +195,18 @@ impl From<mint::Vector2<f32>> for Vector2 {
 impl From<Vector2> for mint::Vector2<f32> {
 	fn from(v: Vector2) -> Self {
 		v.0
+	}
+}
+
+impl From<[f32; 2]> for Vector2 {
+	fn from(v: [f32; 2]) -> Self {
+		Self(mint::Vector2::from(v))
+	}
+}
+
+impl From<Vector2> for [f32; 2] {
+	fn from(v: Vector2) -> Self {
+		v.0.into()
 	}
 }
 
@@ -222,7 +234,7 @@ impl DerefMut for Vector2 {
 /// Additionally, height interpolates linearly between vertices.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Vector3(mint::Vector3<f32>);
+pub struct Vector3(pub mint::Vector3<f32>);
 
 unsafe impl bytemuck::Zeroable for Vector3 {}
 unsafe impl bytemuck::Pod for Vector3 {}
@@ -245,6 +257,18 @@ impl From<Vector3> for mint::Vector3<f32> {
 	}
 }
 
+impl From<[f32; 3]> for Vector3 {
+	fn from(v: [f32; 3]) -> Self {
+		Self(mint::Vector3::from(v))
+	}
+}
+
+impl From<Vector3> for [f32; 3] {
+	fn from(v: Vector3) -> Self {
+		v.0.into()
+	}
+}
+
 impl Deref for Vector3 {
 	type Target = mint::Vector3<f32>;
 
@@ -262,7 +286,7 @@ impl DerefMut for Vector3 {
 /// A 4 x 4 column major matrix in screen space
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Matrix4(mint::ColumnMatrix4<f32>);
+pub struct Matrix4(pub mint::ColumnMatrix4<f32>);
 
 unsafe impl bytemuck::Zeroable for Matrix4 {}
 unsafe impl bytemuck::Pod for Matrix4 {}
@@ -370,6 +394,12 @@ impl From<mint::ColumnMatrix4<f32>> for Matrix4 {
 impl From<Matrix4> for mint::ColumnMatrix4<f32> {
 	fn from(v: Matrix4) -> Self {
 		v.0
+	}
+}
+
+impl From<[[f32; 4]; 4]> for Matrix4 {
+	fn from(v: [[f32; 4]; 4]) -> Self {
+		Self(mint::ColumnMatrix4::from(v))
 	}
 }
 
