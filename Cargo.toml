@@ -3,7 +3,7 @@ name = "polystrip"
 description = "A 2D accelerated graphics rendering library"
 keywords = ["gamedev", "graphics", "rendering"]
 categories = ["game-development", "graphics", "rendering::engine"]
-version = "0.5.1"
+version = "0.6.0"
 authors = ["TheOnlyMrCat <skylifegame@gmail.com>"]
 repository = "https://github.com/TheOnlyMrCat/polystrip"
 license = "MIT OR Apache-2.0"
@@ -19,19 +19,19 @@ dx12 = ["gfx-backend-dx12"]
 empty = ["gfx-backend-empty"]
 
 [dependencies]
-bytemuck = "1.4"
+bytemuck = "1.5"
+mint = "0.5"
 raw-window-handle = "0.3"
+arrayvec = "0.5"
 align-data = "0.1"
-gpu-alloc = "0.2"
-gpu-alloc-gfx = "0.1"
+gpu-alloc = "0.3"
+gpu-alloc-gfx = "0.3"
 
-gfx-hal = "0.6"
-gfx-backend-vulkan = { version = "0.6", optional = true }
-gfx-backend-metal = { version = "0.6", optional = true }
-gfx-backend-dx12 = { version = "0.6", optional = true }
-gfx-backend-empty = { version = "0.6", optional = true }
-
-cgmath = { version = "0.18", optional = true }
+gfx-hal = "0.7"
+gfx-backend-vulkan = { version = "0.7", optional = true }
+gfx-backend-metal = { version = "0.7", optional = true }
+gfx-backend-dx12 = { version = "0.7", optional = true }
+gfx-backend-empty = { version = "0.7", optional = true }
 
 [dev-dependencies]
 winit = "0.23"

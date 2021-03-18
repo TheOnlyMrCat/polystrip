@@ -1,20 +1,23 @@
+$opt default_positionals
+
 #- b
 make shaders
 cargo build --features metal
 #/
 
 #- r
-test $1 '!=' '' && cargo run --features metal --example $1
+METAL_DEVICE_WRAPPER_TYPE=1 ! Enable metal API validation
+cargo run --features metal --example $1
 #/
 
 #test
-cargo test --features metal
+cargo test --features empty
 #/
 
 #doc b!
-cargo doc
+cargo doc --features empty
 #/
 
 #doc
-cargo doc --open
+cargo doc --features empty --open
 #/
