@@ -1,3 +1,4 @@
 {
-	"rust.features": [ "empty" ]
+	"rust.features": [ "empty" ],
+	"rust-analyzer.cargo.features": [ "empty" ]
 }

@@ -1320,6 +1320,14 @@ impl Texture {
 		Self::_from_rgba(context.clone_context(), data, size)
 	}
 
+	/// Create a new texture with every pixel initialized to the given color.
+	/// 
+	/// # Arguments
+	/// * `size`: The size of the texture, in (width, height) order.
+	pub fn new_solid_color(context: &impl HasRenderer, color: Color, size: (u32, u32)) -> Texture {
+		Self::_solid_color(context.clone_context(), color, size)
+	}
+
 	fn _from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
 		let mut descriptor_set = unsafe { context.texture_descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
@@ -1489,6 +1497,127 @@ impl Texture {
 				GfxMemoryDevice::wrap(&context.device),
 				buf_block
 			);
+		}
+
+		Texture {
+			context,
+			image: ManuallyDrop::new(image),
+			view: ManuallyDrop::new(view),
+			sampler: ManuallyDrop::new(sampler),
+			descriptor_set: ManuallyDrop::new(descriptor_set),
+			memory_block: ManuallyDrop::new(img_block),
+			extent: gfx_hal::window::Extent2D { width, height },
+			fence: ManuallyDrop::new(RefCell::new(fence)),
+		}
+	}
+
+	fn _solid_color(context: Rc<Renderer>, color: Color, (width, height): (u32, u32)) -> Texture {
+		let mut descriptor_set = unsafe { context.texture_descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout) }.unwrap();
+		let memory_device = GfxMemoryDevice::wrap(&context.device);
+
+		let mut image = unsafe { context.device.create_image(
+			gfx_hal::image::Kind::D2(width, height, 1, 1),
+			1,
+			gfx_hal::format::Format::Rgba8Srgb,
+			gfx_hal::image::Tiling::Optimal,
+			gfx_hal::image::Usage::TRANSFER_SRC | gfx_hal::image::Usage::TRANSFER_DST | gfx_hal::image::Usage::SAMPLED,
+			gfx_hal::image::ViewCapabilities::MUTABLE_FORMAT,
+		)}.unwrap();
+		let img_req = unsafe { context.device.get_image_requirements(&image) };
+		let img_block = unsafe { context.allocator.borrow_mut().alloc(
+			memory_device,
+			Request {
+				size: img_req.size,
+				align_mask: img_req.alignment,
+				memory_types: img_req.type_mask,
+				usage: UsageFlags::FAST_DEVICE_ACCESS,
+			}
+		)}.unwrap();
+
+		unsafe {
+			context.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
+		}
+
+		let view = unsafe { context.device.create_image_view(
+			&image,
+			gfx_hal::image::ViewKind::D2,
+			gfx_hal::format::Format::Bgra8Srgb,
+			gfx_hal::format::Swizzle(gfx_hal::format::Component::B, gfx_hal::format::Component::G, gfx_hal::format::Component::R, gfx_hal::format::Component::A),
+			gfx_hal::image::SubresourceRange {
+				aspects: gfx_hal::format::Aspects::COLOR,
+				level_start: 0,
+				level_count: None,
+				layer_start: 0,
+				layer_count: None,
+			},
+		)}.unwrap();
+
+		let sampler = unsafe { context.device.create_sampler(&gfx_hal::image::SamplerDesc::new(gfx_hal::image::Filter::Nearest, gfx_hal::image::WrapMode::Tile)) }.unwrap();
+
+		unsafe {
+			context.device.write_descriptor_set(gfx_hal::pso::DescriptorSetWrite {
+				set: &mut descriptor_set,
+				binding: 0,
+				array_offset: 0,
+				descriptors: iter![
+					gfx_hal::pso::Descriptor::Image(&view, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					gfx_hal::pso::Descriptor::Sampler(&sampler),
+				]
+			});
+		}
+
+		let mut fence = context.device.create_fence(false).unwrap();
+		unsafe {
+			let mut command_buffer = context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
+						..
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+			command_buffer.clear_image(
+				&image,
+				gfx_hal::image::Layout::TransferDstOptimal,
+				gfx_hal::command::ClearValue {
+					color: gfx_hal::command::ClearColor {
+						float32: [
+							(color.r as f32).powi(2) / 65_025.0,
+							(color.g as f32).powi(2) / 65_025.0,
+							(color.b as f32).powi(2) / 65_025.0,
+							color.a as f32 / 255.0,
+						]
+					}
+				},
+				iter![gfx_hal::image::SubresourceRange {
+					aspects: gfx_hal::format::Aspects::COLOR,
+					level_start: 0,
+					level_count: None,
+					layer_start: 0,
+					layer_count: None,
+				}]
+			);
+
+			command_buffer.finish();
+
+			context.queue_groups.borrow_mut()[0].queues[0].submit(iter![&command_buffer], iter![], iter![], Some(&mut fence));
+			context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+
+			context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
 		}
 
 		Texture {

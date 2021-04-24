@@ -8,7 +8,7 @@ use winit::window::WindowBuilder;
 fn main() {
 	let el = EventLoop::new();
 	let window = WindowBuilder::new()
-		.with_title("Textures")
+		.with_title("Polystrip example (textures)")
 		.build(&el).unwrap();
 
 	let size = window.inner_size().to_logical(window.scale_factor());
@@ -17,8 +17,6 @@ fn main() {
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
-
-	assert_eq!(*sandstone_img, *sandstone.get_data());
 
 	let mut matrices = Vec::new();
 	for y in 0..10 {
