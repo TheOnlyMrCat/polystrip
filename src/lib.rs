@@ -752,7 +752,7 @@ impl Default for RendererBuilder {
 pub struct WindowTarget {
 	pub context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
-	framebuffer: ManuallyDrop<backend::Framebuffer>,
+	framebuffers: Vec<ManuallyDrop<backend::Framebuffer>>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
 	extent: Rc<Cell<gfx_hal::window::Extent2D>>,
 	depth_texture: DepthTexture,
@@ -790,7 +790,7 @@ impl WindowTarget {
 
 		let depth_texture = DepthTexture::new(context.clone(), swapchain_config.extent);
 
-		let framebuffer = unsafe { context.device.create_framebuffer(
+		let framebuffers = (0..context.frames_in_flight).map(|_| ManuallyDrop::new(unsafe { context.device.create_framebuffer(
 			&context.render_pass,
 			iter![
 				gfx_hal::image::FramebufferAttachment {
@@ -805,12 +805,12 @@ impl WindowTarget {
 				}
 			],
 			swapchain_config.extent.to_extent()
-		)}.unwrap();
+		)}.unwrap())).collect();
 
 		WindowTarget {
 			context,
 			surface: ManuallyDrop::new(surface),
-			framebuffer: ManuallyDrop::new(framebuffer),
+			framebuffers,
 			swapchain_config,
 			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
 			depth_texture,
@@ -876,7 +876,7 @@ impl WindowTarget {
 
 			command_buffer.begin_render_pass(
 				&self.context.render_pass,
-				&self.framebuffer,
+				&self.framebuffers[frame_idx],
 				viewport.rect,
 				iter![
 					gfx_hal::command::RenderAttachmentInfo {
@@ -926,7 +926,7 @@ impl WindowTarget {
 	}
 
 	fn reconfigure_swapchain(&mut self) {
-		self.framebuffer = ManuallyDrop::new(unsafe { self.context.device.create_framebuffer(
+		self.framebuffers = (0..self.context.frames_in_flight).map(|_| ManuallyDrop::new(unsafe { self.context.device.create_framebuffer(
 			&self.context.render_pass,
 			iter![
 				gfx_hal::image::FramebufferAttachment {
@@ -941,7 +941,7 @@ impl WindowTarget {
 				}
 			],
 			self.extent.get().to_extent()
-		)}.unwrap());
+		)}.unwrap())).collect();
 		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
 	}
 	
