@@ -6,12 +6,12 @@ cargo build --features metal
 #/
 
 #- r
-METAL_DEVICE_WRAPPER_TYPE=1 ! Enable metal API validation
+METAL_DEVICE_WRAPPER_TYPE=1 ! Enable metal API validation.
 cargo run --features metal --example $1
 #/
 
 #test
-cargo test --features empty
+cargo test --features metal --all-targets --no-fail-fast
 #/
 
 #doc b!

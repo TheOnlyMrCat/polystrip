@@ -195,8 +195,8 @@ impl Renderer {
 					format: Some(gfx_hal::format::Format::Bgra8Srgb),
 					samples: 1,
 					ops: gfx_hal::pass::AttachmentOps {
-						load: gfx_hal::pass::AttachmentLoadOp::Clear,
-						store: gfx_hal::pass::AttachmentStoreOp::DontCare,
+						load: gfx_hal::pass::AttachmentLoadOp::Load,
+						store: gfx_hal::pass::AttachmentStoreOp::Store,
 					},
 					stencil_ops: gfx_hal::pass::AttachmentOps::DONT_CARE,
 					layouts: gfx_hal::image::Layout::Undefined..gfx_hal::image::Layout::Present,
@@ -1019,6 +1019,7 @@ impl<'a> RenderTarget<'a> for WindowTarget {
 /// 
 /// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
 pub trait RenderDrop<'a> {
+	fn finalize(&mut self, context: &Renderer, frame_idx: usize);
 	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
 }
 
@@ -1032,6 +1033,10 @@ pub struct WindowFrame<'a> {
 }
 
 impl<'a> RenderDrop<'a> for WindowFrame<'a> {
+	fn finalize(&mut self, _context: &Renderer, _frame_idx: usize) {
+		// Nothing to finalize
+	}
+
 	fn cleanup(&mut self, context: &Renderer, frame_idx: usize) {
 		if !std::thread::panicking() {
 			unsafe {
@@ -1267,6 +1272,15 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2::new((x * 2) as f32 / self.viewport.rect.w as f32 - 1.0, -((y * 2) as f32 / self.viewport.rect.h as f32 - 1.0))
 	}
+
+	/// Consumes and presents this frame. Equivalent to `std::mem::drop(self)`
+	///
+	/// Calling this method is **NOT** required for the `Frame` to present. The frame will present on drop.
+	/// This method exists to make presentation within a scope more explicit than introducing a sub-scope or
+	/// using [`std::mem::drop`]
+	pub fn present(self) {
+		// Consumes self, so it will drop (and therefore present) at the end of this method
+	}
 }
 
 impl<'a, T: RenderDrop<'a>> HasRenderer for Frame<'a, T> {
@@ -1277,7 +1291,9 @@ impl<'a, T: RenderDrop<'a>> HasRenderer for Frame<'a, T> {
 
 impl<'a, T: RenderDrop<'a>> Drop for Frame<'a, T> {
 	fn drop(&mut self) {
-		unsafe {		
+		self.resources.finalize(&self.context, self.frame_idx);
+
+		unsafe {
 			let mut command_buffer = self.context.render_command_buffers[self.frame_idx].borrow_mut();
 			command_buffer.end_render_pass();
 			command_buffer.finish();
@@ -1611,6 +1627,25 @@ impl Texture {
 					layer_count: None,
 				}]
 			);
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..
+						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					target: &image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
 
 			command_buffer.finish();
 
@@ -1737,7 +1772,7 @@ impl Texture {
 
 		let size = buf_req.size as usize;
 		//TODO: replace with Box::new_uninit_slice when stabilised
-		let mut mem = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(std::alloc::alloc(std::alloc::Layout::array::<u8>(size).expect("Array allocation size overflow")), size) as *mut [u8]) };
+		let mut mem = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(std::alloc::alloc(std::alloc::Layout::array::<u8>(size).expect("Array allocation size overflow")), (self.extent.width * self.extent.height) as usize * 4) as *mut [u8]) };
 
 		unsafe {
 			buf_block.read_bytes(memory_device, 0, &mut mem).unwrap();
@@ -1751,6 +1786,12 @@ impl Texture {
 	/// Converts pixel coordinates to texture space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2::new(x as f32 / self.extent.width as f32, y as f32 / self.extent.height as f32)
+	}
+
+	/// Creates a `PixelTranslator` for this `Texture`, because textures use screen space coords when being rendered to,
+	/// not texture space
+	pub fn pixel_translator(&self) -> PixelTranslator {
+		PixelTranslator::new(Rc::new(Cell::new(self.extent)))
 	}
 }
 
@@ -1836,6 +1877,26 @@ impl<'a> RenderTarget<'a> for Texture {
 				],
 				gfx_hal::command::SubpassContents::Inline
 			);
+
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
+						..
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal),
+					target: &*self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
 		}
 
 		Frame::new(
@@ -1844,7 +1905,7 @@ impl<'a> RenderTarget<'a> for Texture {
 			TextureFrame {
 				framebuffer: ManuallyDrop::new(framebuffer),
 				depth_texture,
-				_marker: std::marker::PhantomData,
+				image: &self.image,
 			},
 			viewport
 		)
@@ -1871,10 +1932,34 @@ pub struct TextureFrame<'a> {
 	framebuffer: ManuallyDrop<backend::Framebuffer>,
 	#[allow(dead_code)] // Must be kept alive while the framebuffer is still using its ImageView.
 	depth_texture: DepthTexture,
-	_marker: std::marker::PhantomData<&'a backend::ImageView>,
+	image: &'a backend::Image,
 }
 
 impl<'a> RenderDrop<'a> for TextureFrame<'a> {
+	fn finalize(&mut self, context: &Renderer, frame_idx: usize) {
+		unsafe {
+			context.render_command_buffers[frame_idx].borrow_mut().pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal)
+						..
+						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					target: self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+		}
+	}
+
 	fn cleanup(&mut self, context: &Renderer, _frame_idx: usize) {
 		unsafe {
 			context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));

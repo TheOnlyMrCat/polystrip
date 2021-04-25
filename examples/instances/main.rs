@@ -20,7 +20,7 @@ fn main() {
 
 	let mut matrices = Vec::new();
 	for y in 0..10 {
-		for x in 0..16 {
+		for x in 0..10 {
 			matrices.push(Matrix4::translate(pixel_translator.pixel_offset(x * 100, y * 100)))
 		}
 	}
@@ -58,4 +58,45 @@ fn main() {
 			_ => {}
 		}
 	});
+}
+
+#[cfg(test)]
+#[test]
+fn instanced_drawing() {
+	use polystrip::RenderTarget;
+
+	let expected_output = image::load_from_memory(include_bytes!("expected.png")).unwrap().to_rgba();
+	let renderer = Renderer::new().wrap();
+	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
+	let pixel_translator = texture.pixel_translator();
+
+	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
+	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
+
+	let mut matrices = Vec::new();
+	for y in 0..10 {
+		for x in 0..10 {
+			matrices.push(Matrix4::translate(pixel_translator.pixel_offset(x * 100, y * 100)))
+		}
+	}
+
+	let mut frame = texture.create_frame();
+	frame.draw_textured(TexturedShape {
+		vertices: &[
+			TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
+			TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
+			TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
+			TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
+		],
+		indices: &[
+			[0, 1, 3],
+			[1, 2, 3],
+		]
+	}, &sandstone, &matrices);
+	frame.present();
+
+	assert_eq!(
+		*texture.get_data(),
+		*expected_output
+	);
 }

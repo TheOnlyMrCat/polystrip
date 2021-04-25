@@ -63,6 +63,7 @@ pub struct Color {
 }
 
 impl Color {
+	pub const ZERO: Color    = Color::new( 0 ,  0 ,  0 ,  0 );
 	pub const RED: Color     = Color::new(255,  0 ,  0 , 255);
 	pub const YELLOW: Color  = Color::new(255, 255,  0 , 255);
 	pub const GREEN: Color   = Color::new( 0 , 255,  0 , 255);
@@ -140,10 +141,9 @@ pub struct ColoredShape<'a> {
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
 /// 
 /// The color of the shape is determined by interpolating the texture coordinates at each
-/// [`TextureVertex`](struct.TextureVertex).
-/// 
-/// A `TexturedShape` does not store the texture it is to draw. This must be specified in the
-/// arguments to [`Frame::draw_textured`](../renderer/struct.Frame#method.draw_textured)
+/// [`TextureVertex`](struct.TextureVertex), and sampling the [`Texture`](../struct.Texture)
+/// provided to the [`Frame::draw_textured`](../struct.Frame#method.draw_textured) call this shape
+/// is drawn with
 #[derive(Clone, Copy, Debug)]
 pub struct TexturedShape<'a> {
 	pub vertices: &'a [TextureVertex],
