@@ -39,48 +39,48 @@ fn render_frame<'a, T: RenderDrop<'a>>(frame: &mut Frame<'a, T>) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(
 		StrokedShape {
-			vertices: &[
+			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::WHITE },
 				ColorVertex { position: Vector3::new(-0.375, 0.125, 1.0), color: Color::WHITE },
 				ColorVertex { position: Vector3::new(-0.25, -0.5, 1.0), color: Color::WHITE },
 				ColorVertex { position: Vector3::new(0.25, -0.5, 1.0), color: Color::WHITE },
 				ColorVertex { position: Vector3::new(0.375, 0.125, 1.0), color: Color::WHITE },
-			],
-			indices: &[
+			][..].into(),
+			indices: [
 				[0, 1], [0, 2], [0, 3], [0, 4],
 				[1, 2], [1, 3], [1, 4],
 				[2, 3], [2, 4],
 				[3, 4],
-			]
+			][..].into()
 		},
 		&[Matrix4::translate(Vector2::new(0.5, 0.0))]
 	);
 	frame.draw_colored(
 		ColoredShape {
-			vertices: &[
+			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
 				ColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
 				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
 				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
 				ColorVertex { position: Vector3::new(0.375, 0.125, 0.0), color: Color::MAGENTA },
-			],
+			][..].into(),
 			// Note the vertices are specified going counter-clockwise
-			indices: &[
+			indices: [
 				[0, 1, 4],
 				[1, 2, 4],
 				[2, 3, 4],
-			]
+			][..].into()
 		},
 		&[Matrix4::translate(Vector2::new(0.5, 0.0))]
 	);
 	frame.draw_colored(
 		ColoredShape {
-			vertices: &[
+			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
 				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
 				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
-			],
-			indices: &[[0, 1, 2]]
+			][..].into(),
+			indices: [[0, 1, 2]][..].into()
 		},
 		&[Matrix4::translate(Vector2::new(-0.5, 0.0))]
 	);

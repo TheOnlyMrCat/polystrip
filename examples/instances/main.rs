@@ -43,16 +43,16 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(TexturedShape {
-					vertices: &[
+					vertices: [
 						TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
 						TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
 						TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
 						TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
-					],
-					indices: &[
+					][..].into(),
+					indices: [
 						[0, 1, 3],
 						[1, 2, 3],
-					]
+					][..].into()
 				}, &sandstone, &matrices);
 			},
 			_ => {}
@@ -82,16 +82,16 @@ fn instanced_drawing() {
 
 	let mut frame = texture.create_frame();
 	frame.draw_textured(TexturedShape {
-		vertices: &[
+		vertices: [
 			TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
 			TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
 			TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
 			TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
-		],
-		indices: &[
+		][..].into(),
+		indices: [
 			[0, 1, 3],
 			[1, 2, 3],
-		]
+		][..].into()
 	}, &sandstone, &matrices);
 	frame.present();
 

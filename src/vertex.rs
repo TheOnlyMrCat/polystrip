@@ -14,6 +14,11 @@
 //! `(0.0, 0.0)` is the top-left corner
 //! `(1.0, 1.0)` is the bottom-right corner
 
+use std::borrow::Cow;
+use std::ops::{Deref, DerefMut};
+
+pub const QUAD_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
+
 /// A vertex describing a position and a position on a texture.
 /// 
 /// Texture coordinates are interpolated linearly between vertices.
@@ -120,22 +125,22 @@ impl ColorVertex {
 ///
 /// The colors of the lines are determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct StrokedShape<'a> {
-	pub vertices: &'a [ColorVertex],
+	pub vertices: Cow<'a, [ColorVertex]>,
 	/// A list of pairs of vertices which specify which vertices should have lines drawn between them
-	pub indices: &'a [[u16; 2]],
+	pub indices: Cow<'a, [[u16; 2]]>,
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
 ///
 /// The color of the shape is determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
-#[derive(Clone, Copy, Debug)]
-pub struct ColoredShape<'a> {
-	pub vertices: &'a [ColorVertex],
+#[derive(Clone, Debug)]
+pub struct ColoredShape<'v, 'i> {
+	pub vertices: Cow<'v, [ColorVertex]>,
 	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: &'a [[u16; 3]], //TODO: Work out if it should need to be CCW or not
+	pub indices: Cow<'i, [[u16; 3]]>,
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
@@ -144,11 +149,35 @@ pub struct ColoredShape<'a> {
 /// [`TextureVertex`](struct.TextureVertex), and sampling the [`Texture`](../struct.Texture)
 /// provided to the [`Frame::draw_textured`](../struct.Frame#method.draw_textured) call this shape
 /// is drawn with
-#[derive(Clone, Copy, Debug)]
-pub struct TexturedShape<'a> {
-	pub vertices: &'a [TextureVertex],
+#[derive(Clone, Debug)]
+pub struct TexturedShape<'v, 'i> {
+	pub vertices: Cow<'v, [TextureVertex]>,
 	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
-	pub indices: &'a [[u16; 3]], //TODO: As above
+	pub indices: Cow<'i, [[u16; 3]]>,
+}
+
+impl TexturedShape<'_, '_> {
+	/// A quad rendering the full texture, the top two points being at height 1, the bottom two at height 0
+	pub const QUAD_FULL_STANDING: TexturedShape<'static, 'static> = TexturedShape {
+		vertices: Cow::Borrowed(&[
+			TextureVertex { position: Vector3::new(0., 0., 1.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 1.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
+		]),
+		indices: Cow::Borrowed(&QUAD_INDICES),
+	};
+		
+	/// A quad rendering the full texture, all points at height 0
+	pub const QUAD_FULL_FLAT: TexturedShape<'static, 'static> = TexturedShape {
+		vertices: Cow::Borrowed(&[
+			TextureVertex { position: Vector3::new(0., 0., 0.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 0.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
+		]),
+		indices: Cow::Borrowed(&QUAD_INDICES),
+	};
 }
 
 /// A rectangle in pixel coordinates. (x, y) is the top-left corner; (w, h) expanding rightward and downward.
@@ -166,8 +195,6 @@ impl Rect {
 	}
 }
 
-use std::ops::{Deref, DerefMut};
-
 /// A 2D vector in screen space
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
@@ -177,12 +204,12 @@ unsafe impl bytemuck::Zeroable for Vector2 {}
 unsafe impl bytemuck::Pod for Vector2 {}
 
 impl Vector2 {
-	pub fn new(x: f32, y: f32) -> Vector2 {
+	pub const fn new(x: f32, y: f32) -> Vector2 {
 		Vector2(mint::Vector2 { x, y })
 	}
 
-	pub fn with_height(self, height: f32) -> Vector3 {
-		Vector3(mint::Vector3 { x: self.x, y: self.y, z: height	})
+	pub const fn with_height(self, height: f32) -> Vector3 {
+		Vector3(mint::Vector3 { x: self.0.x, y: self.0.y, z: height	})
 	}
 }
 
@@ -240,7 +267,7 @@ unsafe impl bytemuck::Zeroable for Vector3 {}
 unsafe impl bytemuck::Pod for Vector3 {}
 
 impl Vector3 {
-	pub fn new(x: f32, y: f32, z: f32) -> Vector3 {
+	pub const fn new(x: f32, y: f32, z: f32) -> Vector3 {
 		Vector3(mint::Vector3 { x, y, z })
 	}
 }

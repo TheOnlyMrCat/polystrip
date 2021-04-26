@@ -12,8 +12,8 @@
 //! An example with `winit` is available in the documentation for `WindowTarget`.
 
 pub(crate) mod backend;
-pub mod vertex;
 pub mod pixel;
+pub mod vertex;
 
 pub use gpu_alloc;
 
@@ -1144,7 +1144,7 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
@@ -1182,8 +1182,8 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape<'_>, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+	pub fn draw_colored(&mut self, shape: ColoredShape, obj_transforms: &[Matrix4]) {
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
@@ -1221,12 +1221,12 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_textured(&mut self, shape: TexturedShape<'_>, texture: &'a Texture, obj_transforms: &[Matrix4]) {
+	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a Texture, obj_transforms: &[Matrix4]) {
 		if !Rc::ptr_eq(&self.context, &texture.context) {
 			panic!("Texture was not made with renderer that made this frame");
 		}
 
-		self.create_staging_buffers(bytemuck::cast_slice(shape.vertices), bytemuck::cast_slice(shape.indices));
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();

@@ -35,20 +35,20 @@ fn main() {
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame();
 				frame.draw_colored(ColoredShape {
-					vertices: &pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color::RED),
-					indices: &RECT_INDICES,
+					vertices: pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color::RED)[..].into(),
+					indices: RECT_INDICES[..].into(),
 				}, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
-					vertices: &pixel_translator.textured_rect(Rect { x: 70, y: 200, w: 80, h: 120 }),
-					indices: &RECT_INDICES,
+					vertices: pixel_translator.textured_rect(Rect { x: 70, y: 200, w: 80, h: 120 })[..].into(),
+					indices: RECT_INDICES[..].into(),
 				}, &sandstone, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
-					vertices: &pixel_translator.texture_scaled(&player, 70, 200, 6.0),
-					indices: &RECT_INDICES,
+					vertices: pixel_translator.texture_scaled(&player, 70, 200, 6.0)[..].into(),
+					indices: RECT_INDICES[..].into(),
 				}, &player, &[Matrix4::identity()]);
 				frame.draw_textured(TexturedShape {
-					vertices: &pixel_translator.texture_scaled_cropped(&sandstone, Rect { x: 160, y: 200, w: 70, h: 160 }, Rect { x: 7, y: 0, w: 7, h: 16 }),
-					indices: &RECT_INDICES,
+					vertices: pixel_translator.texture_scaled_cropped(&sandstone, Rect { x: 160, y: 200, w: 70, h: 160 }, Rect { x: 7, y: 0, w: 7, h: 16 })[..].into(),
+					indices: RECT_INDICES[..].into(),
 				}, &sandstone, &[Matrix4::identity()]);
 			},
 			_ => {}
