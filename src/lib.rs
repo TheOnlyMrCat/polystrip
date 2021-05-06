@@ -1221,11 +1221,9 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 
 	/// Draws a [`TexturedShape`](vertex/struct.TexturedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_textured(&mut self, shape: TexturedShape, texture: &'a Texture, obj_transforms: &[Matrix4]) {
-		if !Rc::ptr_eq(&self.context, &texture.context) {
-			panic!("Texture was not made with renderer that made this frame");
-		}
-
+	///
+	/// `iterations` is a slice of texture references and matrices to draw that texture with.
+	pub fn draw_textured(&mut self, shape: TexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
 		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.context.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
@@ -1241,12 +1239,6 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			);
 			
 			command_buffer.bind_graphics_pipeline(&self.context.texture_graphics_pipeline);
-			command_buffer.bind_graphics_descriptor_sets(
-				&self.context.texture_graphics_pipeline_layout,
-				0,
-				iter![&*texture.descriptor_set],
-				iter![],
-			);
 			command_buffer.push_graphics_constants(
 				&self.context.texture_graphics_pipeline_layout,
 				gfx_hal::pso::ShaderStageFlags::VERTEX,
@@ -1255,15 +1247,30 @@ impl<'a, T: RenderDrop<'a>> Frame<'a, T> {
 			);
 		}
 
-		for chunk in obj_transforms.chunks(self.context.matrix_array_size as usize) {
+		for (texture, obj_transforms) in iterations {
+			if !Rc::ptr_eq(&self.context, &texture.context) {
+				panic!("Texture was not made with renderer that made this frame");
+			}
+			
 			unsafe {
-				command_buffer.push_graphics_constants(
+				command_buffer.bind_graphics_descriptor_sets(
 					&self.context.texture_graphics_pipeline_layout,
-					gfx_hal::pso::ShaderStageFlags::VERTEX,
-					std::mem::size_of::<Matrix4>() as u32,
-					bytemuck::cast_slice(&chunk),
+					0,
+					iter![&*texture.descriptor_set],
+					iter![],
 				);
-				command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
+			}
+
+			for chunk in obj_transforms.chunks(self.context.matrix_array_size as usize) {
+				unsafe {
+					command_buffer.push_graphics_constants(
+						&self.context.texture_graphics_pipeline_layout,
+						gfx_hal::pso::ShaderStageFlags::VERTEX,
+						std::mem::size_of::<Matrix4>() as u32,
+						bytemuck::cast_slice(&chunk),
+					);
+					command_buffer.draw_indexed(0..shape.indices.len() as u32 * 3, 0, 0..chunk.len() as u32);
+				}
 			}
 		}
 	}
