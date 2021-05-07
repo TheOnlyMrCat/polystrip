@@ -1,3 +1,9 @@
+# 0.7
+## 0
+- Allow textures to be created from a solid colour
+- Use `Cow`s in `*Shape`s
+- Allow multiple textures to be rendered to one `TexturedShape` in the same rendering call
+
 # 0.6
 ## 0
 - Update `gfx-hal` to 0.7

@@ -126,8 +126,6 @@ fn instanced_drawing() {
 	);
 	frame.present();
 
-	image::ImageBuffer::<image::Rgba<_>, _>::from_raw(1100, 1100, texture.get_data()).unwrap().save("expected.png").unwrap();
-
 	assert_eq!(
 		*texture.get_data(),
 		*expected_output

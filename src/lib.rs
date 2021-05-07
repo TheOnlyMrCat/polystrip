@@ -643,6 +643,22 @@ impl HasRenderer for Rc<Renderer> {
 	}
 }
 
+/// Can be rendered to by a `Frame`
+pub trait RenderTarget<'a> {
+	type FrameDrop: RenderDrop<'a>;
+
+	fn create_frame(&'a mut self) -> Frame<Self::FrameDrop>;
+}
+
+
+/// Cleanup for a `RenderTarget`.
+/// 
+/// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
+pub trait RenderDrop<'a> {
+	fn finalize(&mut self, context: &Renderer, frame_idx: usize);
+	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
+}
+
 pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
 	gpu_alloc::Config::i_am_prototyping() //TODO: Choose sensible defaults
 }
@@ -1000,27 +1016,12 @@ impl Drop for WindowTarget {
 	}
 }
 
-/// Can be rendered to by a `Frame`
-pub trait RenderTarget<'a> {
-	type FrameDrop: RenderDrop<'a>;
-
-	fn create_frame(&'a mut self) -> Frame<Self::FrameDrop>;
-}
-
 impl<'a> RenderTarget<'a> for WindowTarget {
 	type FrameDrop = WindowFrame<'a>;
 
 	fn create_frame(&'a mut self) -> Frame<WindowFrame<'a>> {
 		self.next_frame()
 	}
-}
-
-/// Cleanup for a `RenderTarget`.
-/// 
-/// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
-pub trait RenderDrop<'a> {
-	fn finalize(&mut self, context: &Renderer, frame_idx: usize);
-	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
 }
 
 /// Implementation detail of the `RenderTarget` system.
