@@ -17,7 +17,7 @@ pub mod vertex;
 
 pub use gpu_alloc;
 
-use std::cell::{Cell, RefCell};
+use std::{cell::{Cell, RefCell}, ops::Deref};
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -644,10 +644,8 @@ impl HasRenderer for Rc<Renderer> {
 }
 
 /// Can be rendered to by a `Frame`
-pub trait RenderTarget<'a> {
-	type FrameDrop: RenderDrop<'a>;
-
-	fn create_frame(&'a mut self) -> Frame<Self::FrameDrop>;
+pub trait RenderTarget {
+	fn create_frame(&mut self) -> BaseFrame<'_>;
 }
 
 
@@ -657,6 +655,15 @@ pub trait RenderTarget<'a> {
 pub trait RenderDrop<'a> {
 	fn finalize(&mut self, context: &Renderer, frame_idx: usize);
 	fn cleanup(&mut self, context: &Renderer, frame_idx: usize);
+}
+
+pub trait RenderPipeline<'a> {
+	type Frame: RenderFrame<'a>;
+	fn create_frame(&'a self, image: &'a backend::ImageView, viewport: gfx_hal::pso::Viewport, resources: Box<dyn RenderDrop>) -> Self::Frame;
+}
+
+pub trait RenderFrame<'a> {
+	
 }
 
 pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
@@ -835,17 +842,17 @@ impl WindowTarget {
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
 	/// previous frame. This `Renderer` is borrowed mutably while the `Frame` is alive.
-	pub fn next_frame(&mut self) -> Frame<'_, WindowFrame> {
+	pub fn next_frame(&mut self) -> BaseFrame<'_> {
 		let image = self.acquire_image();
-		self.generate_frame(image, None)
+		self.generate_frame(image)
 	}
 
-	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will be cleared to the specified
-	/// `clear_color` (converted from sRGB with a gamma of 2.0). This `Renderer` is borrowed mutably while the `Frame` is alive
-	pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_, WindowFrame> {
-		let image = self.acquire_image();
-		self.generate_frame(image, Some(clear_color))
-	}
+	// /// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will be cleared to the specified
+	// /// `clear_color` (converted from sRGB with a gamma of 2.0). This `Renderer` is borrowed mutably while the `Frame` is alive
+	// pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_, WindowFrame> {
+	// 	let image = self.acquire_image();
+	// 	self.generate_frame(image, Some(clear_color))
+	// }
 
 
 	fn acquire_image(&mut self) -> backend::SwapchainImage {
@@ -862,7 +869,7 @@ impl WindowTarget {
 		}
 	}
 
-	fn generate_frame(&mut self, image: backend::SwapchainImage, clear_colour: Option<Color>) -> Frame<'_, WindowFrame> {
+	fn generate_frame(&mut self, image: backend::SwapchainImage) -> BaseFrame<'_> {
 		use std::borrow::Borrow;
 
 		let viewport = gfx_hal::pso::Viewport {
@@ -899,18 +906,7 @@ impl WindowTarget {
 						image_view: image.borrow(),
 						clear_value: gfx_hal::command::ClearValue {
 							color: gfx_hal::command::ClearColor {
-								float32:
-								if let Some(clear_colour) = clear_colour {[
-									(clear_colour.r as f32).powi(2) / 65_025.0,
-									(clear_colour.g as f32).powi(2) / 65_025.0,
-									(clear_colour.b as f32).powi(2) / 65_025.0,
-									clear_colour.a as f32 / 255.0,
-								]} else {[
-									0.0,
-									0.0,
-									0.0,
-									0.0,
-								]}
+								float32:[0.0, 0.0, 0.0, 0.0,]
 							}
 						}
 					},
@@ -930,14 +926,22 @@ impl WindowTarget {
 
 		std::mem::drop(command_buffer);
 
-		Frame::new(
-			self.context.clone(),
-			frame_idx,
+		let depth_texture_view = &*self.depth_texture.view;
+		let framebuffer = &self.framebuffers[frame_idx];
+
+		BaseFrame::new(
 			WindowFrame {
 				surface: &mut self.surface,
 				swap_chain_frame: ManuallyDrop::new(image),
 			},
-			viewport,
+			|drop | {
+				FrameResources {
+					image: (*drop.swap_chain_frame).borrow(),
+					depth_texture: depth_texture_view,
+					framebuffer,
+					viewport,
+				}
+			}
 		)
 	}
 
@@ -1016,19 +1020,13 @@ impl Drop for WindowTarget {
 	}
 }
 
-impl<'a> RenderTarget<'a> for WindowTarget {
-	type FrameDrop = WindowFrame<'a>;
-
-	fn create_frame(&'a mut self) -> Frame<WindowFrame<'a>> {
+impl RenderTarget for WindowTarget {
+	fn create_frame(&mut self) -> BaseFrame<'_> {
 		self.next_frame()
 	}
 }
 
-/// Implementation detail of the `RenderTarget` system.
-/// 
-/// See [`Frame`]
-#[doc(hidden)]
-pub struct WindowFrame<'a> {
+struct WindowFrame<'a> {
 	surface: &'a mut backend::Surface,
 	swap_chain_frame: ManuallyDrop<<backend::Surface as gfx_hal::window::PresentationSurface<backend::Backend>>::SwapchainImage>,
 }
@@ -1065,6 +1063,43 @@ impl RenderResource {
 	}
 }
 
+pub struct BaseFrame<'a> {
+	// SAFETY: To uphold safety guarantees for potential borrows in `resources`, this field must not be modified.
+	drop: Box<dyn RenderDrop<'a> + 'a>,
+	// SAFETY: To uphold safety guarantees for potential borrows from `drop`, this field must not outlive `drop`.
+	resources: FrameResources<'a>,
+}
+
+impl BaseFrame<'_> {
+	fn new<'a, 'b: 'a, D, F>(drop: D, resources: F) -> BaseFrame<'a>
+	where
+		D: RenderDrop<'a> + 'a + 'b,
+		F: FnOnce(&'b D) -> FrameResources<'b>
+	{
+		let dropbox = Box::new(drop);
+		let drop_reborrow = unsafe { &*(&*dropbox as *const D) };
+		let resolved_resources = resources(drop_reborrow);
+		BaseFrame {
+			drop: dropbox,
+			resources: resolved_resources,
+		}
+	}
+}
+
+impl<'a> Deref for BaseFrame<'a> {
+	type Target = FrameResources<'a>;
+
+	fn deref(&self) -> &FrameResources<'a> {
+		&self.resources
+	}
+}
+
+pub struct FrameResources<'a> {
+	image: &'a backend::ImageView,
+	depth_texture: &'a backend::ImageView,
+	framebuffer: &'a backend::Framebuffer,
+	viewport: gfx_hal::pso::Viewport,
+}
 /// A frame to be drawn to. The frame gets presented on drop.
 pub struct Frame<'a, T: RenderDrop<'a>> {
 	context: Rc<Renderer>,
@@ -1809,116 +1844,126 @@ impl HasRenderer for Texture {
 	}
 }
 
-impl<'a> RenderTarget<'a> for Texture {
-	type FrameDrop = TextureFrame<'a>;
+// pub struct TextureTarget<'a> {
+// 	texture: &'a mut Texture,
+// 	depth_texture: DepthTexture,
+// 	framebuffer: backend::Framebuffer,
+// }
 
-	fn create_frame(&'a mut self) -> Frame<'a, TextureFrame<'a>> {
-		let viewport = gfx_hal::pso::Viewport {
-			rect: gfx_hal::pso::Rect {
-				x: 0,
-				y: 0,
-				w: self.extent.width as i16,
-				h: self.extent.height as i16,
-			},
-			depth: 0.0..1.0,
-		};
+// impl RenderTarget for TextureTarget {
+// 	fn create_frame(&mut self) -> FrameResources<'_> {
+// 		let viewport = gfx_hal::pso::Viewport {
+// 			rect: gfx_hal::pso::Rect {
+// 				x: 0,
+// 				y: 0,
+// 				w: self.extent.width as i16,
+// 				h: self.extent.height as i16,
+// 			},
+// 			depth: 0.0..1.0,
+// 		};
 
-		let depth_texture = DepthTexture::new(self.context.clone(), self.extent);
+// 		let depth_texture = DepthTexture::new(self.context.clone(), self.extent);
 
-		let framebuffer = unsafe { self.context.device.create_framebuffer(
-			&self.context.render_pass,
-			iter![
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: gfx_hal::format::Format::Bgra8Srgb,
-				},
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: gfx_hal::format::Format::D32Sfloat,
-				}
-			],
-			self.extent.to_extent()
-		)}.unwrap();
+// 		let framebuffer = unsafe { self.context.device.create_framebuffer(
+// 			&self.context.render_pass,
+// 			iter![
+// 				gfx_hal::image::FramebufferAttachment {
+// 					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
+// 					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+// 					format: gfx_hal::format::Format::Bgra8Srgb,
+// 				},
+// 				gfx_hal::image::FramebufferAttachment {
+// 					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+// 					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+// 					format: gfx_hal::format::Format::D32Sfloat,
+// 				}
+// 			],
+// 			self.extent.to_extent()
+// 		)}.unwrap();
 
-		let frame_idx = self.context.wait_next_frame();
+// 		let frame_idx = self.context.wait_next_frame();
 
-		unsafe {
-			let mut fence = self.fence.borrow_mut();
-			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
-			self.context.device.reset_fence(&mut fence).unwrap();
-			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
-		}
-		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
+// 		unsafe {
+// 			let mut fence = self.fence.borrow_mut();
+// 			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+// 			self.context.device.reset_fence(&mut fence).unwrap();
+// 			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
+// 		}
+// 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
 
-		unsafe {
-			command_buffer.reset(false);
+// 		unsafe {
+// 			command_buffer.reset(false);
 
-			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+// 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 					
-			command_buffer.set_viewports(0, iter![viewport.clone()]);
-			command_buffer.set_scissors(0, iter![viewport.rect]);
+// 			command_buffer.set_viewports(0, iter![viewport.clone()]);
+// 			command_buffer.set_scissors(0, iter![viewport.rect]);
 
-			command_buffer.begin_render_pass(
-				&self.context.render_pass,
-				&framebuffer,
-				viewport.rect,
-				iter![
-					gfx_hal::command::RenderAttachmentInfo {
-						image_view: &*self.view,
-						clear_value: gfx_hal::command::ClearValue {
-							color: gfx_hal::command::ClearColor {
-								float32: [0.0, 0.0, 0.0, 0.0]
-							}
-						}
-					},
-					gfx_hal::command::RenderAttachmentInfo {
-						image_view: &*depth_texture.view,
-						clear_value: gfx_hal::command::ClearValue {
-							depth_stencil: gfx_hal::command::ClearDepthStencil {
-								depth: 0.0,
-								stencil: 0,
-							}
-						}
-					}
-				],
-				gfx_hal::command::SubpassContents::Inline
-			);
+// 			command_buffer.begin_render_pass(
+// 				&self.context.render_pass,
+// 				&framebuffer,
+// 				viewport.rect,
+// 				iter![
+// 					gfx_hal::command::RenderAttachmentInfo {
+// 						image_view: &*self.view,
+// 						clear_value: gfx_hal::command::ClearValue {
+// 							color: gfx_hal::command::ClearColor {
+// 								float32: [0.0, 0.0, 0.0, 0.0]
+// 							}
+// 						}
+// 					},
+// 					gfx_hal::command::RenderAttachmentInfo {
+// 						image_view: &*depth_texture.view,
+// 						clear_value: gfx_hal::command::ClearValue {
+// 							depth_stencil: gfx_hal::command::ClearDepthStencil {
+// 								depth: 0.0,
+// 								stencil: 0,
+// 							}
+// 						}
+// 					}
+// 				],
+// 				gfx_hal::command::SubpassContents::Inline
+// 			);
 
-			command_buffer.pipeline_barrier(
-				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-				gfx_hal::memory::Dependencies::empty(),
-				iter![gfx_hal::memory::Barrier::Image {
-					states:
-						(gfx_hal::image::Access::COLOR_ATTACHMENT_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
-						..
-						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal),
-					target: &*self.image,
-					range: gfx_hal::image::SubresourceRange {
-						aspects: gfx_hal::format::Aspects::COLOR,
-						level_start: 0,
-						level_count: None,
-						layer_start: 0,
-						layer_count: None,
-					},
-					families: None,
-				}]
-			);
-		}
+// 			command_buffer.pipeline_barrier(
+// 				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+// 				gfx_hal::memory::Dependencies::empty(),
+// 				iter![gfx_hal::memory::Barrier::Image {
+// 					states:
+// 						(gfx_hal::image::Access::COLOR_ATTACHMENT_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
+// 						..
+// 						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal),
+// 					target: &*self.image,
+// 					range: gfx_hal::image::SubresourceRange {
+// 						aspects: gfx_hal::format::Aspects::COLOR,
+// 						level_start: 0,
+// 						level_count: None,
+// 						layer_start: 0,
+// 						layer_count: None,
+// 					},
+// 					families: None,
+// 				}]
+// 			);
+// 		}
 
-		Frame::new(
-			self.context.clone(),
-			frame_idx,
-			TextureFrame {
-				framebuffer: ManuallyDrop::new(framebuffer),
-				depth_texture,
-				image: &self.image,
-			},
-			viewport
-		)
-	}
-}
+// 		FrameResources {
+// 			image: &*self.view,
+// 			&depth_texture,
+
+// 		}
+
+// 		Frame::new(
+// 			self.context.clone(),
+// 			frame_idx,
+// 			TextureFrame {
+// 				framebuffer: ManuallyDrop::new(framebuffer),
+// 				depth_texture,
+// 				image: &self.image,
+// 			},
+// 			viewport
+// 		)
+// 	}
+// }
 
 impl Drop for Texture {
 	fn drop(&mut self) {
