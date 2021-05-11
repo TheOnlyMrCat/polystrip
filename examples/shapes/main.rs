@@ -97,9 +97,11 @@ fn shapes() {
 
 	let expected_output = image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
+	let size_handle = RenderSize::new(640, 480);
+	let mut pipeline = StandardPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::BLACK, (640, 480));
 
-	render_frame(&mut texture.create_frame());
+	render_frame(&mut texture.create_frame().render_with(&mut pipeline));
 
 	assert_eq!(
 		*texture.get_data(),

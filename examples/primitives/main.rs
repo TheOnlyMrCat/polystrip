@@ -1,4 +1,4 @@
-use polystrip::{Renderer, Texture, WindowTarget};
+use polystrip::{RenderSize, Renderer, Texture, WindowTarget, pipeline::StandardPipeline};
 use polystrip::vertex::{Color, ColoredShape, Matrix4, Rect, TexturedShape};
 
 use winit::event::{Event, WindowEvent};
@@ -13,8 +13,10 @@ fn main() {
 		.with_title("Primitives")
 		.build(&el).unwrap();
 
-	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
+	let size = window.inner_size();
+	let size_handle = RenderSize::new(size.width, size.height);
+	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
@@ -33,7 +35,7 @@ fn main() {
 				renderer.resize((window_size.width, window_size.height));
 			},
 			Event::MainEventsCleared => {
-				let mut frame = renderer.next_frame();
+				let mut frame = renderer.next_frame().render_with(&mut pipeline);
 				frame.draw_colored(ColoredShape {
 					vertices: pixel_translator.colored_rect(Rect { x: 50, y: 50, w: 100, h: 60 }, Color::RED)[..].into(),
 					indices: RECT_INDICES[..].into(),

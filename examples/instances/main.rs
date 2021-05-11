@@ -1,4 +1,4 @@
-use polystrip::{Renderer, Texture, WindowTarget};
+use polystrip::{RenderSize, Renderer, Texture, WindowTarget, pipeline::StandardPipeline};
 use polystrip::vertex::{TexturedShape, TextureVertex, Color, Vector2, Matrix4};
 
 use winit::event::{Event, WindowEvent};
@@ -11,8 +11,10 @@ fn main() {
 		.with_title("Polystrip example (textures)")
 		.build(&el).unwrap();
 
-	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
+	let size = window.inner_size();
+	let size_handle = RenderSize::new(size.width, size.height);
+	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
@@ -53,7 +55,8 @@ fn main() {
 				}
 			},
 			Event::MainEventsCleared => {
-				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
+				let mut frame = renderer.next_frame().render_with(&mut pipeline);
+				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				frame.draw_textured(
 					TexturedShape {
 						vertices: [
@@ -85,6 +88,8 @@ fn instanced_drawing() {
 
 	let expected_output = image::load_from_memory(include_bytes!("expected.png")).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
+	let size_handle = RenderSize::new(1100, 1100);
+	let mut pipeline = StandardPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
 	let pixel_translator = texture.pixel_translator();
 
@@ -105,7 +110,7 @@ fn instanced_drawing() {
 		}
 	}
 
-	let mut frame = texture.create_frame();
+	let mut frame = texture.create_frame().render_with(&mut pipeline);
 	frame.draw_textured(
 		TexturedShape {
 			vertices: [

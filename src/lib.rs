@@ -216,11 +216,9 @@ pub trait RenderTarget {
 	fn create_frame(&mut self) -> BaseFrame<'_>;
 }
 
-/// Cleanup for a `RenderTarget`.
-/// 
-/// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
 pub trait RenderDrop<'a> {
-	fn finalize(&mut self, context: &Renderer, frame_idx: usize);
+	fn initialize(&mut self, context: &Renderer, command_buffer: &mut backend::CommandBuffer);
+	fn finalize(&mut self, context: &Renderer, command_buffer: &mut backend::CommandBuffer);
 	fn cleanup(&mut self, context: &Renderer, wait_semaphore: Option<&mut backend::Semaphore>);
 }
 
@@ -518,7 +516,11 @@ struct WindowFrame<'a> {
 }
 
 impl<'a> RenderDrop<'a> for WindowFrame<'a> {
-	fn finalize(&mut self, _context: &Renderer, _frame_idx: usize) {
+	fn initialize(&mut self, _context: &Renderer, _command_buffer: &mut backend::CommandBuffer) {
+		// Nothing to initialize
+	}
+
+	fn finalize(&mut self, _context: &Renderer, _command_buffer: &mut backend::CommandBuffer) {
 		// Nothing to finalize
 	}
 
@@ -564,8 +566,8 @@ impl<'a> BaseFrame<'a> {
 		pipeline.render_to(self)
 	}
 
-	pub unsafe fn drop_finalize(&mut self) {
-		self.drop.finalize(&self.context, todo!());
+	pub unsafe fn drop_finalize(&mut self, command_buffer: &mut backend::CommandBuffer) {
+		self.drop.finalize(&self.context, command_buffer);
 	}
 
 	pub unsafe fn drop_cleanup(&mut self, wait_semaphore: Option<&mut backend::Semaphore>) {
@@ -1089,126 +1091,33 @@ impl HasRenderer for Texture {
 	}
 }
 
-// pub struct TextureTarget<'a> {
-// 	texture: &'a mut Texture,
-// 	depth_texture: DepthTexture,
-// 	framebuffer: backend::Framebuffer,
-// }
+impl RenderTarget for Texture {
+	fn create_frame(&mut self) -> BaseFrame<'_> {
+		let viewport = gfx_hal::pso::Viewport {
+			rect: gfx_hal::pso::Rect {
+				x: 0,
+				y: 0,
+				w: self.extent.width as i16,
+				h: self.extent.height as i16,
+			},
+			depth: 0.0..1.0,
+		};
 
-// impl RenderTarget for TextureTarget {
-// 	fn create_frame(&mut self) -> FrameResources<'_> {
-// 		let viewport = gfx_hal::pso::Viewport {
-// 			rect: gfx_hal::pso::Rect {
-// 				x: 0,
-// 				y: 0,
-// 				w: self.extent.width as i16,
-// 				h: self.extent.height as i16,
-// 			},
-// 			depth: 0.0..1.0,
-// 		};
-
-// 		let depth_texture = DepthTexture::new(self.context.clone(), self.extent);
-
-// 		let framebuffer = unsafe { self.context.device.create_framebuffer(
-// 			&self.context.render_pass,
-// 			iter![
-// 				gfx_hal::image::FramebufferAttachment {
-// 					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
-// 					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-// 					format: gfx_hal::format::Format::Bgra8Srgb,
-// 				},
-// 				gfx_hal::image::FramebufferAttachment {
-// 					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
-// 					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-// 					format: gfx_hal::format::Format::D32Sfloat,
-// 				}
-// 			],
-// 			self.extent.to_extent()
-// 		)}.unwrap();
-
-// 		let frame_idx = self.context.wait_next_frame();
-
-// 		unsafe {
-// 			let mut fence = self.fence.borrow_mut();
-// 			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
-// 			self.context.device.reset_fence(&mut fence).unwrap();
-// 			self.context.device.reset_fence(&mut *self.context.render_fences[frame_idx].borrow_mut()).unwrap();
-// 		}
-// 		let mut command_buffer = self.context.render_command_buffers[frame_idx].borrow_mut();
-
-// 		unsafe {
-// 			command_buffer.reset(false);
-
-// 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
-					
-// 			command_buffer.set_viewports(0, iter![viewport.clone()]);
-// 			command_buffer.set_scissors(0, iter![viewport.rect]);
-
-// 			command_buffer.begin_render_pass(
-// 				&self.context.render_pass,
-// 				&framebuffer,
-// 				viewport.rect,
-// 				iter![
-// 					gfx_hal::command::RenderAttachmentInfo {
-// 						image_view: &*self.view,
-// 						clear_value: gfx_hal::command::ClearValue {
-// 							color: gfx_hal::command::ClearColor {
-// 								float32: [0.0, 0.0, 0.0, 0.0]
-// 							}
-// 						}
-// 					},
-// 					gfx_hal::command::RenderAttachmentInfo {
-// 						image_view: &*depth_texture.view,
-// 						clear_value: gfx_hal::command::ClearValue {
-// 							depth_stencil: gfx_hal::command::ClearDepthStencil {
-// 								depth: 0.0,
-// 								stencil: 0,
-// 							}
-// 						}
-// 					}
-// 				],
-// 				gfx_hal::command::SubpassContents::Inline
-// 			);
-
-// 			command_buffer.pipeline_barrier(
-// 				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-// 				gfx_hal::memory::Dependencies::empty(),
-// 				iter![gfx_hal::memory::Barrier::Image {
-// 					states:
-// 						(gfx_hal::image::Access::COLOR_ATTACHMENT_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
-// 						..
-// 						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal),
-// 					target: &*self.image,
-// 					range: gfx_hal::image::SubresourceRange {
-// 						aspects: gfx_hal::format::Aspects::COLOR,
-// 						level_start: 0,
-// 						level_count: None,
-// 						layer_start: 0,
-// 						layer_count: None,
-// 					},
-// 					families: None,
-// 				}]
-// 			);
-// 		}
-
-// 		FrameResources {
-// 			image: &*self.view,
-// 			&depth_texture,
-
-// 		}
-
-// 		Frame::new(
-// 			self.context.clone(),
-// 			frame_idx,
-// 			TextureFrame {
-// 				framebuffer: ManuallyDrop::new(framebuffer),
-// 				depth_texture,
-// 				image: &self.image,
-// 			},
-// 			viewport
-// 		)
-// 	}
-// }
+		BaseFrame::new(
+			&self.context,
+			TextureFrame {
+				image: &*self.image,
+				view: &*self.view
+			},
+			|drop| {
+				FrameResources {
+					image: drop.view,
+					viewport,
+				}
+			}
+		)
+	}
+}
 
 impl Drop for Texture {
 	fn drop(&mut self) {
@@ -1226,41 +1135,64 @@ impl Drop for Texture {
 /// 
 /// See [`Frame`]
 // #[doc(hidden)]
-// pub struct TextureFrame<'a> {
-// 	image: &'a backend::Image,
-// }
+pub struct TextureFrame<'a> {
+	image: &'a backend::Image,
+	view: &'a backend::ImageView,
+}
 
-// impl<'a> RenderDrop<'a> for TextureFrame<'a> {
-// 	fn finalize(&mut self, context: &Renderer, frame_idx: usize) {
-// 		unsafe {
-// 			context.render_command_buffers[frame_idx].borrow_mut().pipeline_barrier(
-// 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
-// 				gfx_hal::memory::Dependencies::empty(),
-// 				iter![gfx_hal::memory::Barrier::Image {
-// 					states:
-// 						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal)
-// 						..
-// 						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
-// 					target: self.image,
-// 					range: gfx_hal::image::SubresourceRange {
-// 						aspects: gfx_hal::format::Aspects::COLOR,
-// 						level_start: 0,
-// 						level_count: None,
-// 						layer_start: 0,
-// 						layer_count: None,
-// 					},
-// 					families: None,
-// 				}]
-// 			);
-// 		}
-// 	}
+impl<'a> RenderDrop<'a> for TextureFrame<'a> {
+	fn initialize(&mut self, _context: &Renderer, command_buffer: &mut backend::CommandBuffer) {
+		unsafe {
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
+						..
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal),
+					target: &*self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+		}
+	}
 
-// 	fn cleanup(&mut self, context: &Renderer, _frame_idx: usize) {
-// 		unsafe {
-// 			context.device.destroy_framebuffer(ManuallyDrop::take(&mut self.framebuffer));
-// 		}
-// 	}
-// }
+	fn finalize(&mut self, _context: &Renderer, command_buffer: &mut backend::CommandBuffer) {
+		unsafe {
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states:
+						(gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE, gfx_hal::image::Layout::ColorAttachmentOptimal)
+						..
+						(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
+					target: self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}]
+			);
+		}
+	}
+
+	fn cleanup(&mut self, _context: &Renderer, _wait_semaphore: Option<&mut backend::Semaphore>) {
+		// Nothing to clean up
+	}
+}
 
 /// Wrapper for a depth texture, necessary for custom `RenderTarget`s
 pub struct DepthTexture {
