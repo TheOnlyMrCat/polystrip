@@ -201,8 +201,6 @@ impl HasRenderer for Rc<Renderer> {
 	}
 }
 
-pub type RenderSize = Rc<Cell<gfx_hal::window::Extent2D>>;
-
 pub trait HasRenderSize {
 	fn clone_size_handle(&self) -> RenderSize;
 }
@@ -218,7 +216,6 @@ pub trait RenderTarget {
 	fn create_frame(&mut self) -> BaseFrame<'_>;
 }
 
-
 /// Cleanup for a `RenderTarget`.
 /// 
 /// The `cleanup` function is called upon a `Frame`'s drop, after it has done its own cleanup.
@@ -231,6 +228,38 @@ pub trait RenderPipeline<'a> {
 	type Frame: 'a;
 	//? What if the Renderers are different?
 	fn render_to(&'a self, base: BaseFrame<'a>) -> Self::Frame;
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderSize {
+	size: Cell<gfx_hal::window::Extent2D>,
+	changed: bool,
+}
+
+impl RenderSize {
+	pub fn new(width: u32, height: u32) -> RenderSize {
+		RenderSize {
+			size: Cell::new(gfx_hal::window::Extent2D { width, height }),
+			changed: false,
+		}
+	}
+}
+
+impl From<gfx_hal::window::Extent2D> for RenderSize {
+    fn from(extent: gfx_hal::window::Extent2D) -> Self {
+        RenderSize {
+			size: Cell::new(extent),
+			changed: false,
+		}
+    }
+}
+
+impl Deref for RenderSize {
+	type Target = Cell<gfx_hal::window::Extent2D>;
+
+	fn deref(&self) -> &Self::Target {
+		&self.size
+	}
 }
 
 pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
@@ -323,7 +352,7 @@ pub struct WindowTarget {
 	pub context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
-	extent: Rc<Cell<gfx_hal::window::Extent2D>>,
+	extent: RenderSize,
 }
 
 impl WindowTarget {
@@ -345,13 +374,14 @@ impl WindowTarget {
 	///     (window_size.width, window_size.height)
 	/// );
 	/// ```
-	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, (width, height): (u32, u32), swap_image_count: u32) -> WindowTarget {
+	pub fn new(context: Rc<Renderer>, window: &impl HasRawWindowHandle, size: &impl HasRenderSize, swap_image_count: u32) -> WindowTarget {
+		let extent = size.clone_size_handle();
 		let mut surface = unsafe { context.instance.create_surface(window).unwrap() };
 		let caps = surface.capabilities(&context.adapter.physical_device);
 		let swapchain_config = gfx_hal::window::SwapchainConfig::from_caps(
 				&caps,
 				gfx_hal::format::Format::Bgra8Srgb,
-				gfx_hal::window::Extent2D { width, height }
+				extent.get(),
 			)
 			.with_image_count(swap_image_count.max(*caps.image_count.start()).min(*caps.image_count.end()));
 		unsafe { surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap(); }
@@ -360,7 +390,7 @@ impl WindowTarget {
 			context,
 			surface: ManuallyDrop::new(surface),
 			swapchain_config,
-			extent: Rc::new(Cell::new(gfx_hal::window::Extent2D { width, height })),
+			extent,
 		}
 	}
 
@@ -370,14 +400,6 @@ impl WindowTarget {
 		let image = self.acquire_image();
 		self.generate_frame(image)
 	}
-
-	// /// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will be cleared to the specified
-	// /// `clear_color` (converted from sRGB with a gamma of 2.0). This `Renderer` is borrowed mutably while the `Frame` is alive
-	// pub fn next_frame_clear(&mut self, clear_color: Color) -> Frame<'_, WindowFrame> {
-	// 	let image = self.acquire_image();
-	// 	self.generate_frame(image, Some(clear_color))
-	// }
-
 
 	fn acquire_image(&mut self) -> backend::SwapchainImage {
 		match unsafe { self.surface.acquire_image(u64::MAX) } {
@@ -468,6 +490,12 @@ impl HasRenderer for WindowTarget {
 	}
 }
 
+impl HasRenderSize for WindowTarget {
+	fn clone_size_handle(&self) -> RenderSize {
+		self.extent.clone()
+	}
+}
+
 impl Drop for WindowTarget {
 	fn drop(&mut self) {
 		unsafe {
@@ -516,8 +544,8 @@ pub struct BaseFrame<'a> {
 	resources: ManuallyDrop<FrameResources<'a>>,
 }
 
-impl BaseFrame<'_> {
-	fn new<'a, 'b: 'a, D, F>(context: &impl HasRenderer, drop: D, resources: F) -> BaseFrame<'a>
+impl<'a> BaseFrame<'a> {
+	pub fn new<'b: 'a, D, F>(context: &impl HasRenderer, drop: D, resources: F) -> BaseFrame<'a>
 	where
 		D: RenderDrop<'a> + 'a + 'b,
 		F: FnOnce(&'b D) -> FrameResources<'b>
@@ -532,11 +560,15 @@ impl BaseFrame<'_> {
 		}
 	}
 
-	fn drop_finalize(&mut self) {
+	pub fn render_with<P: RenderPipeline<'a>>(self, pipeline: &'a mut P) -> P::Frame {
+		pipeline.render_to(self)
+	}
+
+	pub unsafe fn drop_finalize(&mut self) {
 		self.drop.finalize(&self.context, todo!());
 	}
 
-	fn drop_cleanup(&mut self, wait_semaphore: Option<&mut backend::Semaphore>) {
+	pub unsafe fn drop_cleanup(&mut self, wait_semaphore: Option<&mut backend::Semaphore>) {
 		self.drop.cleanup(&self.context, wait_semaphore);
 	}
 }
@@ -1047,7 +1079,7 @@ impl Texture {
 	/// Creates a `PixelTranslator` for this `Texture`, because textures use screen space coords when being rendered to,
 	/// not texture space
 	pub fn pixel_translator(&self) -> PixelTranslator {
-		PixelTranslator::new(Rc::new(Cell::new(self.extent)))
+		PixelTranslator::new(self.extent.into())
 	}
 }
 

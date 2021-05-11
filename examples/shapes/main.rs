@@ -1,5 +1,6 @@
-use polystrip::{Frame, RenderDrop, Renderer, WindowTarget};
+use polystrip::{RenderSize, Renderer, WindowTarget};
 use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector2, Vector3, Matrix4};
+use polystrip::pipeline::{StandardPipeline, StandardFrame};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -11,8 +12,10 @@ fn main() {
 		.with_title("Polystrip example (Colored shapes)")
 		.build(&el).unwrap();
 
-	let size = window.inner_size().to_logical(window.scale_factor());
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (size.width, size.height));
+	let size = window.inner_size();
+	let size_handle = RenderSize::new(size.width, size.height);
+	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
 	
 	el.run(move |event, _, control_flow| {
 		match event {
@@ -24,7 +27,8 @@ fn main() {
 				renderer.resize((window_size.width, window_size.height));
 			},
 			Event::MainEventsCleared => {
-				let mut frame = renderer.next_frame_clear(Color { r: 128, g: 128, b: 128, a: 255 });
+				let mut frame = renderer.next_frame().render_with(&mut pipeline);
+				frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 				render_frame(&mut frame);
 			},
 			_ => {}
@@ -33,9 +37,7 @@ fn main() {
 }
 
 // The rendering logic is extracted to a separate function for testing purposes. This would work the same inline.
-// The type parameters are a consequence of how `Frame` is implemented. Don't worry about it unless you're creating a custom
-// render target
-fn render_frame<'a, T: RenderDrop<'a>>(frame: &mut Frame<'a, T>) {
+fn render_frame(frame: &mut StandardFrame<'_>) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(
 		StrokedShape {

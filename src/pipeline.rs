@@ -46,6 +46,10 @@ pub struct StandardPipeline {
 }
 
 impl StandardPipeline {
+	pub fn new(context: &impl HasRenderer, size: &impl HasRenderSize) -> StandardPipeline {
+		StandardPipelineBuilder::default().build(context, size)
+	}
+
 	pub fn with_config(context: &impl HasRenderer, size: &impl HasRenderSize, config: StandardPipelineBuilder) -> StandardPipeline {
 		let context = context.clone_context();
 
@@ -480,6 +484,10 @@ impl<'a> RenderPipeline<'a> for StandardPipeline {
 	type Frame = StandardFrame<'a>;
 
 	fn render_to(&'a self, base: BaseFrame<'a>) -> Self::Frame {
+		if !Rc::ptr_eq(&self.context, &base.context) {
+			panic!("frame and pipeline have different Renderers!");
+		}
+
 		let frame_idx = self.wait_next_frame();
 
 		unsafe {
@@ -609,6 +617,12 @@ impl StandardPipelineBuilder {
 	}
 }
 
+impl Default for StandardPipelineBuilder {
+	fn default() -> StandardPipelineBuilder {
+		StandardPipelineBuilder::new()
+	}
+}
+
 enum RenderResource {
 	Buffer(backend::Buffer, MemoryBlock<backend::Memory>),
 	// Expecting expansion
@@ -678,10 +692,35 @@ impl<'a> StandardFrame<'a> {
 		frame_res.push(RenderResource::Buffer(index_buffer, index_block));
 	}
 
+	/// Clears the entire frame to the passed [`Color`](../vertex/struct.Color.html).
+	///
+	/// The color is converted from sRGB using a gamma value of 2.0
+	pub fn clear(&mut self, color: Color) {
+		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
+		unsafe {
+			command_buffer.clear_attachments(
+				iter![gfx_hal::command::AttachmentClear::Color {
+					index: 0,
+					value: gfx_hal::command::ClearColor {
+						float32: [
+							(color.r as f32).powi(2) / 65025.,
+							(color.g as f32).powi(2) / 65025.,
+							(color.b as f32).powi(2) / 65025.,
+							(color.a as f32).powi(2) / 65025.,
+						]
+					}
+				}],
+				iter![gfx_hal::pso::ClearRect {
+					rect: self.base.viewport.rect,
+					layers: 0..1,
+				}]
+			);
+		}
+	}
+
 	/// Sets the global transform matrix for draw calls after this method call.
 	/// 
 	/// If this method is called multiple times, draw calls will use the matrix provided most recently.
-	/// 
 	/// Draw calls made before this method call use the identity matrix as the global transform matrix.
 	pub fn set_global_transform(&mut self, matrix: Matrix4) {
 		self.world_transform = matrix;
@@ -838,22 +877,24 @@ impl<'a> StandardFrame<'a> {
 
 impl Drop for StandardFrame<'_> {
 	fn drop(&mut self) {
-		self.base.drop_finalize();
-
 		unsafe {
-			let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
-			command_buffer.end_render_pass();
-			command_buffer.finish();
+			// self.base.drop_finalize();
+			
+			{
+				let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
+				command_buffer.end_render_pass();
+				command_buffer.finish();
 
-			let mut queue_groups = self.context.queue_groups.borrow_mut();
+				let mut queue_groups = self.context.queue_groups.borrow_mut();
 				queue_groups[0].queues[0].submit(
 					iter![&*command_buffer],
 					iter![],
 					iter![&*self.pipeline.render_semaphores[self.frame_idx].borrow()],
 					Some(&mut *self.pipeline.render_fences[self.frame_idx].borrow_mut())
 				);
+			}
+				
+			self.base.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
 		}
-
-		self.base.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
 	}
 }

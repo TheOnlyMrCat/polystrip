@@ -3,12 +3,7 @@
 //! This module defines the [`PixelTranslator`] type, which is created from a [`WindowTarget`](crate::WindowTarget)
 //! and translates coordinates based on the most recently given size (See [`WindowTarget::resize()`](crate::WindowTarget::resize))
 
-use std::cell::Cell;
-use std::rc::Rc;
-
-use gfx_hal::window::Extent2D;
-
-use crate::Texture;
+use crate::{RenderSize, Texture};
 use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 
 /// When constructed from a [`WindowTarget`](crate::WindowTarget), tracks the window's size and provides methods which
@@ -22,11 +17,11 @@ use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 /// (3)---(2)
 /// ```
 pub struct PixelTranslator {
-	extent: Rc<Cell<Extent2D>>,
+	extent: RenderSize,
 }
 
 impl PixelTranslator {
-	pub(crate) fn new(extent: Rc<Cell<Extent2D>>) -> PixelTranslator {
+	pub(crate) fn new(extent: RenderSize) -> PixelTranslator {
 		PixelTranslator {
 			extent
 		}
