@@ -1,15 +1,15 @@
 //! Vertices and shapes, the core of the rendering process.
-//! 
+//!
 //! # Linear algebra libraries
 //! A number of linear algebra libraries exist for rust. `polystrip` provides `Vector2`, `Vector3`, and `Matrix4` as wrappers
 //! around definitions provided by the [`mint`](https://docs.rs/mint) library, which is compatible with most of these linear
 //! algebra libraries
-//! 
+//!
 //! # Coordinates
 //! ## Screen space
 //! `(0.0, 0.0)` is the screen center. `(1.0, 1.0)` is the top-right corner.
 //! `(-1.0, -1.0)` is the bottom-left corner.
-//! 
+//!
 //! ## Texture space
 //! `(0.0, 0.0)` is the top-left corner
 //! `(1.0, 1.0)` is the bottom-right corner
@@ -27,15 +27,15 @@ pub struct Color {
 }
 
 impl Color {
-	pub const ZERO: Color    = Color::new( 0 ,  0 ,  0 ,  0 );
-	pub const RED: Color     = Color::new(255,  0 ,  0 , 255);
-	pub const YELLOW: Color  = Color::new(255, 255,  0 , 255);
-	pub const GREEN: Color   = Color::new( 0 , 255,  0 , 255);
-	pub const CYAN: Color    = Color::new( 0 , 255, 255, 255);
-	pub const BLUE: Color    = Color::new( 0 ,  0 , 255, 255);
-	pub const MAGENTA: Color = Color::new(255,  0 , 255, 255);
-	pub const WHITE: Color   = Color::new(255, 255, 255, 255);
-	pub const BLACK: Color   = Color::new( 0 ,  0 ,  0 , 255);
+	pub const ZERO: Color = Color::new(0, 0, 0, 0);
+	pub const RED: Color = Color::new(255, 0, 0, 255);
+	pub const YELLOW: Color = Color::new(255, 255, 0, 255);
+	pub const GREEN: Color = Color::new(0, 255, 0, 255);
+	pub const CYAN: Color = Color::new(0, 255, 255, 255);
+	pub const BLUE: Color = Color::new(0, 0, 255, 255);
+	pub const MAGENTA: Color = Color::new(255, 0, 255, 255);
+	pub const WHITE: Color = Color::new(255, 255, 255, 255);
+	pub const BLACK: Color = Color::new(0, 0, 0, 255);
 
 	pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Color {
 		Color { r, g, b, a }
@@ -71,7 +71,11 @@ impl Vector2 {
 	}
 
 	pub const fn with_height(self, height: f32) -> Vector3 {
-		Vector3(mint::Vector3 { x: self.0.x, y: self.0.y, z: height	})
+		Vector3(mint::Vector3 {
+			x: self.0.x,
+			y: self.0.y,
+			z: height,
+		})
 	}
 }
 
@@ -202,22 +206,22 @@ impl Matrix4 {
 	}
 
 	/// Returns a matrix that rotates the XY plane counterclockwise about the origin by the given angle.
-	/// 
+	///
 	/// Interprets the angle to be in radians.
 	pub fn rotate(r: f32) -> Matrix4 {
 		Matrix4(mint::ColumnMatrix4::from([
-			[r.cos(),-r.sin(), 0.0, 0.0],
+			[r.cos(), -r.sin(), 0.0, 0.0],
 			[r.sin(), r.cos(), 0.0, 0.0],
-			[  0.0  ,   0.0  , 1.0, 0.0],
-			[  0.0  ,   0.0  , 0.0, 1.0],
+			[0.0, 0.0, 1.0, 0.0],
+			[0.0, 0.0, 0.0, 1.0],
 		]))
 	}
 
 	/// Returns a matrix that scales the XY plane by the given factor
 	pub fn scale(f: f32) -> Matrix4 {
 		Matrix4(mint::ColumnMatrix4::from([
-			[ f , 0.0, 0.0, 0.0],
-			[0.0,  f , 0.0, 0.0],
+			[f, 0.0, 0.0, 0.0],
+			[0.0, f, 0.0, 0.0],
 			[0.0, 0.0, 1.0, 0.0],
 			[0.0, 0.0, 0.0, 1.0],
 		]))
@@ -226,18 +230,18 @@ impl Matrix4 {
 	/// Returns a matrix that scales the X coordinate by the given factor and the Y coordinate by the given factor.
 	pub fn scale_nonuniform(x: f32, y: f32) -> Matrix4 {
 		Matrix4(mint::ColumnMatrix4::from([
-			[ x , 0.0, 0.0, 0.0],
-			[0.0,  y , 0.0, 0.0],
+			[x, 0.0, 0.0, 0.0],
+			[0.0, y, 0.0, 0.0],
 			[0.0, 0.0, 1.0, 0.0],
 			[0.0, 0.0, 0.0, 1.0],
 		]))
 	}
 
-	/// Returns a simple perspective matrix from the four passed parameters. Equivalent to the 
+	/// Returns a simple perspective matrix from the four passed parameters. Equivalent to the
 	/// [`gluPerspective`](https://www.khronos.org/registry/OpenGL-Refpages/gl2.1/xhtml/gluPerspective.xml) function in OpenGL.
-	/// 
+	///
 	/// See also [`RendererBuilder::real_3d`](crate::RendererBuilder::real_3d)
-	/// 
+	///
 	/// # Parameters
 	/// * `fovy`: The angle of the field of view up and down, in radians. Must be nonzero and cannot be a multiple of tau (2π)
 	/// * `aspect`: The ratio of screen width to screen height. Should be updated when the window is resized. Must be nonzero.
@@ -246,7 +250,7 @@ impl Matrix4 {
 	pub fn perspective(fovy: f32, aspect: f32, near: f32, far: f32) -> Matrix4 {
 		let f = (fovy / 2.).cos() / (fovy / 2.).sin();
 		Matrix4(mint::ColumnMatrix4::from([
-			[f/aspect, 0.0, 0.0, 0.0],
+			[f / aspect, 0.0, 0.0, 0.0],
 			[0.0, f, 0.0, 0.0],
 			[0.0, 0.0, (far + near) / (near - far), -1.0],
 			[0.0, 0.0, (2. * far * near) / (near - far), 0.0],
@@ -254,7 +258,12 @@ impl Matrix4 {
 	}
 
 	pub fn row(&self, i: usize) -> [f32; 4] {
-		[self.x.as_ref()[i], self.y.as_ref()[i], self.z.as_ref()[i], self.w.as_ref()[i]]
+		[
+			self.x.as_ref()[i],
+			self.y.as_ref()[i],
+			self.z.as_ref()[i],
+			self.w.as_ref()[i],
+		]
 	}
 }
 
@@ -266,10 +275,30 @@ impl std::ops::Mul<Matrix4> for Matrix4 {
 	type Output = Matrix4;
 	fn mul(self, rhs: Matrix4) -> Matrix4 {
 		Matrix4(mint::ColumnMatrix4::from([
-			[dot(self.row(0), rhs.x.into()), dot(self.row(1), rhs.x.into()), dot(self.row(2), rhs.x.into()), dot(self.row(3), rhs.x.into())],
-			[dot(self.row(0), rhs.y.into()), dot(self.row(1), rhs.y.into()), dot(self.row(2), rhs.y.into()), dot(self.row(3), rhs.y.into())],
-			[dot(self.row(0), rhs.z.into()), dot(self.row(1), rhs.z.into()), dot(self.row(2), rhs.z.into()), dot(self.row(3), rhs.z.into())],
-			[dot(self.row(0), rhs.w.into()), dot(self.row(1), rhs.w.into()), dot(self.row(2), rhs.w.into()), dot(self.row(3), rhs.w.into())],
+			[
+				dot(self.row(0), rhs.x.into()),
+				dot(self.row(1), rhs.x.into()),
+				dot(self.row(2), rhs.x.into()),
+				dot(self.row(3), rhs.x.into()),
+			],
+			[
+				dot(self.row(0), rhs.y.into()),
+				dot(self.row(1), rhs.y.into()),
+				dot(self.row(2), rhs.y.into()),
+				dot(self.row(3), rhs.y.into()),
+			],
+			[
+				dot(self.row(0), rhs.z.into()),
+				dot(self.row(1), rhs.z.into()),
+				dot(self.row(2), rhs.z.into()),
+				dot(self.row(3), rhs.z.into()),
+			],
+			[
+				dot(self.row(0), rhs.w.into()),
+				dot(self.row(1), rhs.w.into()),
+				dot(self.row(2), rhs.w.into()),
+				dot(self.row(3), rhs.w.into()),
+			],
 		]))
 	}
 }

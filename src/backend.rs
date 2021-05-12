@@ -1,6 +1,11 @@
 #![allow(dead_code)]
 
-#[cfg(not(any(feature = "gfx-backend-vulkan", feature = "gfx-backend-metal", feature = "gfx-backend-dx12", feature = "gfx-backend-empty")))]
+#[cfg(not(any(
+	feature = "gfx-backend-vulkan",
+	feature = "gfx-backend-metal",
+	feature = "gfx-backend-dx12",
+	feature = "gfx-backend-empty"
+)))]
 compile_error!("Need to select a backend! Enable one of the [\"vulkan\", \"metal\", \"dx12\"] features");
 
 #[cfg(feature = "gfx-backend-vulkan")]
