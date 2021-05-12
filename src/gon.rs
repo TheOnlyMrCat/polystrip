@@ -1,3 +1,5 @@
+//! The gon pipeline for 2D rendering
+
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -9,7 +11,7 @@ use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
 use crate::{BaseFrame, DepthTexture, HasRenderSize, HasRenderer, RenderPipeline, RenderSize, Texture, backend};
-use crate::vertex::*;
+use crate::math::*;
 use crate::Renderer;
 use crate::iter;
 
@@ -19,7 +21,7 @@ static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.frag
 static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.vert.spv");
 static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag.spv");
 
-pub struct StandardPipeline {
+pub struct GonPipeline {
 	context: Rc<Renderer>,
 	size_handle: Rc<RenderSize>,
 
@@ -46,12 +48,12 @@ pub struct StandardPipeline {
 	current_resource_size: gfx_hal::window::Extent2D,
 }
 
-impl StandardPipeline {
-	pub fn new(context: &impl HasRenderer, size: &impl HasRenderSize) -> StandardPipeline {
-		StandardPipelineBuilder::default().build(context, size)
+impl GonPipeline {
+	pub fn new(context: &impl HasRenderer, size: &impl HasRenderSize) -> GonPipeline {
+		GonPipelineBuilder::default().build(context, size)
 	}
 
-	pub fn with_config(context: &impl HasRenderer, size: &impl HasRenderSize, config: StandardPipelineBuilder) -> StandardPipeline {
+	pub fn with_config(context: &impl HasRenderer, size: &impl HasRenderSize, config: GonPipelineBuilder) -> GonPipeline {
 		let context = context.clone_context();
 
 		let render_command_buffers = {
@@ -409,7 +411,7 @@ impl StandardPipeline {
 		
 		let (framebuffers, depth_textures) = Self::create_resizable_resources(&context, &main_pass, config.frames_in_flight, current_resource_size);
 
-		StandardPipeline {
+		GonPipeline {
 		    context,
 			size_handle: render_size,
 
@@ -490,20 +492,20 @@ impl StandardPipeline {
 	}
 }
 
-impl HasRenderer for StandardPipeline {
+impl HasRenderer for GonPipeline {
     fn clone_context(&self) -> Rc<Renderer> {
         self.context.clone()
     }
 }
 
-impl HasRenderSize for StandardPipeline {
+impl HasRenderSize for GonPipeline {
     fn clone_size_handle(&self) -> Rc<RenderSize> {
         self.size_handle.clone()
     }
 }
 
-impl<'a> RenderPipeline<'a> for StandardPipeline {
-	type Frame = StandardFrame<'a>;
+impl<'a> RenderPipeline<'a> for GonPipeline {
+	type Frame = GonFrame<'a>;
 
 	fn render_to(&'a mut self, base: BaseFrame<'a>) -> Self::Frame {
 		if !Rc::ptr_eq(&self.context, &base.context) {
@@ -568,7 +570,7 @@ impl<'a> RenderPipeline<'a> for StandardPipeline {
 
 		std::mem::drop(command_buffer);
 
-        StandardFrame {
+        GonFrame {
 			context: base.context.clone(),
 			base,
 			pipeline: self,
@@ -578,7 +580,7 @@ impl<'a> RenderPipeline<'a> for StandardPipeline {
     }
 }
 
-impl Drop for StandardPipeline {
+impl Drop for GonPipeline {
 	fn drop(&mut self) {
 		unsafe {
 			let fences = ManuallyDrop::take(&mut self.render_fences).into_iter().map(RefCell::into_inner).collect::<Vec<_>>();
@@ -618,13 +620,13 @@ impl Drop for StandardPipeline {
 	}
 }
 
-pub struct StandardPipelineBuilder {
+pub struct GonPipelineBuilder {
 	real_3d: bool,
 	frames_in_flight: usize,
 }
 
-impl StandardPipelineBuilder {
-	pub fn new() -> StandardPipelineBuilder {
+impl GonPipelineBuilder {
+	pub fn new() -> GonPipelineBuilder {
 		Self {
 			real_3d: false,
 			frames_in_flight: 3,
@@ -634,7 +636,7 @@ impl StandardPipelineBuilder {
 	/// If `true`, allows transform matrices to affect sprite depth. This clamps the depth between `0.0` and `1.0`
 	/// 
 	/// Default: false
-	pub fn real_3d(mut self, real_3d: bool) -> StandardPipelineBuilder {
+	pub fn real_3d(mut self, real_3d: bool) -> GonPipelineBuilder {
 		self.real_3d = real_3d;
 		self
 	}
@@ -642,20 +644,20 @@ impl StandardPipelineBuilder {
 	/// The number of frames that can be dispatched simultaneously
 	/// 
 	/// Default: 3
-	pub fn frames_in_flight(mut self, frames_in_flight: usize) -> StandardPipelineBuilder {
+	pub fn frames_in_flight(mut self, frames_in_flight: usize) -> GonPipelineBuilder {
 		self.frames_in_flight = frames_in_flight;
 		self
 	}
 
 	/// Builds the renderer, initialising the `gfx_hal` backend.
-	pub fn build(self, context: &impl HasRenderer, size: &impl HasRenderSize) -> StandardPipeline {
-		StandardPipeline::with_config(context, size, self)
+	pub fn build(self, context: &impl HasRenderer, size: &impl HasRenderSize) -> GonPipeline {
+		GonPipeline::with_config(context, size, self)
 	}
 }
 
-impl Default for StandardPipelineBuilder {
-	fn default() -> StandardPipelineBuilder {
-		StandardPipelineBuilder::new()
+impl Default for GonPipelineBuilder {
+	fn default() -> GonPipelineBuilder {
+		GonPipelineBuilder::new()
 	}
 }
 
@@ -673,15 +675,15 @@ impl RenderResource {
 }
 
 /// A frame to be drawn to. The frame gets presented on drop.
-pub struct StandardFrame<'a> {
+pub struct GonFrame<'a> {
 	context: Rc<Renderer>,
 	base: BaseFrame<'a>,
-	pipeline: &'a StandardPipeline,
+	pipeline: &'a GonPipeline,
 	frame_idx: usize,
 	world_transform: Matrix4,
 }
 
-impl<'a> StandardFrame<'a> {
+impl<'a> GonFrame<'a> {
 	/// Creates a vertex buffer and an index buffer from the supplied data. The buffers will be placed into the current
 	/// frame's resources at the end, vertex buffer first, index buffer second.
 	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) {
@@ -911,7 +913,7 @@ impl<'a> StandardFrame<'a> {
 	}
 }
 
-impl Drop for StandardFrame<'_> {
+impl Drop for GonFrame<'_> {
 	fn drop(&mut self) {
 		unsafe {
 			// self.base.drop_finalize();
@@ -933,4 +935,143 @@ impl Drop for StandardFrame<'_> {
 			self.base.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
 		}
 	}
+}
+
+use std::borrow::Cow;
+
+pub const QUAD_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
+
+/// A vertex describing a position and a position on a texture.
+/// 
+/// Texture coordinates are interpolated linearly between vertices.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub struct TextureVertex {
+	pub position: Vector3,
+	pub tex_coords: Vector2,
+}
+
+unsafe impl bytemuck::Pod for TextureVertex {}
+unsafe impl bytemuck::Zeroable for TextureVertex {}
+
+impl TextureVertex {
+	pub(crate) fn desc<'a>() -> &'a [gfx_hal::pso::AttributeDesc] {
+		use std::mem::size_of;
+		
+		&[
+			gfx_hal::pso::AttributeDesc {
+				location: 0,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rgb32Sfloat,
+					offset: 0,
+				},
+			},
+			gfx_hal::pso::AttributeDesc {
+				location: 1,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rg32Sfloat,
+					offset: size_of::<[f32; 3]>() as u32,
+				},
+			},
+		]
+	}
+}
+
+/// A vertex describing a position and a color.
+/// 
+/// Colors are interpolated linearly between vertices.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub struct ColorVertex {
+	pub position: Vector3,
+	pub color: Color,
+}
+
+unsafe impl bytemuck::Pod for ColorVertex {}
+unsafe impl bytemuck::Zeroable for ColorVertex {}
+
+impl ColorVertex {
+	pub(crate) fn desc<'a>() -> &'a [gfx_hal::pso::AttributeDesc] {
+		use std::mem::size_of;
+		
+		&[
+			gfx_hal::pso::AttributeDesc {
+				location: 0,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rgb32Sfloat,
+					offset: 0,
+				},
+			},
+			gfx_hal::pso::AttributeDesc {
+				location: 1,
+				binding: 0,
+				element: gfx_hal::pso::Element {
+					format: gfx_hal::format::Format::Rgba8Unorm,
+					offset: size_of::<[f32; 3]>() as u32,
+				},
+			},
+		]
+	}
+}
+
+/// A set of vertices and indices describing an outlined geometric shape as a set of lines.
+///
+/// The colors of the lines are determined by interpolating the colors at each
+/// [`ColorVertex`](struct.ColorVertex).
+#[derive(Clone, Debug)]
+pub struct StrokedShape<'a> {
+	pub vertices: Cow<'a, [ColorVertex]>,
+	/// A list of pairs of vertices which specify which vertices should have lines drawn between them
+	pub indices: Cow<'a, [[u16; 2]]>,
+}
+
+/// A set of vertices and indices describing a geometric shape as a set of triangles.
+///
+/// The color of the shape is determined by interpolating the colors at each
+/// [`ColorVertex`](struct.ColorVertex).
+#[derive(Clone, Debug)]
+pub struct ColoredShape<'v, 'i> {
+	pub vertices: Cow<'v, [ColorVertex]>,
+	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
+	pub indices: Cow<'i, [[u16; 3]]>,
+}
+
+/// A set of vertices and indices describing a geometric shape as a set of triangles.
+/// 
+/// The color of the shape is determined by interpolating the texture coordinates at each
+/// [`TextureVertex`](struct.TextureVertex), and sampling the [`Texture`](../struct.Texture)
+/// provided to the [`Frame::draw_textured`](../struct.Frame#method.draw_textured) call this shape
+/// is drawn with
+#[derive(Clone, Debug)]
+pub struct TexturedShape<'v, 'i> {
+	pub vertices: Cow<'v, [TextureVertex]>,
+	/// A list of sets of three vertices which specify how the vertices should be rendered as triangles.
+	pub indices: Cow<'i, [[u16; 3]]>,
+}
+
+impl TexturedShape<'_, '_> {
+	/// A quad rendering the full texture, the top two points being at height 1, the bottom two at height 0
+	pub const QUAD_FULL_STANDING: TexturedShape<'static, 'static> = TexturedShape {
+		vertices: Cow::Borrowed(&[
+			TextureVertex { position: Vector3::new(0., 0., 1.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 1.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
+		]),
+		indices: Cow::Borrowed(&QUAD_INDICES),
+	};
+		
+	/// A quad rendering the full texture, all points at height 0
+	pub const QUAD_FULL_FLAT: TexturedShape<'static, 'static> = TexturedShape {
+		vertices: Cow::Borrowed(&[
+			TextureVertex { position: Vector3::new(0., 0., 0.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 0.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
+		]),
+		indices: Cow::Borrowed(&QUAD_INDICES),
+	};
 }

@@ -12,9 +12,9 @@
 //! An example with `winit` is available in the documentation for `WindowTarget`.
 
 pub(crate) mod backend;
-pub mod pipeline;
+pub mod gon;
 pub mod pixel;
-pub mod vertex;
+pub mod math;
 
 pub use gfx_hal;
 pub use gpu_alloc;
@@ -27,7 +27,7 @@ use std::rc::Rc;
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
 
-use crate::vertex::*;
+use crate::math::*;
 use crate::pixel::PixelTranslator;
 
 use raw_window_handle::HasRawWindowHandle;

@@ -6,7 +6,8 @@
 use std::rc::Rc;
 
 use crate::{RenderSize, Texture};
-use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
+use crate::math::{Color, Rect, Vector2};
+use crate::gon::{ColorVertex, TextureVertex};
 
 /// When constructed from a [`WindowTarget`](crate::WindowTarget), tracks the window's size and provides methods which
 /// convert between pixel space and screen space for that window.

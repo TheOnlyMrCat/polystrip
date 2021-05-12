@@ -1,5 +1,6 @@
-use polystrip::{RenderSize, Renderer, Texture, WindowTarget, pipeline::StandardPipeline};
-use polystrip::vertex::{TexturedShape, TextureVertex, Color, Vector2, Matrix4};
+use polystrip::{RenderSize, Renderer, Texture, WindowTarget};
+use polystrip::gon::{GonPipeline, TexturedShape, TextureVertex};
+use polystrip::math::{Color, Vector2, Matrix4};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -14,7 +15,7 @@ fn main() {
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
 	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
-	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
+	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
@@ -88,7 +89,7 @@ fn instanced_drawing() {
 	let expected_output = image::load_from_memory(include_bytes!("expected.png")).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
 	let size_handle = RenderSize::new(1100, 1100).wrap();
-	let mut pipeline = StandardPipeline::new(&renderer, &size_handle);
+	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
 	let pixel_translator = texture.pixel_translator();
 

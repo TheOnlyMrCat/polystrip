@@ -1,6 +1,6 @@
 use polystrip::{RenderSize, Renderer, WindowTarget};
-use polystrip::vertex::{StrokedShape, ColoredShape, ColorVertex, Color, Vector2, Vector3, Matrix4};
-use polystrip::pipeline::{StandardPipeline, StandardFrame};
+use polystrip::math::{Color, Vector2, Vector3, Matrix4};
+use polystrip::gon::{StrokedShape, ColoredShape, ColorVertex, GonPipeline, GonFrame};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -15,7 +15,7 @@ fn main() {
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
 	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
-	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
+	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	
 	el.run(move |event, _, control_flow| {
 		match event {
@@ -36,7 +36,7 @@ fn main() {
 }
 
 // The rendering logic is extracted to a separate function for testing purposes. This would work the same inline.
-fn render_frame(frame: &mut StandardFrame<'_>) {
+fn render_frame(frame: &mut GonFrame<'_>) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(
 		StrokedShape {
@@ -97,7 +97,7 @@ fn shapes() {
 	let expected_output = image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
 	let size_handle = RenderSize::new(640, 480).wrap();
-	let mut pipeline = StandardPipeline::new(&renderer, &size_handle);
+	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::BLACK, (640, 480));
 
 	render_frame(&mut texture.create_frame().render_with(&mut pipeline));
