@@ -21,7 +21,7 @@ static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag
 
 pub struct StandardPipeline {
 	context: Rc<Renderer>,
-	size_handle: RenderSize,
+	size_handle: Rc<RenderSize>,
 
 	stroked_graphics_pipeline: ManuallyDrop<backend::GraphicsPipeline>,
 	stroked_graphics_pipeline_layout: ManuallyDrop<backend::PipelineLayout>,
@@ -39,10 +39,11 @@ pub struct StandardPipeline {
 
 	render_semaphores: ManuallyDrop<Vec<RefCell<backend::Semaphore>>>,
 	render_fences: ManuallyDrop<Vec<RefCell<backend::Fence>>>,
-	render_frame_resources: ManuallyDrop<Vec<ManuallyDrop<RefCell<Vec<RenderResource>>>>>,
+	render_frame_resources: ManuallyDrop<Vec<RefCell<Vec<RenderResource>>>>,
 
 	framebuffers: Vec<ManuallyDrop<backend::Framebuffer>>,
 	depth_textures: Vec<ManuallyDrop<DepthTexture>>,
+	current_resource_size: gfx_hal::window::Extent2D,
 }
 
 impl StandardPipeline {
@@ -66,7 +67,7 @@ impl StandardPipeline {
 			for _ in 0..config.frames_in_flight {
 				semaphores.push(RefCell::new(context.device.create_semaphore().unwrap()));
 				fences.push(RefCell::new(context.device.create_fence(false).unwrap()));
-				resources.push(ManuallyDrop::new(RefCell::new(Vec::new())));
+				resources.push(RefCell::new(Vec::new()));
 			}
 			(semaphores, fences, resources)
 		};
@@ -404,24 +405,9 @@ impl StandardPipeline {
 
 		let render_size = size.clone_size_handle();
 
-		let framebuffers = (0..config.frames_in_flight).map(|_| ManuallyDrop::new(unsafe { context.device.create_framebuffer(
-			&main_pass,
-			iter![
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: gfx_hal::format::Format::Bgra8Srgb,
-				},
-				gfx_hal::image::FramebufferAttachment {
-					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
-					view_caps: gfx_hal::image::ViewCapabilities::empty(),
-					format: gfx_hal::format::Format::D32Sfloat,
-				}
-			],
-			render_size.get().to_extent()
-		)}.unwrap())).collect();
-
-		let depth_textures = (0..config.frames_in_flight).map(|_| ManuallyDrop::new(DepthTexture::new(context.clone(), render_size.get()))).collect();
+		let current_resource_size = render_size.get();
+		
+		let (framebuffers, depth_textures) = Self::create_resizable_resources(&context, &main_pass, config.frames_in_flight, current_resource_size);
 
 		StandardPipeline {
 		    context,
@@ -446,6 +432,7 @@ impl StandardPipeline {
 
 		    framebuffers,
 		    depth_textures,
+			current_resource_size
 		}
 	}
 
@@ -478,14 +465,63 @@ impl StandardPipeline {
 		let frames_in_flight = self.frames_in_flight;
 		self.current_frame.fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| Some((x + 1) % frames_in_flight)).unwrap() as usize
 	}
+
+	fn create_resizable_resources(context: &Rc<Renderer>, render_pass: &backend::RenderPass, count: usize, size: gfx_hal::window::Extent2D) -> (Vec<ManuallyDrop<backend::Framebuffer>>, Vec<ManuallyDrop<DepthTexture>>) {
+		let framebuffers = (0..count).map(|_| ManuallyDrop::new(unsafe { context.device.create_framebuffer(
+			&render_pass,
+			iter![
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::COLOR_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: gfx_hal::format::Format::Bgra8Srgb,
+				},
+				gfx_hal::image::FramebufferAttachment {
+					usage: gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+					view_caps: gfx_hal::image::ViewCapabilities::empty(),
+					format: gfx_hal::format::Format::D32Sfloat,
+				}
+			],
+			size.to_extent()
+		)}.unwrap())).collect();
+
+		let depth_textures = (0..count).map(|_| ManuallyDrop::new(DepthTexture::new(context.clone(), size))).collect();
+
+		(framebuffers, depth_textures)
+	}
+}
+
+impl HasRenderer for StandardPipeline {
+    fn clone_context(&self) -> Rc<Renderer> {
+        self.context.clone()
+    }
+}
+
+impl HasRenderSize for StandardPipeline {
+    fn clone_size_handle(&self) -> Rc<RenderSize> {
+        self.size_handle.clone()
+    }
 }
 
 impl<'a> RenderPipeline<'a> for StandardPipeline {
 	type Frame = StandardFrame<'a>;
 
-	fn render_to(&'a self, base: BaseFrame<'a>) -> Self::Frame {
+	fn render_to(&'a mut self, base: BaseFrame<'a>) -> Self::Frame {
 		if !Rc::ptr_eq(&self.context, &base.context) {
 			panic!("frame and pipeline have different Renderers!");
+		}
+
+		let recent_size = self.size_handle.get();
+		if self.current_resource_size != recent_size {
+			self.current_resource_size = recent_size;
+			let (framebuffers, depth_textures) = Self::create_resizable_resources(&self.context, &self.render_pass, self.frames_in_flight, recent_size);
+			let old_framebuffers = std::mem::replace(&mut self.framebuffers, framebuffers);
+			let old_depth_textures = std::mem::replace(&mut self.depth_textures, depth_textures);
+			for mut framebuffer in old_framebuffers {
+				unsafe { self.context.device.destroy_framebuffer(ManuallyDrop::take(&mut framebuffer)) };
+			}
+			for mut texture in old_depth_textures {
+				unsafe { ManuallyDrop::drop(&mut texture) };
+			}
 		}
 
 		let frame_idx = self.wait_next_frame();
@@ -558,7 +594,7 @@ impl Drop for StandardPipeline {
 			let mut allocator = self.context.allocator.borrow_mut();
 			let mem_device = GfxMemoryDevice::wrap(&self.context.device);
 
-			for resource in ManuallyDrop::take(&mut self.render_frame_resources).into_iter().flat_map(|mut i| ManuallyDrop::take(&mut i).into_inner()) {
+			for resource in ManuallyDrop::take(&mut self.render_frame_resources).into_iter().flat_map(|i| i.into_inner()) {
 				match resource {
 					RenderResource::Buffer(buf, block) => {
 						self.context.device.destroy_buffer(buf);

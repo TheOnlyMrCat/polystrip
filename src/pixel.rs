@@ -3,6 +3,8 @@
 //! This module defines the [`PixelTranslator`] type, which is created from a [`WindowTarget`](crate::WindowTarget)
 //! and translates coordinates based on the most recently given size (See [`WindowTarget::resize()`](crate::WindowTarget::resize))
 
+use std::rc::Rc;
+
 use crate::{RenderSize, Texture};
 use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 
@@ -17,11 +19,11 @@ use crate::vertex::{Color, ColorVertex, Rect, TextureVertex, Vector2};
 /// (3)---(2)
 /// ```
 pub struct PixelTranslator {
-	extent: RenderSize,
+	extent: Rc<RenderSize>,
 }
 
 impl PixelTranslator {
-	pub(crate) fn new(extent: RenderSize) -> PixelTranslator {
+	pub(crate) fn new(extent: Rc<RenderSize>) -> PixelTranslator {
 		PixelTranslator {
 			extent
 		}

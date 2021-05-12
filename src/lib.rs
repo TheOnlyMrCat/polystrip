@@ -23,7 +23,6 @@ use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use gpu_alloc::{GpuAllocator, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_gfx::GfxMemoryDevice;
@@ -94,7 +93,7 @@ impl Renderer {
 
 	// - Command pools, frame resources
 		let texture_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::TRANSIENT) }.unwrap();
-		let mut render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::RESET_INDIVIDUAL) }.unwrap();
+		let render_command_pool = unsafe { gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::RESET_INDIVIDUAL) }.unwrap();
 
 	// - Descriptor set and pool
 		let texture_descriptor_set_layout = unsafe { gpu.device.create_descriptor_set_layout(
@@ -202,11 +201,11 @@ impl HasRenderer for Rc<Renderer> {
 }
 
 pub trait HasRenderSize {
-	fn clone_size_handle(&self) -> RenderSize;
+	fn clone_size_handle(&self) -> Rc<RenderSize>;
 }
 
-impl HasRenderSize for RenderSize {
-	fn clone_size_handle(&self) -> RenderSize {
+impl HasRenderSize for Rc<RenderSize> {
+	fn clone_size_handle(&self) -> Rc<RenderSize> {
 		self.clone()
 	}
 }
@@ -225,21 +224,31 @@ pub trait RenderDrop<'a> {
 pub trait RenderPipeline<'a> {
 	type Frame: 'a;
 	//? What if the Renderers are different?
-	fn render_to(&'a self, base: BaseFrame<'a>) -> Self::Frame;
+	fn render_to(&'a mut self, base: BaseFrame<'a>) -> Self::Frame;
 }
 
 #[derive(Clone, Debug)]
 pub struct RenderSize {
 	size: Cell<gfx_hal::window::Extent2D>,
-	changed: bool,
 }
 
 impl RenderSize {
 	pub fn new(width: u32, height: u32) -> RenderSize {
 		RenderSize {
 			size: Cell::new(gfx_hal::window::Extent2D { width, height }),
-			changed: false,
 		}
+	}
+
+	pub fn get(&self) -> gfx_hal::window::Extent2D {
+		self.size.get()
+	}
+
+	pub fn set(&self, width: u32, height: u32) {
+		self.size.set(gfx_hal::window::Extent2D { width, height });
+	}
+
+	pub fn wrap(self) -> Rc<RenderSize> {
+		Rc::new(self)
 	}
 }
 
@@ -247,17 +256,8 @@ impl From<gfx_hal::window::Extent2D> for RenderSize {
     fn from(extent: gfx_hal::window::Extent2D) -> Self {
         RenderSize {
 			size: Cell::new(extent),
-			changed: false,
 		}
     }
-}
-
-impl Deref for RenderSize {
-	type Target = Cell<gfx_hal::window::Extent2D>;
-
-	fn deref(&self) -> &Self::Target {
-		&self.size
-	}
 }
 
 pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc::Config {
@@ -350,7 +350,7 @@ pub struct WindowTarget {
 	pub context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
 	swapchain_config: gfx_hal::window::SwapchainConfig,
-	extent: RenderSize,
+	extent: Rc<RenderSize>,
 }
 
 impl WindowTarget {
@@ -416,6 +416,13 @@ impl WindowTarget {
 	fn generate_frame(&mut self, image: backend::SwapchainImage) -> BaseFrame<'_> {
 		use std::borrow::Borrow;
 
+		//TODO: Better, scaleable way to reconfigure swapchain each time?
+		let recent_extent = self.extent.get();
+		if self.swapchain_config.extent != recent_extent {
+			self.swapchain_config.extent = recent_extent;
+			self.reconfigure_swapchain();
+		}
+
 		let viewport = gfx_hal::pso::Viewport {
 			rect: gfx_hal::pso::Rect {
 				x: 0,
@@ -443,20 +450,6 @@ impl WindowTarget {
 
 	fn reconfigure_swapchain(&mut self) {
 		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
-	}
-	
-	/// Resizes the internal swapchain and depth texture
-	/// 
-	/// Call this method in your window's event loop whenever the window gets resized
-	/// 
-	/// # Arguments
-	/// * `size`: The size of the window in pixels, in the order (width, height). For window implementations which
-	///           differentiate between physical and logical size, this refers to the logical size
-	pub fn resize(&mut self, (width, height): (u32, u32)) {
-		self.swapchain_config.extent.width = width;
-		self.swapchain_config.extent.height = height;
-		self.extent.set(self.swapchain_config.extent);
-		self.reconfigure_swapchain();
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
@@ -489,7 +482,7 @@ impl HasRenderer for WindowTarget {
 }
 
 impl HasRenderSize for WindowTarget {
-	fn clone_size_handle(&self) -> RenderSize {
+	fn clone_size_handle(&self) -> Rc<RenderSize> {
 		self.extent.clone()
 	}
 }
@@ -1081,7 +1074,7 @@ impl Texture {
 	/// Creates a `PixelTranslator` for this `Texture`, because textures use screen space coords when being rendered to,
 	/// not texture space
 	pub fn pixel_translator(&self) -> PixelTranslator {
-		PixelTranslator::new(self.extent.into())
+		PixelTranslator::new(Rc::new(self.extent.into()))
 	}
 }
 

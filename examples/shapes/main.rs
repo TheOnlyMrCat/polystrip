@@ -13,7 +13,7 @@ fn main() {
 		.build(&el).unwrap();
 
 	let size = window.inner_size();
-	let size_handle = RenderSize::new(size.width, size.height);
+	let size_handle = RenderSize::new(size.width, size.height).wrap();
 	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
 	let mut pipeline = StandardPipeline::new(&renderer, &renderer);
 	
@@ -23,8 +23,7 @@ fn main() {
 				*control_flow = ControlFlow::Exit;
 			},
 			Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
-				let window_size = new_size.to_logical(window.scale_factor());
-				renderer.resize((window_size.width, window_size.height));
+				size_handle.set(new_size.width, new_size.height);
 			},
 			Event::MainEventsCleared => {
 				let mut frame = renderer.next_frame().render_with(&mut pipeline);
@@ -97,7 +96,7 @@ fn shapes() {
 
 	let expected_output = image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
-	let size_handle = RenderSize::new(640, 480);
+	let size_handle = RenderSize::new(640, 480).wrap();
 	let mut pipeline = StandardPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::BLACK, (640, 480));
 
