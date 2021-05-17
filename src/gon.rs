@@ -83,7 +83,7 @@ impl GonPipeline {
 			let mut resources = Vec::with_capacity(config.frames_in_flight as usize);
 			for _ in 0..config.frames_in_flight {
 				semaphores.push(RefCell::new(context.device.create_semaphore().unwrap()));
-				fences.push(RefCell::new(context.device.create_fence(false).unwrap()));
+				fences.push(RefCell::new(context.device.create_fence(true).unwrap()));
 				resources.push(RefCell::new(Vec::new()));
 			}
 			(semaphores, fences, resources)
