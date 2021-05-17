@@ -21,6 +21,7 @@ static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.frag
 static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.vert.spv");
 static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag.spv");
 
+/// The `gon` pipeline for 2D rendering.
 pub struct GonPipeline {
 	context: Rc<Renderer>,
 	size_handle: Rc<RenderSize>,
@@ -49,6 +50,7 @@ pub struct GonPipeline {
 }
 
 impl GonPipeline {
+	/// Creates a `GonPipeline` with default settings
 	pub fn new(context: &impl HasRenderer, size: &impl HasRenderSize) -> GonPipeline {
 		GonPipelineBuilder::default().build(context, size)
 	}
@@ -1195,7 +1197,7 @@ pub struct ColoredShape<'v, 'i> {
 ///
 /// The color of the shape is determined by interpolating the texture coordinates at each
 /// [`TextureVertex`](struct.TextureVertex), and sampling the [`Texture`](../struct.Texture)
-/// provided to the [`Frame::draw_textured`](../struct.Frame#method.draw_textured) call this shape
+/// provided to the [`GonFrame::draw_textured`](struct.GonFrame#method.draw_textured) call this shape
 /// is drawn with
 #[derive(Clone, Debug)]
 pub struct TexturedShape<'v, 'i> {

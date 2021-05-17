@@ -1,8 +1,9 @@
 # 0.7
 ## 0
+- Extract drawing to frames into `Pipeline`s
+- Allow multiple textures to be rendered to one `TexturedShape` in the same rendering call
 - Allow textures to be created from a solid colour
 - Use `Cow`s in `*Shape`s
-- Allow multiple textures to be rendered to one `TexturedShape` in the same rendering call
 
 # 0.6
 ## 0

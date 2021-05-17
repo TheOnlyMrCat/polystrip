@@ -384,8 +384,7 @@ impl WindowTarget {
 	/// Creates a new window target for the given `Renderer`.
 	///
 	/// This method assumes the raw window handle was created legitimately. *Technically*, that's my problem, but if
-	/// you're not making your window properly, I'm not going to take responsibility for the resulting crash. (The
-	/// only way I'd be able to deal with it anyway would be to mark this method `unsafe`)
+	/// you're not making your window properly, I'm not going to take responsibility for the resulting crash.
 	///
 	/// ```no_run
 	/// # use std::rc::Rc;
@@ -394,13 +393,13 @@ impl WindowTarget {
 	/// # let window = winit::window::Window::new(&event_loop).unwrap();
 	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
 	/// let renderer = WindowTarget::new(
-	///     RendererBuilder::new().max_textures(2048).build_rc(),
+	///     Renderer::new().wrap(),
 	///     &window,
 	///     (window_size.width, window_size.height)
 	/// );
 	/// ```
 	pub fn new(
-		context: Rc<Renderer>,
+		context: Rc<Renderer>, //TODO: This is inconsistent with the rest of the API
 		window: &impl HasRawWindowHandle,
 		size: &impl HasRenderSize,
 		swap_image_count: u32,
@@ -604,6 +603,7 @@ impl<'a> BaseFrame<'a> {
 		}
 	}
 
+	/// Render this frame with the given [`Pipeline`]
 	pub fn render_with<P: RenderPipeline<'a>>(self, pipeline: &'a mut P) -> P::Frame {
 		pipeline.render_to(self)
 	}
@@ -1121,6 +1121,7 @@ impl Texture {
 		self.extent.height
 	}
 
+	/// Gets the data from this `Texture` in RGBA8 format, in a newly-allocated slice.
 	pub fn get_data(&self) -> Box<[u8]> {
 		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
 
@@ -1327,11 +1328,7 @@ impl Drop for Texture {
 	}
 }
 
-/// Implementation detail of the `RenderTarget` system
-///
-/// See [`Frame`]
-// #[doc(hidden)]
-pub struct TextureFrame<'a> {
+struct TextureFrame<'a> {
 	image: &'a backend::Image,
 	view: &'a backend::ImageView,
 }
@@ -1407,6 +1404,7 @@ pub struct DepthTexture {
 }
 
 impl DepthTexture {
+	//TODO: Inconsistent with rest of API
 	pub fn new(context: Rc<Renderer>, size: gfx_hal::window::Extent2D) -> DepthTexture {
 		let mut image = unsafe {
 			context.device.create_image(
