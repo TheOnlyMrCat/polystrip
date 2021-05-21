@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [package.metadata.docs.rs]
-features = ["gfx-backend-empty"]
+features = ["gfx-backend-empty", "glyph_brush"]
 
 [features]
 vulkan = ["gfx-backend-vulkan"]
@@ -33,6 +33,8 @@ gfx-backend-metal = { version = "0.7", optional = true }
 gfx-backend-dx12 = { version = "0.7", optional = true }
 gfx-backend-empty = { version = "0.7", optional = true }
 
+glyph_brush = { version = "0.7", optional = true }
+
 [dev-dependencies]
-winit = "0.23"
+winit = "0.25"
 image = "0.23"

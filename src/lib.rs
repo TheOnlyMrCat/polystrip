@@ -1108,6 +1108,191 @@ impl Texture {
 		}
 	}
 
+	/// Replaces the data in the given section of the image. The data is interpreted as RGBA8 in row-major order
+	/// 
+	/// ```
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// # use polystrip::{Renderer, Texture, gon::GonPipeline, math::Rect};
+	/// # let texture_data = image::load_from_memory(include_bytes!("../test/res/squares.png"))?.to_rgba();
+	/// # let new_data = image::load_from_memory(include_bytes!("../test/res/sandstone3.png"))?.to_rgba();
+	/// # let expected_output = image::load_from_memory(include_bytes!("../test/res/expected/texture_write_section.png"))?.to_rgba();
+	/// # let mut texture = Texture::new_from_rgba(&Renderer::new().wrap(), &texture_data, (32, 32));
+	/// let section = Rect { x: 8, y: 8, w: 16, h: 16 };
+	/// texture.write_section(section, &new_data);
+	/// assert_eq!(*texture.get_data(), *expected_output);
+	/// # Ok(())
+	/// # }
+	pub fn write_section(&mut self, section: Rect, data: &[u8]) {
+		if section.x + section.w > self.extent.width as i32
+			|| section.y + section.h > self.extent.height as i32
+			|| section.x < 0
+			|| section.y < 0
+		{
+			panic!("Section outside of texture boundary");
+		}
+
+		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
+
+		let mut buffer = unsafe {
+			self.context
+				.device
+				.create_buffer((section.w * section.h) as u64 * 4, gfx_hal::buffer::Usage::TRANSFER_DST)
+		}
+		.unwrap();
+		let buf_req = unsafe { self.context.device.get_buffer_requirements(&buffer) };
+		let mut buf_block = unsafe {
+			self.context.allocator.borrow_mut().alloc(
+				memory_device,
+				Request {
+					size: buf_req.size,
+					align_mask: buf_req.alignment,
+					memory_types: buf_req.type_mask,
+					usage: UsageFlags::DOWNLOAD | UsageFlags::TRANSIENT,
+				},
+			)
+		}
+		.unwrap();
+
+		//TODO: Use non_coherent_atom_size as well
+		let row_alignment_mask = self
+			.context
+			.adapter
+			.physical_device
+			.limits()
+			.optimal_buffer_copy_pitch_alignment as u32
+			- 1;
+		let row_pitch = (section.w as u32 * 4 + row_alignment_mask) & !row_alignment_mask;
+		let upload_size = (section.h as u32 * row_pitch) as u64;
+
+		unsafe {
+			let mapping = buf_block.map(memory_device, 0, upload_size as usize).unwrap();
+			for y in 0..section.h as usize {
+				let row = &data[y * (section.w as usize) * 4..(y + 1) * (section.w as usize) * 4];
+				std::ptr::copy_nonoverlapping(
+					row.as_ptr(),
+					mapping.as_ptr().offset(y as isize * row_pitch as isize),
+					section.w as usize * 4,
+				);
+			}
+			use gpu_alloc::MemoryDevice;
+			memory_device
+				.flush_memory_ranges(&[gpu_alloc::MappedMemoryRange {
+					memory: &buf_block.memory(),
+					offset: buf_block.offset(),
+					size: upload_size,
+				}])
+				.unwrap();
+			self.context
+				.device
+				.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer)
+				.unwrap();
+		}
+
+		let mut fence = self.context.device.create_fence(false).unwrap();
+		unsafe {
+			let mut command_buffer = self
+				.context
+				.texture_command_pool
+				.borrow_mut()
+				.allocate_one(gfx_hal::command::Level::Primary);
+			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
+
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states: (
+						gfx_hal::image::Access::SHADER_READ,
+						gfx_hal::image::Layout::ShaderReadOnlyOptimal
+					)
+						..(
+							gfx_hal::image::Access::TRANSFER_WRITE,
+							gfx_hal::image::Layout::TransferDstOptimal
+						),
+					target: &*self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}],
+			);
+			command_buffer.copy_buffer_to_image(
+				&buffer,
+				&self.image,
+				gfx_hal::image::Layout::TransferDstOptimal,
+				iter![gfx_hal::command::BufferImageCopy {
+					buffer_offset: 0,
+					buffer_width: section.w as u32,
+					buffer_height: section.h as u32,
+					image_layers: gfx_hal::image::SubresourceLayers {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level: 0,
+						layers: 0..1,
+					},
+					image_offset: gfx_hal::image::Offset {
+						x: section.x,
+						y: section.y,
+						z: 0,
+					},
+					image_extent: gfx_hal::image::Extent {
+						width: section.w as u32,
+						height: section.h as u32,
+						depth: 1,
+					}
+				}],
+			);
+			command_buffer.pipeline_barrier(
+				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
+				gfx_hal::memory::Dependencies::empty(),
+				iter![gfx_hal::memory::Barrier::Image {
+					states: (
+						gfx_hal::image::Access::TRANSFER_WRITE,
+						gfx_hal::image::Layout::TransferDstOptimal
+					)
+						..(
+							gfx_hal::image::Access::SHADER_READ,
+							gfx_hal::image::Layout::ShaderReadOnlyOptimal
+						),
+					target: &*self.image,
+					range: gfx_hal::image::SubresourceRange {
+						aspects: gfx_hal::format::Aspects::COLOR,
+						level_start: 0,
+						level_count: None,
+						layer_start: 0,
+						layer_count: None,
+					},
+					families: None,
+				}],
+			);
+			command_buffer.finish();
+
+			self.context.queue_groups.borrow_mut()[0].queues[0].submit(
+				iter![&command_buffer],
+				iter![],
+				iter![],
+				Some(&mut fence),
+			);
+			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
+
+			self.context
+				.texture_command_pool
+				.borrow_mut()
+				.free(iter![command_buffer]);
+		}
+
+		unsafe {
+			self.context.device.destroy_buffer(buffer);
+			self.context
+				.allocator
+				.borrow_mut()
+				.dealloc(GfxMemoryDevice::wrap(&self.context.device), buf_block);
+		}
+	}
+
 	/// Get the dimensions of this texture, in (width, height) order.
 	pub fn dimensions(&self) -> (u32, u32) {
 		(self.extent.width, self.extent.height)
