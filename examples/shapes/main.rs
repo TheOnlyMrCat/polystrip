@@ -8,10 +8,7 @@ use winit::window::WindowBuilder;
 
 fn main() {
 	let el = EventLoop::new();
-	let window = WindowBuilder::new()
-		.with_title("Polystrip example (Colored shapes)")
-		.build(&el)
-		.unwrap();
+	let window = WindowBuilder::new().with_title("Polystrip example (Colored shapes)").build(&el).unwrap();
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
@@ -19,26 +16,15 @@ fn main() {
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 
 	el.run(move |event, _, control_flow| match event {
-		Event::WindowEvent {
-			event: WindowEvent::CloseRequested,
-			..
-		} => {
+		Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
 			*control_flow = ControlFlow::Exit;
 		}
-		Event::WindowEvent {
-			event: WindowEvent::Resized(new_size),
-			..
-		} => {
+		Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
 			size_handle.set(new_size.width, new_size.height);
 		}
 		Event::MainEventsCleared => {
 			let mut frame = renderer.next_frame().render_with(&mut pipeline);
-			frame.clear(Color {
-				r: 128,
-				g: 128,
-				b: 128,
-				a: 255,
-			});
+			frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 			render_frame(&mut frame);
 		}
 		_ => {}
@@ -51,67 +37,25 @@ fn render_frame(frame: &mut GonFrame<'_>) {
 	frame.draw_stroked(
 		StrokedShape {
 			vertices: [
-				ColorVertex {
-					position: Vector3::new(0.0, 0.5, 1.0),
-					color: Color::WHITE,
-				},
-				ColorVertex {
-					position: Vector3::new(-0.375, 0.125, 1.0),
-					color: Color::WHITE,
-				},
-				ColorVertex {
-					position: Vector3::new(-0.25, -0.5, 1.0),
-					color: Color::WHITE,
-				},
-				ColorVertex {
-					position: Vector3::new(0.25, -0.5, 1.0),
-					color: Color::WHITE,
-				},
-				ColorVertex {
-					position: Vector3::new(0.375, 0.125, 1.0),
-					color: Color::WHITE,
-				},
+				ColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::WHITE },
+				ColorVertex { position: Vector3::new(-0.375, 0.125, 1.0), color: Color::WHITE },
+				ColorVertex { position: Vector3::new(-0.25, -0.5, 1.0), color: Color::WHITE },
+				ColorVertex { position: Vector3::new(0.25, -0.5, 1.0), color: Color::WHITE },
+				ColorVertex { position: Vector3::new(0.375, 0.125, 1.0), color: Color::WHITE },
 			][..]
 				.into(),
-			indices: [
-				[0, 1],
-				[0, 2],
-				[0, 3],
-				[0, 4],
-				[1, 2],
-				[1, 3],
-				[1, 4],
-				[2, 3],
-				[2, 4],
-				[3, 4],
-			][..]
-				.into(),
+			indices: [[0, 1], [0, 2], [0, 3], [0, 4], [1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]][..].into(),
 		},
 		&[Matrix4::translate(Vector2::new(0.5, 0.0))],
 	);
 	frame.draw_colored(
 		ColoredShape {
 			vertices: [
-				ColorVertex {
-					position: Vector3::new(0.0, 0.5, 0.0),
-					color: Color::RED,
-				},
-				ColorVertex {
-					position: Vector3::new(-0.375, 0.125, 0.0),
-					color: Color::YELLOW,
-				},
-				ColorVertex {
-					position: Vector3::new(-0.25, -0.5, 0.0),
-					color: Color::GREEN,
-				},
-				ColorVertex {
-					position: Vector3::new(0.25, -0.5, 0.0),
-					color: Color::BLUE,
-				},
-				ColorVertex {
-					position: Vector3::new(0.375, 0.125, 0.0),
-					color: Color::MAGENTA,
-				},
+				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
+				ColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
+				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
+				ColorVertex { position: Vector3::new(0.375, 0.125, 0.0), color: Color::MAGENTA },
 			][..]
 				.into(),
 			// Note the vertices are specified going counter-clockwise
@@ -122,18 +66,9 @@ fn render_frame(frame: &mut GonFrame<'_>) {
 	frame.draw_colored(
 		ColoredShape {
 			vertices: [
-				ColorVertex {
-					position: Vector3::new(0.0, 0.5, 0.0),
-					color: Color::RED,
-				},
-				ColorVertex {
-					position: Vector3::new(-0.25, -0.5, 0.0),
-					color: Color::GREEN,
-				},
-				ColorVertex {
-					position: Vector3::new(0.25, -0.5, 0.0),
-					color: Color::BLUE,
-				},
+				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
+				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
 			][..]
 				.into(),
 			indices: [[0, 1, 2]][..].into(),
@@ -148,9 +83,8 @@ fn shapes() {
 	use image::ImageFormat;
 	use polystrip::{RenderTarget, Texture};
 
-	let expected_output = image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png)
-		.unwrap()
-		.to_rgba();
+	let expected_output =
+		image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png).unwrap().to_rgba();
 	let renderer = Renderer::new().wrap();
 	let size_handle = RenderSize::new(640, 480).wrap();
 	let mut pipeline = GonPipeline::new(&renderer, &size_handle);

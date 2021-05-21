@@ -71,11 +71,7 @@ impl Vector2 {
 	}
 
 	pub const fn with_height(self, height: f32) -> Vector3 {
-		Vector3(mint::Vector3 {
-			x: self.0.x,
-			y: self.0.y,
-			z: height,
-		})
+		Vector3(mint::Vector3 { x: self.0.x, y: self.0.y, z: height })
 	}
 }
 
@@ -258,12 +254,7 @@ impl Matrix4 {
 	}
 
 	pub fn row(&self, i: usize) -> [f32; 4] {
-		[
-			self.x.as_ref()[i],
-			self.y.as_ref()[i],
-			self.z.as_ref()[i],
-			self.w.as_ref()[i],
-		]
+		[self.x.as_ref()[i], self.y.as_ref()[i], self.z.as_ref()[i], self.w.as_ref()[i]]
 	}
 }
 

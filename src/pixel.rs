@@ -33,40 +33,25 @@ impl PixelTranslator {
 	/// offsets
 	pub fn pixel_position(&self, x: i32, y: i32) -> Vector2 {
 		let extent = self.extent.get();
-		Vector2::new(
-			(x * 2) as f32 / extent.width as f32 - 1.0,
-			-((y * 2) as f32 / extent.height as f32 - 1.0),
-		)
+		Vector2::new((x * 2) as f32 / extent.width as f32 - 1.0, -((y * 2) as f32 / extent.height as f32 - 1.0))
 	}
 
 	/// Converts a pixel value into a screen space offset.
 	pub fn pixel_offset(&self, x: i32, y: i32) -> Vector2 {
 		let extent = self.extent.get();
-		Vector2::new(
-			(x * 2) as f32 / extent.width as f32,
-			-((y * 2) as f32 / extent.height as f32),
-		)
+		Vector2::new((x * 2) as f32 / extent.width as f32, -((y * 2) as f32 / extent.height as f32))
 	}
 
 	/// Converts a `Rect` into a set of `ColorVertex`es with the given `Color` and height `0.0`.
 	pub fn colored_rect(&self, rect: Rect, color: Color) -> [ColorVertex; 4] {
 		[
-			ColorVertex {
-				position: Vector2::with_height(self.pixel_position(rect.x, rect.y), 0.0),
-				color,
-			},
-			ColorVertex {
-				position: Vector2::with_height(self.pixel_position(rect.x + rect.w, rect.y), 0.0),
-				color,
-			},
+			ColorVertex { position: Vector2::with_height(self.pixel_position(rect.x, rect.y), 0.0), color },
+			ColorVertex { position: Vector2::with_height(self.pixel_position(rect.x + rect.w, rect.y), 0.0), color },
 			ColorVertex {
 				position: Vector2::with_height(self.pixel_position(rect.x + rect.w, rect.y + rect.h), 0.0),
 				color,
 			},
-			ColorVertex {
-				position: Vector2::with_height(self.pixel_position(rect.x, rect.y + rect.h), 0.0),
-				color,
-			},
+			ColorVertex { position: Vector2::with_height(self.pixel_position(rect.x, rect.y + rect.h), 0.0), color },
 		]
 	}
 

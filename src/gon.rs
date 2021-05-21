@@ -132,30 +132,14 @@ impl GonPipeline {
 		}
 		.unwrap();
 
-		let colour_vs_module = unsafe {
-			context
-				.device
-				.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV))
-		}
-		.unwrap();
-		let colour_fs_module = unsafe {
-			context
-				.device
-				.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV))
-		}
-		.unwrap();
-		let texture_vs_module = unsafe {
-			context
-				.device
-				.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV))
-		}
-		.unwrap();
-		let texture_fs_module = unsafe {
-			context
-				.device
-				.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV))
-		}
-		.unwrap();
+		let colour_vs_module =
+			unsafe { context.device.create_shader_module(bytemuck::cast_slice(COLOURED_VERT_SPV)) }.unwrap();
+		let colour_fs_module =
+			unsafe { context.device.create_shader_module(bytemuck::cast_slice(COLOURED_FRAG_SPV)) }.unwrap();
+		let texture_vs_module =
+			unsafe { context.device.create_shader_module(bytemuck::cast_slice(TEXTURED_VERT_SPV)) }.unwrap();
+		let texture_fs_module =
+			unsafe { context.device.create_shader_module(bytemuck::cast_slice(TEXTURED_FRAG_SPV)) }.unwrap();
 
 		let stroked_graphics_pipeline_layout = unsafe {
 			context.device.create_pipeline_layout(
@@ -194,12 +178,7 @@ impl GonPipeline {
 								]),
 								// * Can use the two zeros to store other spec constants when necessary
 								data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[
-									[
-										cfg!(any(feature = "metal", feature = "dx12")) as u8,
-										config.real_3d as u8,
-										0,
-										0,
-									],
+									[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0],
 									matrix_array_size.to_ne_bytes(),
 								])),
 							},
@@ -256,10 +235,7 @@ impl GonPipeline {
 						depth_bounds: None,
 					},
 					layout: &stroked_graphics_pipeline_layout,
-					subpass: gfx_hal::pass::Subpass {
-						index: 0,
-						main_pass: &main_pass,
-					},
+					subpass: gfx_hal::pass::Subpass { index: 0, main_pass: &main_pass },
 					flags: gfx_hal::pso::PipelineCreationFlags::empty(),
 					parent: gfx_hal::pso::BasePipeline::None,
 				},
@@ -304,12 +280,7 @@ impl GonPipeline {
 									gfx_hal::pso::SpecializationConstant { id: 2, range: 4..8 },
 								]),
 								data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[
-									[
-										cfg!(any(feature = "metal", feature = "dx12")) as u8,
-										config.real_3d as u8,
-										0,
-										0,
-									],
+									[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0],
 									matrix_array_size.to_ne_bytes(),
 								])),
 							},
@@ -366,10 +337,7 @@ impl GonPipeline {
 						depth_bounds: None,
 					},
 					layout: &colour_graphics_pipeline_layout,
-					subpass: gfx_hal::pass::Subpass {
-						index: 0,
-						main_pass: &main_pass,
-					},
+					subpass: gfx_hal::pass::Subpass { index: 0, main_pass: &main_pass },
 					flags: gfx_hal::pso::PipelineCreationFlags::empty(),
 					parent: gfx_hal::pso::BasePipeline::None,
 				},
@@ -414,12 +382,7 @@ impl GonPipeline {
 									gfx_hal::pso::SpecializationConstant { id: 2, range: 4..8 },
 								]),
 								data: std::borrow::Cow::Borrowed(bytemuck::cast_slice(&[
-									[
-										cfg!(any(feature = "metal", feature = "dx12")) as u8,
-										config.real_3d as u8,
-										0,
-										0,
-									],
+									[cfg!(any(feature = "metal", feature = "dx12")) as u8, config.real_3d as u8, 0, 0],
 									matrix_array_size.to_ne_bytes(),
 								])),
 							},
@@ -476,10 +439,7 @@ impl GonPipeline {
 						depth_bounds: None,
 					},
 					layout: &texture_graphics_pipeline_layout,
-					subpass: gfx_hal::pass::Subpass {
-						index: 0,
-						main_pass: &main_pass,
-					},
+					subpass: gfx_hal::pass::Subpass { index: 0, main_pass: &main_pass },
 					flags: gfx_hal::pso::PipelineCreationFlags::empty(),
 					parent: gfx_hal::pso::BasePipeline::None,
 				},
@@ -529,10 +489,7 @@ impl GonPipeline {
 	pub fn wait_next_frame(&self) -> usize {
 		let frame_idx = self.next_frame_idx();
 		unsafe {
-			self.context
-				.device
-				.wait_for_fence(&self.render_fences[frame_idx].borrow(), u64::MAX)
-				.unwrap();
+			self.context.device.wait_for_fence(&self.render_fences[frame_idx].borrow(), u64::MAX).unwrap();
 		}
 
 		let mut allocator = self.context.allocator.borrow_mut();
@@ -553,9 +510,7 @@ impl GonPipeline {
 	pub fn next_frame_idx(&self) -> usize {
 		let frames_in_flight = self.frames_in_flight;
 		self.current_frame
-			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| {
-				Some((x + 1) % frames_in_flight)
-			})
+			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| Some((x + 1) % frames_in_flight))
 			.unwrap() as usize
 	}
 
@@ -591,9 +546,7 @@ impl GonPipeline {
 			})
 			.collect();
 
-		let depth_textures = (0..count)
-			.map(|_| ManuallyDrop::new(DepthTexture::new(context.clone(), size)))
-			.collect();
+		let depth_textures = (0..count).map(|_| ManuallyDrop::new(DepthTexture::new(context.clone(), size))).collect();
 
 		(framebuffers, depth_textures)
 	}
@@ -627,11 +580,7 @@ impl<'a> RenderPipeline<'a> for GonPipeline {
 			let old_framebuffers = std::mem::replace(&mut self.framebuffers, framebuffers);
 			let old_depth_textures = std::mem::replace(&mut self.depth_textures, depth_textures);
 			for mut framebuffer in old_framebuffers {
-				unsafe {
-					self.context
-						.device
-						.destroy_framebuffer(ManuallyDrop::take(&mut framebuffer))
-				};
+				unsafe { self.context.device.destroy_framebuffer(ManuallyDrop::take(&mut framebuffer)) };
 			}
 			for mut texture in old_depth_textures {
 				unsafe { ManuallyDrop::drop(&mut texture) };
@@ -641,10 +590,7 @@ impl<'a> RenderPipeline<'a> for GonPipeline {
 		let frame_idx = self.wait_next_frame();
 
 		unsafe {
-			self.context
-				.device
-				.reset_fence(&mut *self.render_fences[frame_idx].borrow_mut())
-				.unwrap();
+			self.context.device.reset_fence(&mut *self.render_fences[frame_idx].borrow_mut()).unwrap();
 		}
 		let mut command_buffer = self.render_command_buffers[frame_idx].borrow_mut();
 
@@ -664,9 +610,7 @@ impl<'a> RenderPipeline<'a> for GonPipeline {
 					gfx_hal::command::RenderAttachmentInfo {
 						image_view: base.image,
 						clear_value: gfx_hal::command::ClearValue {
-							color: gfx_hal::command::ClearColor {
-								float32: [0.0, 0.0, 0.0, 0.0]
-							}
+							color: gfx_hal::command::ClearColor { float32: [0.0, 0.0, 0.0, 0.0] }
 						}
 					},
 					gfx_hal::command::RenderAttachmentInfo {
@@ -695,14 +639,9 @@ impl<'a> RenderPipeline<'a> for GonPipeline {
 impl Drop for GonPipeline {
 	fn drop(&mut self) {
 		unsafe {
-			let fences = ManuallyDrop::take(&mut self.render_fences)
-				.into_iter()
-				.map(RefCell::into_inner)
-				.collect::<Vec<_>>();
-			self.context
-				.device
-				.wait_for_fences(fences.iter(), gfx_hal::device::WaitFor::All, 5000000)
-				.unwrap();
+			let fences =
+				ManuallyDrop::take(&mut self.render_fences).into_iter().map(RefCell::into_inner).collect::<Vec<_>>();
+			self.context.device.wait_for_fences(fences.iter(), gfx_hal::device::WaitFor::All, 5000000).unwrap();
 			for fence in fences {
 				self.context.device.destroy_fence(fence);
 			}
@@ -714,9 +653,8 @@ impl Drop for GonPipeline {
 			let mut allocator = self.context.allocator.borrow_mut();
 			let mem_device = GfxMemoryDevice::wrap(&self.context.device);
 
-			for resource in ManuallyDrop::take(&mut self.render_frame_resources)
-				.into_iter()
-				.flat_map(|i| i.into_inner())
+			for resource in
+				ManuallyDrop::take(&mut self.render_frame_resources).into_iter().flat_map(|i| i.into_inner())
 			{
 				match resource {
 					RenderResource::Buffer(buf, block) => {
@@ -727,34 +665,17 @@ impl Drop for GonPipeline {
 			}
 
 			let mut render_command_pool = self.context.render_command_pool.borrow_mut();
-			render_command_pool.free(
-				ManuallyDrop::take(&mut self.render_command_buffers)
-					.into_iter()
-					.map(RefCell::into_inner),
-			);
+			render_command_pool
+				.free(ManuallyDrop::take(&mut self.render_command_buffers).into_iter().map(RefCell::into_inner));
 
-			self.context
-				.device
-				.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.stroked_graphics_pipeline));
-			self.context
-				.device
-				.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
-			self.context
-				.device
-				.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
-			self.context
-				.device
-				.destroy_pipeline_layout(ManuallyDrop::take(&mut self.stroked_graphics_pipeline_layout));
-			self.context
-				.device
-				.destroy_pipeline_layout(ManuallyDrop::take(&mut self.colour_graphics_pipeline_layout));
-			self.context
-				.device
-				.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
+			self.context.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.stroked_graphics_pipeline));
+			self.context.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.colour_graphics_pipeline));
+			self.context.device.destroy_graphics_pipeline(ManuallyDrop::take(&mut self.texture_graphics_pipeline));
+			self.context.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.stroked_graphics_pipeline_layout));
+			self.context.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.colour_graphics_pipeline_layout));
+			self.context.device.destroy_pipeline_layout(ManuallyDrop::take(&mut self.texture_graphics_pipeline_layout));
 
-			self.context
-				.device
-				.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
+			self.context.device.destroy_render_pass(ManuallyDrop::take(&mut self.render_pass));
 		}
 	}
 }
@@ -766,10 +687,7 @@ pub struct GonPipelineBuilder {
 
 impl GonPipelineBuilder {
 	pub fn new() -> GonPipelineBuilder {
-		Self {
-			real_3d: false,
-			frames_in_flight: 3,
-		}
+		Self { real_3d: false, frames_in_flight: 3 }
 	}
 
 	/// If `true`, allows transform matrices to affect sprite depth. This clamps the depth between `0.0` and `1.0`
@@ -826,18 +744,11 @@ impl<'a> GonFrame<'a> {
 	/// Creates a vertex buffer and an index buffer from the supplied data. The buffers will be placed into the current
 	/// frame's resources at the end, vertex buffer first, index buffer second.
 	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) {
-		let mut vertex_buffer = unsafe {
-			self.context
-				.device
-				.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX)
-		}
-		.unwrap();
-		let mut index_buffer = unsafe {
-			self.context
-				.device
-				.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX)
-		}
-		.unwrap();
+		let mut vertex_buffer =
+			unsafe { self.context.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX) }
+				.unwrap();
+		let mut index_buffer =
+			unsafe { self.context.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX) }.unwrap();
 		let vertex_mem_req = unsafe { self.context.device.get_buffer_requirements(&vertex_buffer) };
 		let index_mem_req = unsafe { self.context.device.get_buffer_requirements(&index_buffer) };
 
@@ -901,10 +812,7 @@ impl<'a> GonFrame<'a> {
 						]
 					}
 				}],
-				iter![gfx_hal::pso::ClearRect {
-					rect: self.base.viewport.rect,
-					layers: 0..1,
-				}],
+				iter![gfx_hal::pso::ClearRect { rect: self.base.viewport.rect, layers: 0..1 }],
 			);
 		}
 	}
@@ -920,10 +828,7 @@ impl<'a> GonFrame<'a> {
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(
-			bytemuck::cast_slice(&shape.vertices),
-			bytemuck::cast_slice(&shape.indices),
-		);
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
@@ -958,10 +863,7 @@ impl<'a> GonFrame<'a> {
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(
-			bytemuck::cast_slice(&shape.vertices),
-			bytemuck::cast_slice(&shape.indices),
-		);
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
@@ -998,10 +900,7 @@ impl<'a> GonFrame<'a> {
 	///
 	/// `iterations` is a slice of texture references and matrices to draw that texture with.
 	pub fn draw_textured(&mut self, shape: TexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
-		self.create_staging_buffers(
-			bytemuck::cast_slice(&shape.vertices),
-			bytemuck::cast_slice(&shape.indices),
-		);
+		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
 		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
 		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
 		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
@@ -1085,8 +984,7 @@ impl Drop for GonFrame<'_> {
 				);
 			}
 
-			self.base
-				.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
+			self.base.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
 		}
 	}
 }
@@ -1116,10 +1014,7 @@ impl TextureVertex {
 			gfx_hal::pso::AttributeDesc {
 				location: 0,
 				binding: 0,
-				element: gfx_hal::pso::Element {
-					format: gfx_hal::format::Format::Rgb32Sfloat,
-					offset: 0,
-				},
+				element: gfx_hal::pso::Element { format: gfx_hal::format::Format::Rgb32Sfloat, offset: 0 },
 			},
 			gfx_hal::pso::AttributeDesc {
 				location: 1,
@@ -1154,10 +1049,7 @@ impl ColorVertex {
 			gfx_hal::pso::AttributeDesc {
 				location: 0,
 				binding: 0,
-				element: gfx_hal::pso::Element {
-					format: gfx_hal::format::Format::Rgb32Sfloat,
-					offset: 0,
-				},
+				element: gfx_hal::pso::Element { format: gfx_hal::format::Format::Rgb32Sfloat, offset: 0 },
 			},
 			gfx_hal::pso::AttributeDesc {
 				location: 1,
@@ -1210,22 +1102,10 @@ impl TexturedShape<'_, '_> {
 	/// A quad rendering the full texture, the top two points being at height 1, the bottom two at height 0
 	pub const QUAD_FULL_STANDING: TexturedShape<'static, 'static> = TexturedShape {
 		vertices: Cow::Borrowed(&[
-			TextureVertex {
-				position: Vector3::new(0., 0., 1.),
-				tex_coords: Vector2::new(0., 0.),
-			},
-			TextureVertex {
-				position: Vector3::new(1., 0., 1.),
-				tex_coords: Vector2::new(1., 0.),
-			},
-			TextureVertex {
-				position: Vector3::new(0., 1., 0.),
-				tex_coords: Vector2::new(0., 1.),
-			},
-			TextureVertex {
-				position: Vector3::new(1., 1., 0.),
-				tex_coords: Vector2::new(1., 1.),
-			},
+			TextureVertex { position: Vector3::new(0., 0., 1.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 1.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
 		]),
 		indices: Cow::Borrowed(&QUAD_INDICES),
 	};
@@ -1233,22 +1113,10 @@ impl TexturedShape<'_, '_> {
 	/// A quad rendering the full texture, all points at height 0
 	pub const QUAD_FULL_FLAT: TexturedShape<'static, 'static> = TexturedShape {
 		vertices: Cow::Borrowed(&[
-			TextureVertex {
-				position: Vector3::new(0., 0., 0.),
-				tex_coords: Vector2::new(0., 0.),
-			},
-			TextureVertex {
-				position: Vector3::new(1., 0., 0.),
-				tex_coords: Vector2::new(1., 0.),
-			},
-			TextureVertex {
-				position: Vector3::new(0., 1., 0.),
-				tex_coords: Vector2::new(0., 1.),
-			},
-			TextureVertex {
-				position: Vector3::new(1., 1., 0.),
-				tex_coords: Vector2::new(1., 1.),
-			},
+			TextureVertex { position: Vector3::new(0., 0., 0.), tex_coords: Vector2::new(0., 0.) },
+			TextureVertex { position: Vector3::new(1., 0., 0.), tex_coords: Vector2::new(1., 0.) },
+			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
+			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
 		]),
 		indices: Cow::Borrowed(&QUAD_INDICES),
 	};

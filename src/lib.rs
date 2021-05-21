@@ -76,12 +76,7 @@ impl Renderer {
 		let adapter = instance
 			.enumerate_adapters()
 			.into_iter()
-			.find(|adapter| {
-				adapter
-					.queue_families
-					.iter()
-					.any(|family| family.queue_type().supports_graphics())
-			})
+			.find(|adapter| adapter.queue_families.iter().any(|family| family.queue_type().supports_graphics()))
 			.unwrap();
 
 		let gpu = unsafe {
@@ -89,11 +84,7 @@ impl Renderer {
 				.physical_device
 				.open(
 					&[(
-						adapter
-							.queue_families
-							.iter()
-							.find(|family| family.queue_type().supports_graphics())
-							.unwrap(),
+						adapter.queue_families.iter().find(|family| family.queue_type().supports_graphics()).unwrap(),
 						&[0.9],
 					)],
 					gfx_hal::Features::empty(),
@@ -103,10 +94,7 @@ impl Renderer {
 
 		// - Command pools, frame resources
 		let texture_command_pool = unsafe {
-			gpu.device.create_command_pool(
-				gpu.queue_groups[0].family,
-				gfx_hal::pool::CommandPoolCreateFlags::TRANSIENT,
-			)
+			gpu.device.create_command_pool(gpu.queue_groups[0].family, gfx_hal::pool::CommandPoolCreateFlags::TRANSIENT)
 		}
 		.unwrap();
 		let render_command_pool = unsafe {
@@ -202,13 +190,10 @@ impl Drop for Renderer {
 
 			allocator.cleanup(mem_device);
 
-			self.device
-				.destroy_command_pool(ManuallyDrop::take(self.render_command_pool.get_mut()));
+			self.device.destroy_command_pool(ManuallyDrop::take(self.render_command_pool.get_mut()));
 
-			self.device
-				.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
-			self.device
-				.destroy_descriptor_pool(ManuallyDrop::take(self.texture_descriptor_pool.get_mut()));
+			self.device.destroy_descriptor_set_layout(ManuallyDrop::take(&mut self.texture_descriptor_set_layout));
+			self.device.destroy_descriptor_pool(ManuallyDrop::take(self.texture_descriptor_pool.get_mut()));
 		}
 	}
 }
@@ -258,9 +243,7 @@ pub struct RenderSize {
 
 impl RenderSize {
 	pub fn new(width: u32, height: u32) -> RenderSize {
-		RenderSize {
-			size: Cell::new(gfx_hal::window::Extent2D { width, height }),
-		}
+		RenderSize { size: Cell::new(gfx_hal::window::Extent2D { width, height }) }
 	}
 
 	pub fn get(&self) -> gfx_hal::window::Extent2D {
@@ -278,9 +261,7 @@ impl RenderSize {
 
 impl From<gfx_hal::window::Extent2D> for RenderSize {
 	fn from(extent: gfx_hal::window::Extent2D) -> Self {
-		RenderSize {
-			size: Cell::new(extent),
-		}
+		RenderSize { size: Cell::new(extent) }
 	}
 }
 
@@ -305,10 +286,7 @@ pub struct RendererBuilder {
 impl RendererBuilder {
 	/// Creates a new `RendererBuilder` with default values
 	pub fn new() -> RendererBuilder {
-		RendererBuilder {
-			max_textures: 1024,
-			alloc_config: Box::new(default_memory_config),
-		}
+		RendererBuilder { max_textures: 1024, alloc_config: Box::new(default_memory_config) }
 	}
 
 	/// The allocation size of the texture pool.
@@ -409,23 +387,12 @@ impl WindowTarget {
 		let caps = surface.capabilities(&context.adapter.physical_device);
 		let swapchain_config =
 			gfx_hal::window::SwapchainConfig::from_caps(&caps, gfx_hal::format::Format::Bgra8Srgb, extent.get())
-				.with_image_count(
-					swap_image_count
-						.max(*caps.image_count.start())
-						.min(*caps.image_count.end()),
-				);
+				.with_image_count(swap_image_count.max(*caps.image_count.start()).min(*caps.image_count.end()));
 		unsafe {
-			surface
-				.configure_swapchain(&context.device, swapchain_config.clone())
-				.unwrap();
+			surface.configure_swapchain(&context.device, swapchain_config.clone()).unwrap();
 		}
 
-		WindowTarget {
-			context,
-			surface: ManuallyDrop::new(surface),
-			swapchain_config,
-			extent,
-		}
+		WindowTarget { context, surface: ManuallyDrop::new(surface), swapchain_config, extent }
 	}
 
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
@@ -471,23 +438,13 @@ impl WindowTarget {
 
 		BaseFrame::new(
 			&self.context,
-			WindowFrame {
-				surface: &mut self.surface,
-				swap_chain_frame: ManuallyDrop::new(image),
-			},
-			|drop| FrameResources {
-				image: (*drop.swap_chain_frame).borrow(),
-				viewport,
-			},
+			WindowFrame { surface: &mut self.surface, swap_chain_frame: ManuallyDrop::new(image) },
+			|drop| FrameResources { image: (*drop.swap_chain_frame).borrow(), viewport },
 		)
 	}
 
 	fn reconfigure_swapchain(&mut self) {
-		unsafe {
-			self.surface
-				.configure_swapchain(&self.context.device, self.swapchain_config.clone())
-		}
-		.unwrap();
+		unsafe { self.surface.configure_swapchain(&self.context.device, self.swapchain_config.clone()) }.unwrap();
 	}
 
 	/// Gets the width of the internal swapchain, which is updated every time [`resize`](#method.resize) is called
@@ -564,11 +521,7 @@ impl<'a> RenderDrop<'a> for WindowFrame<'a> {
 			unsafe {
 				let mut queue_groups = context.queue_groups.borrow_mut();
 				queue_groups[0].queues[0]
-					.present(
-						&mut self.surface,
-						ManuallyDrop::take(&mut self.swap_chain_frame),
-						wait_semaphore,
-					)
+					.present(&mut self.surface, ManuallyDrop::take(&mut self.swap_chain_frame), wait_semaphore)
 					.unwrap();
 			}
 		} else {
@@ -596,11 +549,7 @@ impl<'a> BaseFrame<'a> {
 		let dropbox = Box::new(drop);
 		let drop_reborrow = unsafe { &*(&*dropbox as *const D) };
 		let resolved_resources = resources(drop_reborrow);
-		BaseFrame {
-			context: context.clone_context(),
-			drop: dropbox,
-			resources: ManuallyDrop::new(resolved_resources),
-		}
+		BaseFrame { context: context.clone_context(), drop: dropbox, resources: ManuallyDrop::new(resolved_resources) }
 	}
 
 	/// Render this frame with the given [`Pipeline`]
@@ -680,10 +629,7 @@ impl Texture {
 
 	fn _from_rgba(context: Rc<Renderer>, data: &[u8], (width, height): (u32, u32)) -> Texture {
 		let mut descriptor_set = unsafe {
-			context
-				.texture_descriptor_pool
-				.borrow_mut()
-				.allocate_one(&context.texture_descriptor_set_layout)
+			context.texture_descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout)
 		}
 		.unwrap();
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
@@ -704,21 +650,13 @@ impl Texture {
 		let img_req = unsafe { context.device.get_image_requirements(&image) };
 
 		//TODO: Use non_coherent_atom_size as well
-		let row_alignment_mask = context
-			.adapter
-			.physical_device
-			.limits()
-			.optimal_buffer_copy_pitch_alignment as u32
-			- 1;
+		let row_alignment_mask =
+			context.adapter.physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
 		let row_pitch = (width * 4 + row_alignment_mask) & !row_alignment_mask;
 		let upload_size = (height * row_pitch) as u64;
 
-		let mut buffer = unsafe {
-			context
-				.device
-				.create_buffer(upload_size, gfx_hal::buffer::Usage::TRANSFER_SRC)
-		}
-		.unwrap();
+		let mut buffer =
+			unsafe { context.device.create_buffer(upload_size, gfx_hal::buffer::Usage::TRANSFER_SRC) }.unwrap();
 		let buf_req = unsafe { context.device.get_buffer_requirements(&buffer) };
 		let mut buf_block = unsafe {
 			context.allocator.borrow_mut().alloc(
@@ -751,10 +689,7 @@ impl Texture {
 					size: upload_size,
 				}])
 				.unwrap();
-			context
-				.device
-				.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer)
-				.unwrap();
+			context.device.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
 		}
 
 		let img_block = unsafe {
@@ -771,10 +706,7 @@ impl Texture {
 		.unwrap();
 
 		unsafe {
-			context
-				.device
-				.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image)
-				.unwrap();
+			context.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
 		}
 
 		let view = unsafe {
@@ -821,10 +753,8 @@ impl Texture {
 
 		let mut fence = context.device.create_fence(false).unwrap();
 		unsafe {
-			let mut command_buffer = context
-				.texture_command_pool
-				.borrow_mut()
-				.allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer =
+				context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
 			command_buffer.pipeline_barrier(
@@ -832,10 +762,7 @@ impl Texture {
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
 					states: (gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
-						..(
-							gfx_hal::image::Access::TRANSFER_WRITE,
-							gfx_hal::image::Layout::TransferDstOptimal
-						),
+						..(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
 					target: &image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -861,25 +788,15 @@ impl Texture {
 						layers: 0..1,
 					},
 					image_offset: gfx_hal::image::Offset::ZERO,
-					image_extent: gfx_hal::image::Extent {
-						width,
-						height,
-						depth: 1,
-					}
+					image_extent: gfx_hal::image::Extent { width, height, depth: 1 }
 				}],
 			);
 			command_buffer.pipeline_barrier(
 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::TRANSFER_WRITE,
-						gfx_hal::image::Layout::TransferDstOptimal
-					)
-						..(
-							gfx_hal::image::Access::SHADER_READ,
-							gfx_hal::image::Layout::ShaderReadOnlyOptimal
-						),
+					states: (gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					target: &image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -906,10 +823,7 @@ impl Texture {
 
 		unsafe {
 			context.device.destroy_buffer(buffer);
-			context
-				.allocator
-				.borrow_mut()
-				.dealloc(GfxMemoryDevice::wrap(&context.device), buf_block);
+			context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&context.device), buf_block);
 		}
 
 		Texture {
@@ -926,10 +840,7 @@ impl Texture {
 
 	fn _solid_color(context: Rc<Renderer>, color: Color, (width, height): (u32, u32)) -> Texture {
 		let mut descriptor_set = unsafe {
-			context
-				.texture_descriptor_pool
-				.borrow_mut()
-				.allocate_one(&context.texture_descriptor_set_layout)
+			context.texture_descriptor_pool.borrow_mut().allocate_one(&context.texture_descriptor_set_layout)
 		}
 		.unwrap();
 		let memory_device = GfxMemoryDevice::wrap(&context.device);
@@ -962,10 +873,7 @@ impl Texture {
 		.unwrap();
 
 		unsafe {
-			context
-				.device
-				.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image)
-				.unwrap();
+			context.device.bind_image_memory(&img_block.memory(), img_block.offset(), &mut image).unwrap();
 		}
 
 		let view = unsafe {
@@ -1012,10 +920,8 @@ impl Texture {
 
 		let mut fence = context.device.create_fence(false).unwrap();
 		unsafe {
-			let mut command_buffer = context
-				.texture_command_pool
-				.borrow_mut()
-				.allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer =
+				context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
 			command_buffer.pipeline_barrier(
@@ -1023,10 +929,7 @@ impl Texture {
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
 					states: (gfx_hal::image::Access::empty(), gfx_hal::image::Layout::Undefined)
-						..(
-							gfx_hal::image::Access::TRANSFER_WRITE,
-							gfx_hal::image::Layout::TransferDstOptimal
-						),
+						..(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
 					target: &image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1063,14 +966,8 @@ impl Texture {
 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::TRANSFER_WRITE,
-						gfx_hal::image::Layout::TransferDstOptimal
-					)
-						..(
-							gfx_hal::image::Access::SHADER_READ,
-							gfx_hal::image::Layout::ShaderReadOnlyOptimal
-						),
+					states: (gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					target: &image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1109,7 +1006,7 @@ impl Texture {
 	}
 
 	/// Replaces the data in the given section of the image. The data is interpreted as RGBA8 in row-major order
-	/// 
+	///
 	/// ```
 	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// # use polystrip::{Renderer, Texture, gon::GonPipeline, math::Rect};
@@ -1134,9 +1031,7 @@ impl Texture {
 		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
 
 		let mut buffer = unsafe {
-			self.context
-				.device
-				.create_buffer((section.w * section.h) as u64 * 4, gfx_hal::buffer::Usage::TRANSFER_DST)
+			self.context.device.create_buffer((section.w * section.h) as u64 * 4, gfx_hal::buffer::Usage::TRANSFER_DST)
 		}
 		.unwrap();
 		let buf_req = unsafe { self.context.device.get_buffer_requirements(&buffer) };
@@ -1154,13 +1049,8 @@ impl Texture {
 		.unwrap();
 
 		//TODO: Use non_coherent_atom_size as well
-		let row_alignment_mask = self
-			.context
-			.adapter
-			.physical_device
-			.limits()
-			.optimal_buffer_copy_pitch_alignment as u32
-			- 1;
+		let row_alignment_mask =
+			self.context.adapter.physical_device.limits().optimal_buffer_copy_pitch_alignment as u32 - 1;
 		let row_pitch = (section.w as u32 * 4 + row_alignment_mask) & !row_alignment_mask;
 		let upload_size = (section.h as u32 * row_pitch) as u64;
 
@@ -1182,33 +1072,21 @@ impl Texture {
 					size: upload_size,
 				}])
 				.unwrap();
-			self.context
-				.device
-				.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer)
-				.unwrap();
+			self.context.device.bind_buffer_memory(&buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
 		}
 
 		let mut fence = self.context.device.create_fence(false).unwrap();
 		unsafe {
-			let mut command_buffer = self
-				.context
-				.texture_command_pool
-				.borrow_mut()
-				.allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer =
+				self.context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
 			command_buffer.pipeline_barrier(
 				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::SHADER_READ,
-						gfx_hal::image::Layout::ShaderReadOnlyOptimal
-					)
-						..(
-							gfx_hal::image::Access::TRANSFER_WRITE,
-							gfx_hal::image::Layout::TransferDstOptimal
-						),
+					states: (gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
+						..(gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal),
 					target: &*self.image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1233,11 +1111,7 @@ impl Texture {
 						level: 0,
 						layers: 0..1,
 					},
-					image_offset: gfx_hal::image::Offset {
-						x: section.x,
-						y: section.y,
-						z: 0,
-					},
+					image_offset: gfx_hal::image::Offset { x: section.x, y: section.y, z: 0 },
 					image_extent: gfx_hal::image::Extent {
 						width: section.w as u32,
 						height: section.h as u32,
@@ -1249,14 +1123,8 @@ impl Texture {
 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::TRANSFER_WRITE,
-						gfx_hal::image::Layout::TransferDstOptimal
-					)
-						..(
-							gfx_hal::image::Access::SHADER_READ,
-							gfx_hal::image::Layout::ShaderReadOnlyOptimal
-						),
+					states: (gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					target: &*self.image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1278,18 +1146,12 @@ impl Texture {
 			);
 			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 
-			self.context
-				.texture_command_pool
-				.borrow_mut()
-				.free(iter![command_buffer]);
+			self.context.texture_command_pool.borrow_mut().free(iter![command_buffer]);
 		}
 
 		unsafe {
 			self.context.device.destroy_buffer(buffer);
-			self.context
-				.allocator
-				.borrow_mut()
-				.dealloc(GfxMemoryDevice::wrap(&self.context.device), buf_block);
+			self.context.allocator.borrow_mut().dealloc(GfxMemoryDevice::wrap(&self.context.device), buf_block);
 		}
 	}
 
@@ -1332,19 +1194,13 @@ impl Texture {
 		.unwrap();
 
 		unsafe {
-			self.context
-				.device
-				.bind_buffer_memory(buf_block.memory(), buf_block.offset(), &mut buffer)
-				.unwrap();
+			self.context.device.bind_buffer_memory(buf_block.memory(), buf_block.offset(), &mut buffer).unwrap();
 
 			let mut fence = self.fence.borrow_mut();
 			self.context.device.wait_for_fence(&fence, u64::MAX).unwrap();
 			self.context.device.reset_fence(&mut fence).unwrap();
-			let mut command_buffer = self
-				.context
-				.texture_command_pool
-				.borrow_mut()
-				.allocate_one(gfx_hal::command::Level::Primary);
+			let mut command_buffer =
+				self.context.texture_command_pool.borrow_mut().allocate_one(gfx_hal::command::Level::Primary);
 
 			command_buffer.begin_primary(gfx_hal::command::CommandBufferFlags::ONE_TIME_SUBMIT);
 
@@ -1352,14 +1208,8 @@ impl Texture {
 				gfx_hal::pso::PipelineStage::TOP_OF_PIPE..gfx_hal::pso::PipelineStage::TRANSFER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::SHADER_READ,
-						gfx_hal::image::Layout::ShaderReadOnlyOptimal
-					)
-						..(
-							gfx_hal::image::Access::TRANSFER_READ,
-							gfx_hal::image::Layout::TransferSrcOptimal
-						),
+					states: (gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal)
+						..(gfx_hal::image::Access::TRANSFER_READ, gfx_hal::image::Layout::TransferSrcOptimal),
 					target: &*self.image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1396,14 +1246,8 @@ impl Texture {
 				gfx_hal::pso::PipelineStage::TRANSFER..gfx_hal::pso::PipelineStage::FRAGMENT_SHADER,
 				gfx_hal::memory::Dependencies::empty(),
 				iter![gfx_hal::memory::Barrier::Image {
-					states: (
-						gfx_hal::image::Access::TRANSFER_WRITE,
-						gfx_hal::image::Layout::TransferDstOptimal
-					)
-						..(
-							gfx_hal::image::Access::TRANSFER_READ,
-							gfx_hal::image::Layout::TransferSrcOptimal
-						),
+					states: (gfx_hal::image::Access::TRANSFER_WRITE, gfx_hal::image::Layout::TransferDstOptimal)
+						..(gfx_hal::image::Access::TRANSFER_READ, gfx_hal::image::Layout::TransferSrcOptimal),
 					target: &*self.image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1446,10 +1290,7 @@ impl Texture {
 
 	/// Converts pixel coordinates to texture space coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
-		Vector2::new(
-			x as f32 / self.extent.width as f32,
-			y as f32 / self.extent.height as f32,
-		)
+		Vector2::new(x as f32 / self.extent.width as f32, y as f32 / self.extent.height as f32)
 	}
 
 	/// Creates a `PixelTranslator` for this `Texture`, because textures use screen space coords when being rendered to,
@@ -1468,26 +1309,14 @@ impl HasRenderer for Texture {
 impl RenderTarget for Texture {
 	fn create_frame(&mut self) -> BaseFrame<'_> {
 		let viewport = gfx_hal::pso::Viewport {
-			rect: gfx_hal::pso::Rect {
-				x: 0,
-				y: 0,
-				w: self.extent.width as i16,
-				h: self.extent.height as i16,
-			},
+			rect: gfx_hal::pso::Rect { x: 0, y: 0, w: self.extent.width as i16, h: self.extent.height as i16 },
 			depth: 0.0..1.0,
 		};
 
-		BaseFrame::new(
-			&self.context,
-			TextureFrame {
-				image: &*self.image,
-				view: &*self.view,
-			},
-			|drop| FrameResources {
-				image: drop.view,
-				viewport,
-			},
-		)
+		BaseFrame::new(&self.context, TextureFrame { image: &*self.image, view: &*self.view }, |drop| FrameResources {
+			image: drop.view,
+			viewport,
+		})
 	}
 }
 
@@ -1498,17 +1327,13 @@ impl Drop for Texture {
 				.texture_descriptor_pool
 				.borrow_mut()
 				.free(std::iter::once(ManuallyDrop::take(&mut self.descriptor_set)));
-			self.context
-				.device
-				.destroy_sampler(ManuallyDrop::take(&mut self.sampler));
-			self.context
-				.device
-				.destroy_image_view(ManuallyDrop::take(&mut self.view));
+			self.context.device.destroy_sampler(ManuallyDrop::take(&mut self.sampler));
+			self.context.device.destroy_image_view(ManuallyDrop::take(&mut self.view));
 			self.context.device.destroy_image(ManuallyDrop::take(&mut self.image));
-			self.context.allocator.borrow_mut().dealloc(
-				GfxMemoryDevice::wrap(&self.context.device),
-				ManuallyDrop::take(&mut self.memory_block),
-			);
+			self.context
+				.allocator
+				.borrow_mut()
+				.dealloc(GfxMemoryDevice::wrap(&self.context.device), ManuallyDrop::take(&mut self.memory_block));
 		}
 	}
 }
@@ -1556,11 +1381,7 @@ impl<'a> RenderDrop<'a> for TextureFrame<'a> {
 					states: (
 						gfx_hal::image::Access::COLOR_ATTACHMENT_WRITE,
 						gfx_hal::image::Layout::ColorAttachmentOptimal
-					)
-						..(
-							gfx_hal::image::Access::SHADER_READ,
-							gfx_hal::image::Layout::ShaderReadOnlyOptimal
-						),
+					)..(gfx_hal::image::Access::SHADER_READ, gfx_hal::image::Layout::ShaderReadOnlyOptimal),
 					target: self.image,
 					range: gfx_hal::image::SubresourceRange {
 						aspects: gfx_hal::format::Aspects::COLOR,
@@ -1615,12 +1436,7 @@ impl DepthTexture {
 			)
 		}
 		.unwrap();
-		unsafe {
-			context
-				.device
-				.bind_image_memory(&memory.memory(), memory.offset(), &mut image)
-		}
-		.unwrap();
+		unsafe { context.device.bind_image_memory(&memory.memory(), memory.offset(), &mut image) }.unwrap();
 		let view = unsafe {
 			context.device.create_image_view(
 				&image,
@@ -1656,14 +1472,12 @@ impl HasRenderer for DepthTexture {
 impl Drop for DepthTexture {
 	fn drop(&mut self) {
 		unsafe {
-			self.context
-				.device
-				.destroy_image_view(ManuallyDrop::take(&mut self.view));
+			self.context.device.destroy_image_view(ManuallyDrop::take(&mut self.view));
 			self.context.device.destroy_image(ManuallyDrop::take(&mut self.image));
-			self.context.allocator.borrow_mut().dealloc(
-				GfxMemoryDevice::wrap(&self.context.device),
-				ManuallyDrop::take(&mut self.memory),
-			);
+			self.context
+				.allocator
+				.borrow_mut()
+				.dealloc(GfxMemoryDevice::wrap(&self.context.device), ManuallyDrop::take(&mut self.memory));
 		}
 	}
 }
