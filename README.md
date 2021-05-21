@@ -7,9 +7,8 @@ Polystrip is a 2D hardware-accelerated rendering library, primarily targeted at 
 probably be used in other applications as well. Polystrip intends to be a pure-rust replacement for the graphics
 of the `sdl2` crate.
 
-**This crate should not be considered stable until the 1.0 release.** Following true semver spec, this crate will
-~~likely~~ definitely make breaking changes between development versions. The 1.0 release will come when I think this
-crate is fully-featured.
+**This crate should not be considered stable.** This crate will ~~likely~~ definitely make breaking changes between minor
+versions at this stage. 
 
 ## Simple example with winit
 
@@ -38,6 +37,15 @@ event_loop.run(move |event, _, control_flow| {
 ```
 
 More examples can be found in the [examples](examples) directory, and can be run with `cargo run --example <name>`.
+
+## Building shaders
+
+All shaders are precompiled into the `gen/` directory. If any shader is updated, the corresponding `.spv` should be updated
+as well. The Makefile in the top level of this repository will update any modified shaders.
+
+Building these shaders requires a copy of a compiler such as the Google-owned [shaderc](https://github.com/google/shaderc).
+The Makefile will try running the compiler program by name `glslc`. If this is not the correct name, run the Makefile with
+`make GLSLC=name`.
 
 ## License
 

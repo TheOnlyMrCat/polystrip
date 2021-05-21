@@ -16,10 +16,10 @@ use crate::Renderer;
 use crate::{backend, BaseFrame, DepthTexture, HasRenderSize, HasRenderer, RenderPipeline, RenderSize, Texture};
 
 use align_data::{include_aligned, Align32};
-static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.vert.spv");
-static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/coloured.frag.spv");
-static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.vert.spv");
-static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "spirv/textured.frag.spv");
+static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/coloured.vert.spv");
+static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/coloured.frag.spv");
+static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/textured.vert.spv");
+static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/textured.frag.spv");
 
 /// The `gon` pipeline for 2D rendering.
 pub struct GonPipeline {

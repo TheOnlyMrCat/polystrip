@@ -1,15 +1,15 @@
 GLSLC := glslc
 
-shaders: src/spirv/coloured.frag.spv src/spirv/coloured.vert.spv src/spirv/textured.frag.spv src/spirv/textured.vert.spv
+shaders: gen/coloured.frag.spv gen/coloured.vert.spv gen/textured.frag.spv gen/textured.vert.spv
 
-src/spirv/coloured.frag.spv: src/spirv/coloured.frag
-	$(GLSLC) -o src/spirv/coloured.frag.spv src/spirv/coloured.frag
+gen/coloured.frag.spv: src/gon/coloured.frag
+	$(GLSLC) -o gen/coloured.frag.spv src/gon/coloured.frag
 
-src/spirv/coloured.vert.spv: src/spirv/coloured.vert
-	$(GLSLC) -o src/spirv/coloured.vert.spv src/spirv/coloured.vert
+gen/coloured.vert.spv: src/gon/coloured.vert
+	$(GLSLC) -o gen/coloured.vert.spv src/gon/coloured.vert
 
-src/spirv/textured.frag.spv: src/spirv/textured.frag
-	$(GLSLC) -o src/spirv/textured.frag.spv src/spirv/textured.frag
+gen/textured.frag.spv: src/gon/textured.frag
+	$(GLSLC) -o gen/textured.frag.spv src/gon/textured.frag
 
-src/spirv/textured.vert.spv: src/spirv/textured.vert
-	$(GLSLC) -o src/spirv/textured.vert.spv src/spirv/textured.vert
+gen/textured.vert.spv: src/gon/textured.vert
+	$(GLSLC) -o gen/textured.vert.spv src/gon/textured.vert
