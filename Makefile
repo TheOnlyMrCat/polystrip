@@ -13,3 +13,9 @@ gen/textured.frag.spv: src/gon/textured.frag
 
 gen/textured.vert.spv: src/gon/textured.vert
 	$(GLSLC) -o gen/textured.vert.spv src/gon/textured.vert
+
+gen/character.frag.spv: src/gon/textured.vert
+	$(GLSLC) -o gen/character.frag.spv src/tui/character.frag
+
+gen/chaacter.vert.spv: src/gon/textured.vert
+	$(GLSLC) -o gen/character.vert.spv src/tui/character.vert

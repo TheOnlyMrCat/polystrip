@@ -274,7 +274,6 @@ pub fn default_memory_config(_props: &gpu_alloc::DeviceProperties) -> gpu_alloc:
 /// ```no_run
 /// # use polystrip::RendererBuilder;
 /// let renderer = RendererBuilder::new()
-///     .real_3d(true)
 ///     .max_textures(2048)
 ///     .build();
 /// ```
@@ -331,26 +330,7 @@ impl Default for RendererBuilder {
 /// A target for drawing to a `raw_window_handle` window.
 ///
 /// A `WindowTarget` can be created for any window compatible with `raw_window_handle`. The size of this window must be updated
-/// in the event loop, and specified on creation. For example, in `winit`:
-/// ```no_run
-/// # use winit::event::{Event, WindowEvent};
-/// # use polystrip::{Renderer, WindowTarget};
-/// # let event_loop = winit::event_loop::EventLoop::new();
-/// # let window = winit::window::Window::new(&event_loop).unwrap();
-/// let window_size = window.inner_size().to_logical(window.scale_factor());
-/// let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, (window_size.width, window_size.height));
-///
-/// event_loop.run(move |event, _, control_flow| {
-///     match event {
-///         Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
-///             let window_size = new_size.to_logical(window.scale_factor());
-///             renderer.resize((window_size.width, window_size.height));
-///         },
-///         // --snip--
-/// #       _ => {}
-///     }
-/// });
-/// ```
+/// in the event loop, and specified on creation.
 pub struct WindowTarget {
 	pub context: Rc<Renderer>,
 	surface: ManuallyDrop<backend::Surface>,
@@ -366,14 +346,15 @@ impl WindowTarget {
 	///
 	/// ```no_run
 	/// # use std::rc::Rc;
-	/// # use polystrip::{RendererBuilder, WindowTarget};
+	/// # use polystrip::{Renderer, RenderSize, WindowTarget};
 	/// # let event_loop = winit::event_loop::EventLoop::new();
 	/// # let window = winit::window::Window::new(&event_loop).unwrap();
 	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
 	/// let renderer = WindowTarget::new(
 	///     Renderer::new().wrap(),
 	///     &window,
-	///     (window_size.width, window_size.height)
+	///     &RenderSize::new(window_size.width, window_size.height).wrap(),
+	///     3 // Default for GonPipeline
 	/// );
 	/// ```
 	pub fn new(

@@ -1,5 +1,6 @@
 #version 450
 
+// y-coordinate is flipped on Metal and DX backends
 layout(constant_id=0) const bool FLIP_Y = false;
 layout(constant_id=1) const bool REAL_Z = false;
 layout(constant_id=2) const uint TRANSFORM_ARRAY_SIZE = 1;

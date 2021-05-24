@@ -1,4 +1,4 @@
 {
-	"rust.features": [ "empty", "glyph_brush" ],
-	"rust-analyzer.cargo.features": [ "empty", "glyph_brush" ]
+	"rust.features": [ "empty", "tui", "glyph_brush" ],
+	"rust-analyzer.cargo.features": [ "empty", "tui", "glyph_brush" ]
 }
