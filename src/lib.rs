@@ -12,9 +12,11 @@
 //! An example with `winit` is available in the documentation for `WindowTarget`.
 
 pub(crate) mod backend;
-pub mod gon;
 pub mod math;
 pub mod pixel;
+
+#[cfg(feature = "gon")]
+pub mod gon;
 
 pub use gfx_hal;
 pub use gpu_alloc;

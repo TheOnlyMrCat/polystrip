@@ -16,10 +16,10 @@ use crate::Renderer;
 use crate::{backend, BaseFrame, DepthTexture, HasRenderSize, HasRenderer, RenderPipeline, RenderSize, Texture};
 
 use align_data::{include_aligned, Align32};
-static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/coloured.vert.spv");
-static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/coloured.frag.spv");
-static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/textured.vert.spv");
-static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/textured.frag.spv");
+static COLOURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/gon/coloured.vert.spv");
+static COLOURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/gon/coloured.frag.spv");
+static TEXTURED_VERT_SPV: &[u8] = include_aligned!(Align32, "../gen/gon/textured.vert.spv");
+static TEXTURED_FRAG_SPV: &[u8] = include_aligned!(Align32, "../gen/gon/textured.frag.spv");
 
 /// The `gon` pipeline for 2D rendering.
 pub struct GonPipeline {
@@ -550,6 +550,62 @@ impl GonPipeline {
 
 		(framebuffers, depth_textures)
 	}
+
+	fn create_vertex_buffer(&self, data: &[u8]) -> (backend::Buffer, MemoryBlock<backend::Memory>) {
+		let mut vertex_buffer =
+			unsafe { self.context.device.create_buffer(data.len() as u64, gfx_hal::buffer::Usage::VERTEX) }.unwrap();
+		let vertex_mem_req = unsafe { self.context.device.get_buffer_requirements(&vertex_buffer) };
+
+		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
+		let mut vertex_block = unsafe {
+			self.context.allocator.borrow_mut().alloc(
+				memory_device,
+				Request {
+					size: vertex_mem_req.size,
+					align_mask: vertex_mem_req.alignment,
+					memory_types: vertex_mem_req.type_mask,
+					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT, // Implies host-visible
+				},
+			)
+		}
+		.unwrap();
+		unsafe {
+			vertex_block.write_bytes(memory_device, 0, data).unwrap();
+			self.context
+				.device
+				.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer)
+				.unwrap();
+		}
+		(vertex_buffer, vertex_block)
+	}
+
+	fn create_index_buffer(&self, data: &[u8]) -> (backend::Buffer, MemoryBlock<backend::Memory>) {
+		let mut index_buffer =
+			unsafe { self.context.device.create_buffer(data.len() as u64, gfx_hal::buffer::Usage::INDEX) }.unwrap();
+		let index_mem_req = unsafe { self.context.device.get_buffer_requirements(&index_buffer) };
+
+		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
+		let mut index_block = unsafe {
+			self.context.allocator.borrow_mut().alloc(
+				memory_device,
+				Request {
+					size: index_mem_req.size,
+					align_mask: index_mem_req.alignment,
+					memory_types: index_mem_req.type_mask,
+					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT, // Implies host-visible
+				},
+			)
+		}
+		.unwrap();
+		unsafe {
+			index_block.write_bytes(memory_device, 0, data).unwrap();
+			self.context
+				.device
+				.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer)
+				.unwrap();
+		}
+		(index_buffer, index_block)
+	}
 }
 
 impl HasRenderer for GonPipeline {
@@ -741,59 +797,6 @@ pub struct GonFrame<'a> {
 }
 
 impl<'a> GonFrame<'a> {
-	/// Creates a vertex buffer and an index buffer from the supplied data. The buffers will be placed into the current
-	/// frame's resources at the end, vertex buffer first, index buffer second.
-	fn create_staging_buffers(&mut self, vertices: &[u8], indices: &[u8]) {
-		let mut vertex_buffer =
-			unsafe { self.context.device.create_buffer(vertices.len() as u64, gfx_hal::buffer::Usage::VERTEX) }
-				.unwrap();
-		let mut index_buffer =
-			unsafe { self.context.device.create_buffer(indices.len() as u64, gfx_hal::buffer::Usage::INDEX) }.unwrap();
-		let vertex_mem_req = unsafe { self.context.device.get_buffer_requirements(&vertex_buffer) };
-		let index_mem_req = unsafe { self.context.device.get_buffer_requirements(&index_buffer) };
-
-		let memory_device = GfxMemoryDevice::wrap(&self.context.device);
-		let mut vertex_block = unsafe {
-			self.context.allocator.borrow_mut().alloc(
-				memory_device,
-				Request {
-					size: vertex_mem_req.size,
-					align_mask: vertex_mem_req.alignment,
-					memory_types: vertex_mem_req.type_mask,
-					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT, // Implies host-visible
-				},
-			)
-		}
-		.unwrap();
-		let mut index_block = unsafe {
-			self.context.allocator.borrow_mut().alloc(
-				memory_device,
-				Request {
-					size: index_mem_req.size,
-					align_mask: index_mem_req.alignment,
-					memory_types: index_mem_req.type_mask,
-					usage: UsageFlags::UPLOAD | UsageFlags::TRANSIENT,
-				},
-			)
-		}
-		.unwrap();
-		unsafe {
-			vertex_block.write_bytes(memory_device, 0, vertices).unwrap();
-			index_block.write_bytes(memory_device, 0, indices).unwrap();
-			self.context
-				.device
-				.bind_buffer_memory(&vertex_block.memory(), vertex_block.offset(), &mut vertex_buffer)
-				.unwrap();
-			self.context
-				.device
-				.bind_buffer_memory(&index_block.memory(), index_block.offset(), &mut index_buffer)
-				.unwrap();
-		}
-		let mut frame_res = self.pipeline.render_frame_resources[self.frame_idx].borrow_mut();
-		frame_res.push(RenderResource::Buffer(vertex_buffer, vertex_block));
-		frame_res.push(RenderResource::Buffer(index_buffer, index_block));
-	}
-
 	/// Clears the entire frame to the passed [`Color`](../vertex/struct.Color.html).
 	///
 	/// The color is converted from sRGB using a gamma value of 2.0
@@ -827,17 +830,21 @@ impl<'a> GonFrame<'a> {
 
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: StrokedShape<'_>, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
-		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
-		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
-		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
+	pub fn draw_stroked(&mut self, shape: StrokedShape<'_, '_>, obj_transforms: &[Matrix4]) {
+		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
+		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(&index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+		}
 
+		let mut resources = self.pipeline.render_frame_resources[self.frame_idx].borrow_mut();
+		resources.push(RenderResource::Buffer(vertex_buffer, vertex_memory));
+		resources.push(RenderResource::Buffer(index_buffer, index_memory));
+
+		unsafe {
 			command_buffer.bind_graphics_pipeline(&self.pipeline.stroked_graphics_pipeline);
 			command_buffer.push_graphics_constants(
 				&self.pipeline.stroked_graphics_pipeline_layout,
@@ -863,16 +870,20 @@ impl<'a> GonFrame<'a> {
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
 	pub fn draw_colored(&mut self, shape: ColoredShape, obj_transforms: &[Matrix4]) {
-		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
-		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
-		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
-		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
+		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
+		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(&index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+		}
 
+		let mut resources = self.pipeline.render_frame_resources[self.frame_idx].borrow_mut();
+		resources.push(RenderResource::Buffer(vertex_buffer, vertex_memory));
+		resources.push(RenderResource::Buffer(index_buffer, index_memory));
+
+		unsafe {
 			command_buffer.bind_graphics_pipeline(&self.pipeline.colour_graphics_pipeline);
 			command_buffer.push_graphics_constants(
 				&self.pipeline.colour_graphics_pipeline_layout,
@@ -900,16 +911,20 @@ impl<'a> GonFrame<'a> {
 	///
 	/// `iterations` is a slice of texture references and matrices to draw that texture with.
 	pub fn draw_textured(&mut self, shape: TexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
-		self.create_staging_buffers(bytemuck::cast_slice(&shape.vertices), bytemuck::cast_slice(&shape.indices));
-		let resources = self.pipeline.render_frame_resources[self.frame_idx].borrow();
-		let (vertex_buffer, _) = resources[resources.len() - 2].unwrap_buffer_ref();
-		let (index_buffer, _) = resources[resources.len() - 1].unwrap_buffer_ref();
+		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
+		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
 
 		unsafe {
-			command_buffer.bind_vertex_buffers(0, iter![(vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
-			command_buffer.bind_index_buffer(index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+			command_buffer.bind_vertex_buffers(0, iter![(&vertex_buffer, gfx_hal::buffer::SubRange::WHOLE)]);
+			command_buffer.bind_index_buffer(&index_buffer, gfx_hal::buffer::SubRange::WHOLE, gfx_hal::IndexType::U16);
+		}
 
+		let mut resources = self.pipeline.render_frame_resources[self.frame_idx].borrow_mut();
+		resources.push(RenderResource::Buffer(vertex_buffer, vertex_memory));
+		resources.push(RenderResource::Buffer(index_buffer, index_memory));
+
+		unsafe {
 			command_buffer.bind_graphics_pipeline(&self.pipeline.texture_graphics_pipeline);
 			command_buffer.push_graphics_constants(
 				&self.pipeline.texture_graphics_pipeline_layout,
@@ -1068,10 +1083,10 @@ impl ColorVertex {
 /// The colors of the lines are determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
 #[derive(Clone, Debug)]
-pub struct StrokedShape<'a> {
-	pub vertices: Cow<'a, [ColorVertex]>,
+pub struct StrokedShape<'v, 'i> {
+	pub vertices: Cow<'v, [ColorVertex]>,
 	/// A list of pairs of vertices which specify which vertices should have lines drawn between them
-	pub indices: Cow<'a, [[u16; 2]]>,
+	pub indices: Cow<'i, [[u16; 2]]>,
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.

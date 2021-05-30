@@ -13,6 +13,8 @@ edition = "2018"
 features = ["gfx-backend-empty", "glyph_brush"]
 
 [features]
+default = ["gon"]
+gon = ["glyph_brush", "ab_glyph"]
 tui = ["ab_glyph"]
 vulkan = ["gfx-backend-vulkan"]
 metal = ["gfx-backend-metal"]
@@ -34,8 +36,8 @@ gfx-backend-metal = { version = "0.7", optional = true }
 gfx-backend-dx12 = { version = "0.7", optional = true }
 gfx-backend-empty = { version = "0.7", optional = true }
 
-ab_glyph = { version = "0.2.10", optional = true }
 glyph_brush = { version = "0.7", optional = true }
+ab_glyph = { version = "0.2.10", optional = true }
 
 [dev-dependencies]
 winit = "0.25"

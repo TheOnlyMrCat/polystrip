@@ -5,9 +5,11 @@
 
 use std::rc::Rc;
 
-use crate::gon::{ColorVertex, TextureVertex};
 use crate::math::{Color, Rect, Vector2};
 use crate::{RenderSize, Texture};
+
+#[cfg(feature = "gon")]
+use crate::gon::{ColorVertex, TextureVertex};
 
 /// When constructed from a [`WindowTarget`](crate::WindowTarget), tracks the window's size and provides methods which
 /// convert between pixel space and screen space for that window.
@@ -43,6 +45,7 @@ impl PixelTranslator {
 	}
 
 	/// Converts a `Rect` into a set of `ColorVertex`es with the given `Color` and height `0.0`.
+	#[cfg(feature = "gon")]
 	pub fn colored_rect(&self, rect: Rect, color: Color) -> [ColorVertex; 4] {
 		[
 			ColorVertex { position: Vector2::with_height(self.pixel_position(rect.x, rect.y), 0.0), color },
@@ -60,6 +63,7 @@ impl PixelTranslator {
 	/// Converts a `Rect` into a set of `TextureVertex`es with height `0.0`.
 	///
 	/// The texture will be scaled to fit entirely onto the `Rect`.
+	#[cfg(feature = "gon")]
 	pub fn textured_rect(&self, rect: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex {
@@ -82,6 +86,7 @@ impl PixelTranslator {
 	}
 
 	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
+	#[cfg(feature = "gon")]
 	pub fn texture_at(&self, texture: &Texture, x: i32, y: i32) -> [TextureVertex; 4] {
 		[
 			TextureVertex {
@@ -109,6 +114,7 @@ impl PixelTranslator {
 	/// Creates a set of `TextureVertex`es with the width and height of the passed `Texture` and height `0.0`.
 	///
 	/// The dimensions of the texture will be scaled by the provided `scale` factor. The `x` and `y` positions will not change.
+	#[cfg(feature = "gon")]
 	pub fn texture_scaled(&self, texture: &Texture, x: i32, y: i32, scale: f32) -> [TextureVertex; 4] {
 		[
 			TextureVertex {
@@ -146,6 +152,7 @@ impl PixelTranslator {
 	///
 	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
 	/// is drawn at (`x`, `y`)
+	#[cfg(feature = "gon")]
 	pub fn texture_cropped(&self, texture: &Texture, x: i32, y: i32, crop: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex {
@@ -174,6 +181,7 @@ impl PixelTranslator {
 	///
 	/// Only the part of the texture inside the passed `crop` rectangle is shown. The top-left corner of the crop rectangle
 	/// is drawn at (`x`, `y`)
+	#[cfg(feature = "gon")]
 	pub fn texture_scaled_cropped(&self, texture: &Texture, destination: Rect, crop: Rect) -> [TextureVertex; 4] {
 		[
 			TextureVertex {
