@@ -2,6 +2,8 @@
 
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -830,7 +832,7 @@ impl<'a> GonFrame<'a> {
 
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: StrokedShape<'_, '_>, obj_transforms: &[Matrix4]) {
+	pub fn draw_stroked(&mut self, shape: &StrokedShape<'_, '_>, obj_transforms: &[Matrix4]) {
 		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
 		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
@@ -869,7 +871,7 @@ impl<'a> GonFrame<'a> {
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: ColoredShape, obj_transforms: &[Matrix4]) {
+	pub fn draw_colored(&mut self, shape: &ColoredShape<'_, '_>, obj_transforms: &[Matrix4]) {
 		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
 		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
@@ -910,7 +912,7 @@ impl<'a> GonFrame<'a> {
 	/// before it.
 	///
 	/// `iterations` is a slice of texture references and matrices to draw that texture with.
-	pub fn draw_textured(&mut self, shape: TexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
+	pub fn draw_textured(&mut self, shape: &TexturedShape<'_, '_>, iterations: &[(&'a Texture, &[Matrix4])]) {
 		let (vertex_buffer, vertex_memory) = self.pipeline.create_vertex_buffer(bytemuck::cast_slice(&shape.vertices));
 		let (index_buffer, index_memory) = self.pipeline.create_index_buffer(bytemuck::cast_slice(&shape.indices));
 		let mut command_buffer = self.pipeline.render_command_buffers[self.frame_idx].borrow_mut();
@@ -962,6 +964,10 @@ impl<'a> GonFrame<'a> {
 		}
 	}
 
+	pub fn draw(&mut self, object: &'a impl Drawable) {
+		object.draw_to(self);
+	}
+
 	/// Converts pixel coordinates to Gpu coordinates
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
 		Vector2::new(
@@ -1001,6 +1007,126 @@ impl Drop for GonFrame<'_> {
 
 			self.base.drop_cleanup(Some(&mut *self.pipeline.render_semaphores[self.frame_idx].borrow_mut()));
 		}
+	}
+}
+
+pub trait Drawable {
+	fn draw_to<'a>(&'a self, frame: &mut GonFrame<'a>);
+}
+
+#[cfg(feature = "glyph_brush")]
+pub struct GlyphBrush<'a, F = glyph_brush::ab_glyph::FontArc, H = glyph_brush::DefaultSectionHasher> {
+	brush: glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>,
+	texture: Texture,
+	current_shapes: Vec<TexturedShape<'a, 'a>>,
+}
+
+#[cfg(feature = "glyph_brush")]
+impl<'a, F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrush<'a, F, H> {
+	pub fn from_glyph_brush<'b>(
+		context: &'b impl HasRenderer,
+		brush: glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>,
+	) -> GlyphBrush<'a, F, H> {
+		GlyphBrush {
+			texture: Texture::new_solid_color(context, Color::ZERO, brush.texture_dimensions()),
+			brush,
+			current_shapes: Vec::new(),
+		}
+	}
+
+	pub fn process_queued(&mut self, size: &impl HasRenderSize) {
+		let size = size.clone_size_handle().get();
+
+		let texture = &mut self.texture;
+		match self.brush.process_queued(
+			|size, data| {
+				texture.write_section(
+					Rect {
+						x: size.min[0] as i32,
+						y: size.min[1] as i32,
+						w: size.width() as i32,
+						h: size.height() as i32,
+					},
+					bytemuck::cast_slice(&data.into_iter().map(|a| Color::new(255, 255, 255, *a)).collect::<Vec<_>>()),
+				)
+			},
+			|vertex| {
+				[
+					TextureVertex {
+						position: Vector3::new(
+							vertex.pixel_coords.min.x * 2. / size.width as f32 - 1.0,
+							-(vertex.pixel_coords.min.y * 2. / size.height as f32 - 1.0),
+							vertex.extra.z,
+						),
+						tex_coords: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.min.y),
+					},
+					TextureVertex {
+						position: Vector3::new(
+							vertex.pixel_coords.max.x * 2. / size.width as f32 - 1.0,
+							-(vertex.pixel_coords.min.y * 2. / size.height as f32 - 1.0),
+							vertex.extra.z,
+						),
+						tex_coords: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.min.y),
+					},
+					TextureVertex {
+						position: Vector3::new(
+							vertex.pixel_coords.max.x * 2. / size.width as f32 - 1.0,
+							-(vertex.pixel_coords.max.y * 2. / size.height as f32 - 1.0),
+							vertex.extra.z,
+						),
+						tex_coords: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.max.y),
+					},
+					TextureVertex {
+						position: Vector3::new(
+							vertex.pixel_coords.min.x * 2. / size.width as f32 - 1.0,
+							-(vertex.pixel_coords.max.y * 2. / size.height as f32 - 1.0),
+							vertex.extra.z,
+						),
+						tex_coords: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.max.y),
+					},
+				]
+			},
+		) {
+			Ok(glyph_brush::BrushAction::Draw(vertices)) => {
+				self.current_shapes = vertices
+					.into_iter()
+					.map(|vertices| TexturedShape {
+						vertices: Cow::Owned(vertices.to_vec()),
+						indices: Cow::Borrowed(&QUAD_INDICES),
+					})
+					.collect()
+			}
+			Ok(glyph_brush::BrushAction::ReDraw) => {}
+			Err(glyph_brush::BrushError::TextureTooSmall { suggested }) => {
+				self.texture = Texture::new_solid_color(&self.texture, Color::ZERO, suggested);
+				self.brush.resize_texture(suggested.0, suggested.1);
+			}
+		}
+	}
+}
+
+#[cfg(feature = "glyph_brush")]
+impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Drawable for GlyphBrush<'_, F, H> {
+	fn draw_to<'a>(&'a self, frame: &mut GonFrame<'a>) {
+		for shape in &self.current_shapes {
+			frame.draw_textured(shape, &[(&self.texture, &[Matrix4::identity()])]);
+		}
+	}
+}
+
+#[cfg(feature = "glyph_brush")]
+impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Deref for GlyphBrush<'_, F, H> {
+	type Target = glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>;
+
+	fn deref(&self) -> &Self::Target {
+		&self.brush
+	}
+}
+
+#[cfg(feature = "glyph_brush")]
+impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> DerefMut for GlyphBrush<'_, F, H> {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.brush
 	}
 }
 

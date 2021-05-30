@@ -26,6 +26,9 @@ pub struct Color {
 	pub a: u8,
 }
 
+unsafe impl bytemuck::Zeroable for Color {}
+unsafe impl bytemuck::Pod for Color {}
+
 impl Color {
 	pub const ZERO: Color = Color::new(0, 0, 0, 0);
 	pub const RED: Color = Color::new(255, 0, 0, 255);

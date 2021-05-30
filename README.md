@@ -58,6 +58,9 @@ Licensed under either of
 
 at your option.
 
+The Open Sans font used in textual examples was designed by Steve Matteson and is licensed under the Apache License, Version 2.0,
+available at http://www.apache.org/licenses/LICENSE-2.0.
+
 ## Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted

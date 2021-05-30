@@ -35,7 +35,7 @@ fn main() {
 fn render_frame(frame: &mut GonFrame<'_>) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(
-		StrokedShape {
+		&StrokedShape {
 			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::WHITE },
 				ColorVertex { position: Vector3::new(-0.375, 0.125, 1.0), color: Color::WHITE },
@@ -49,7 +49,7 @@ fn render_frame(frame: &mut GonFrame<'_>) {
 		&[Matrix4::translate(Vector2::new(0.5, 0.0))],
 	);
 	frame.draw_colored(
-		ColoredShape {
+		&ColoredShape {
 			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
 				ColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
@@ -64,7 +64,7 @@ fn render_frame(frame: &mut GonFrame<'_>) {
 		&[Matrix4::translate(Vector2::new(0.5, 0.0))],
 	);
 	frame.draw_colored(
-		ColoredShape {
+		&ColoredShape {
 			vertices: [
 				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
 				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },

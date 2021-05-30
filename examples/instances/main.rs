@@ -55,7 +55,7 @@ fn main() {
 			let mut frame = renderer.next_frame().render_with(&mut pipeline);
 			frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
 			frame.draw_textured(
-				TexturedShape {
+				&TexturedShape {
 					vertices: [
 						TextureVertex {
 							position: frame.pixel(50, 50).with_height(0.0),
@@ -115,7 +115,7 @@ fn instanced_drawing() {
 
 	let mut frame = texture.create_frame().render_with(&mut pipeline);
 	frame.draw_textured(
-		TexturedShape {
+		&TexturedShape {
 			vertices: [
 				TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
 				TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
