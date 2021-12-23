@@ -1,6 +1,6 @@
 use polystrip::gon::{GonPipeline, TextureVertex, TexturedShape};
 use polystrip::math::{Color, Matrix4, Vector2};
-use polystrip::{RenderSize, Renderer, Texture, WindowTarget};
+use polystrip::{RenderSize, PolystripDevice, Texture, WindowTarget};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -12,7 +12,7 @@ fn main() {
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut renderer = WindowTarget::new(PolystripDevice::new().wrap(), &window, &size_handle, 3);
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 
@@ -90,7 +90,7 @@ fn instanced_drawing() {
 	use polystrip::RenderTarget;
 
 	let expected_output = image::load_from_memory(include_bytes!("expected.png")).unwrap().to_rgba();
-	let renderer = Renderer::new().wrap();
+	let renderer = PolystripDevice::new().wrap();
 	let size_handle = RenderSize::new(1100, 1100).wrap();
 	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));

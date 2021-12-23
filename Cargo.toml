@@ -7,41 +7,32 @@ version = "0.6.0"
 authors = ["TheOnlyMrCat <skylifegame@gmail.com>"]
 repository = "https://github.com/TheOnlyMrCat/polystrip"
 license = "MIT OR Apache-2.0"
-edition = "2018"
+edition = "2021"
 
 [package.metadata.docs.rs]
-features = ["gfx-backend-empty", "glyph_brush"]
+features = ["glyph_brush"]
 
 [features]
 default = ["gon"]
 gon = []
 tui = []
-vulkan = ["gfx-backend-vulkan"]
-metal = ["gfx-backend-metal"]
-dx12 = ["gfx-backend-dx12"]
-empty = ["gfx-backend-empty"]
 
 [dependencies]
+wgpu.version = "0.12"
+wgpu.features = ["spirv"]
+
 bytemuck = "1.5"
 mint = "0.5"
-raw-window-handle = "0.3"
+raw-window-handle = "0.4"
 arrayvec = "0.5"
-align-data = "0.1"
-gpu-alloc = "0.3"
-gpu-alloc-gfx = "0.3"
-
-gfx-hal = "0.7"
-gfx-backend-vulkan = { version = "0.7", optional = true }
-gfx-backend-metal = { version = "0.7", optional = true }
-gfx-backend-dx12 = { version = "0.7", optional = true }
-gfx-backend-empty = { version = "0.7", optional = true }
 
 glyph_brush = { version = "0.7", optional = true }
 
 [dev-dependencies]
-winit = "0.25"
+winit = "0.26"
 winit_input_helper = "0.10.0"
 image = "0.23"
+pollster = "0.2"
 
 [[example]]
 name = "text"

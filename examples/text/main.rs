@@ -4,7 +4,7 @@ use glyph_brush::Section;
 use glyph_brush::Text;
 use polystrip::gon::{GlyphBrush, GonPipeline};
 use polystrip::math::Color;
-use polystrip::{RenderSize, Renderer, WindowTarget};
+use polystrip::{RenderSize, PolystripDevice, WindowTarget};
 
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -17,7 +17,7 @@ fn main() {
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut renderer = WindowTarget::new(PolystripDevice::new().wrap(), &window, &size_handle, 3);
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 
     let mut has_typed_yet = false;

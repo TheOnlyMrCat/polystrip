@@ -2,22 +2,22 @@ $opt default_positionals
 
 #- b
 make shaders
-cargo build --features metal --features glyph_brush
+cargo build --features glyph_brush
 #/
 
 #- r
 METAL_DEVICE_WRAPPER_TYPE=1 ! Enable metal API validation.
-cargo run --features metal --features glyph_brush --example $1
+cargo run --features glyph_brush --example $1
 #/
 
 #test
-cargo test --features metal --all-targets --no-fail-fast
+cargo test --all-targets --no-fail-fast
 #/
 
 #doc b!
-cargo doc --features empty
+cargo doc
 #/
 
 #doc
-cargo doc --features empty --open
+cargo doc --open
 #/

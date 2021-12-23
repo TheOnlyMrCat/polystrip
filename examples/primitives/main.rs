@@ -1,6 +1,6 @@
 use polystrip::gon::{ColoredShape, GonPipeline, TexturedShape};
 use polystrip::math::{Color, Matrix4, Rect};
-use polystrip::{RenderSize, Renderer, Texture, WindowTarget};
+use polystrip::{RenderSize, PolystripDevice, Texture, WindowTarget};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -14,7 +14,7 @@ fn main() {
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
-	let mut renderer = WindowTarget::new(Renderer::new().wrap(), &window, &size_handle, 3);
+	let mut renderer = WindowTarget::new(PolystripDevice::new().wrap(), &window, &size_handle, 3);
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 

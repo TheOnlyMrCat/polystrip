@@ -34,14 +34,14 @@ impl PixelTranslator {
 	/// positions will not give expected values. See the [`pixel_offset`](PixelTranslator::pixel_offset) method to create screen space
 	/// offsets
 	pub fn pixel_position(&self, x: i32, y: i32) -> Vector2 {
-		let extent = self.extent.get();
-		Vector2::new((x * 2) as f32 / extent.width as f32 - 1.0, -((y * 2) as f32 / extent.height as f32 - 1.0))
+		let (width, height) = self.extent.get();
+		Vector2::new((x * 2) as f32 / width as f32 - 1.0, -((y * 2) as f32 / height as f32 - 1.0))
 	}
 
 	/// Converts a pixel value into a screen space offset.
 	pub fn pixel_offset(&self, x: i32, y: i32) -> Vector2 {
-		let extent = self.extent.get();
-		Vector2::new((x * 2) as f32 / extent.width as f32, -((y * 2) as f32 / extent.height as f32))
+		let (width, height) = self.extent.get();
+		Vector2::new((x * 2) as f32 / width as f32, -((y * 2) as f32 / height as f32))
 	}
 
 	/// Converts a `Rect` into a set of `ColorVertex`es with the given `Color` and height `0.0`.
