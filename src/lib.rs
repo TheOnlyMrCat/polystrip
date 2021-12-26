@@ -85,9 +85,9 @@ impl PolystripDevice {
 			.request_device(
 				&wgpu::DeviceDescriptor {
 					label: Some("polystrip"),
-					features: wgpu::Features::PUSH_CONSTANTS,
+					features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::POLYGON_MODE_LINE,
 					limits: wgpu::Limits {
-						max_push_constant_size: 256,
+						max_push_constant_size: adapter.limits().max_push_constant_size,
 						..Default::default()
 					},
 				},
@@ -214,18 +214,22 @@ pub struct WindowTarget {
 impl WindowTarget {
 	/// Creates a new window target for the given `Renderer`.
 	///
+	/// # Safety
+	///
+	/// `window` must be a valid object to create a `wgpu::Surface` from, and must remain valid for the lifetime of the `WindowTarget`.
+	/// Most likely, the library you use to create the window from will ensure the window is valid. Keep track of the lifetime, though.
+	///
 	/// ```no_run
 	/// # use std::rc::Rc;
 	/// # use polystrip::{Renderer, RenderSize, WindowTarget};
 	/// # let event_loop = winit::event_loop::EventLoop::new();
 	/// # let window = winit::window::Window::new(&event_loop).unwrap();
 	/// # let window_size = window.inner_size().to_logical(window.scale_factor());
-	/// let renderer = WindowTarget::new(
+	/// let renderer = unsafe { WindowTarget::new(
 	///     Renderer::new().wrap(),
 	///     &window,
 	///     &RenderSize::new(window_size.width, window_size.height).wrap(),
-	///     3 // Default for GonPipeline
-	/// );
+	/// ) };
 	/// ```
 	pub unsafe fn new(
 		context: Rc<PolystripDevice>, //TODO: This is inconsistent with the rest of the API
@@ -250,6 +254,13 @@ impl WindowTarget {
 	/// Returns the next `Frame`, which can be drawn to and will present on drop. The frame will contain the data from the
 	/// previous frame. This `Renderer` is borrowed mutably while the `Frame` is alive.
 	pub fn next_frame(&mut self) -> BaseFrame<'_> {
+		// If the size has changed, resize the surface
+		let (width, height) = self.size.get();
+		if self.surface_config.width != width || self.surface_config.height != height {
+			self.surface_config.width = width;
+			self.surface_config.height = height;
+			self.reconfigure();
+		}
 		let image = self.acquire_image();
 		self.generate_frame(image)
 	}
@@ -273,7 +284,9 @@ impl WindowTarget {
 			.texture
 			.create_view(&wgpu::TextureViewDescriptor { label: Some("Surface View"), ..Default::default() });
 
-		BaseFrame::new(&self.context, WindowFrame { frame: Some(frame), view }, |drop| FrameResources { image: &drop.view })
+		BaseFrame::new(&self.context, WindowFrame { frame: Some(frame), view }, |drop| FrameResources {
+			image: &drop.view,
+		})
 	}
 
 	fn reconfigure(&mut self) {
@@ -293,10 +306,8 @@ impl WindowTarget {
 	/// Converts pixel coordinates to screen space coordinates. Alternatively, a [`PixelTranslator`] can be constructed
 	/// with the [`pixel_translator`](WindowTarget::pixel_translator) method.
 	pub fn pixel(&self, x: i32, y: i32) -> Vector2 {
-		Vector2::new(
-			(x * 2) as f32 / self.surface_config.width as f32 - 1.0,
-			-((y * 2) as f32 / self.surface_config.height as f32 - 1.0),
-		)
+		let (width, height) = self.size.get();
+		Vector2::new((x * 2) as f32 / width as f32 - 1.0, -((y * 2) as f32 / height as f32 - 1.0))
 	}
 
 	/// Creates a `PixelTranslator` for this window's size. The `PixelTranslator` will track this `WindowTarget`'s size
@@ -353,7 +364,7 @@ impl<'a> RenderDrop<'a> for WindowFrame {
 
 pub struct BaseFrame<'a> {
 	context: Rc<PolystripDevice>,
-	encoder: wgpu::CommandEncoder,
+	encoder: ManuallyDrop<wgpu::CommandEncoder>,
 	// SAFETY: To uphold safety guarantees for potential borrows in `resources`, this field must not be modified.
 	drop: Pin<Box<dyn RenderDrop<'a> + 'a>>,
 	// SAFETY: To uphold safety guarantees for potential borrows from `drop`, this field must not outlive `drop`.
@@ -373,7 +384,7 @@ impl<'a> BaseFrame<'a> {
 		let resolved_resources = resources(drop_reborrow);
 		BaseFrame {
 			context,
-			encoder,
+			encoder: ManuallyDrop::new(encoder),
 			drop: dropbox,
 			resources: ManuallyDrop::new(resolved_resources),
 		}
@@ -405,6 +416,8 @@ impl<'a> HasRenderer for BaseFrame<'a> {
 
 impl<'a> Drop for BaseFrame<'a> {
 	fn drop(&mut self) {
+		self.context.queue.submit(std::iter::once(unsafe { ManuallyDrop::take(&mut self.encoder) }.finish()));
+
 		// Explicitly drop resources so we can move out of the pin
 		let drop = unsafe {
 			ManuallyDrop::drop(&mut self.resources);

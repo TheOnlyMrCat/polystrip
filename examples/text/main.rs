@@ -4,7 +4,8 @@ use glyph_brush::Section;
 use glyph_brush::Text;
 use polystrip::gon::{GlyphBrush, GonPipeline};
 use polystrip::math::Color;
-use polystrip::{RenderSize, PolystripDevice, WindowTarget};
+use polystrip::RenderPipeline;
+use polystrip::{PolystripDevice, RenderSize, WindowTarget};
 
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -17,10 +18,11 @@ fn main() {
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
-	let mut renderer = WindowTarget::new(PolystripDevice::new().wrap(), &window, &size_handle, 3);
+	let mut renderer =
+		unsafe { WindowTarget::new(pollster::block_on(PolystripDevice::new()).wrap(), &window, &size_handle) };
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 
-    let mut has_typed_yet = false;
+	let mut has_typed_yet = false;
 	let mut text_buffer = String::new();
 	let open_sans = FontArc::try_from_slice(include_bytes!("OpenSans-Regular.ttf")).unwrap();
 	let mut glyph_brush = GlyphBrush::from_glyph_brush(&renderer, GlyphBrushBuilder::using_font(open_sans).build());
@@ -36,7 +38,7 @@ fn main() {
 			}
 
 			for c in input_helper.text() {
-                has_typed_yet = true;
+				has_typed_yet = true;
 				match c {
 					TextChar::Char(c) => {
 						if !c.is_control() {
@@ -49,19 +51,23 @@ fn main() {
 				}
 			}
 
-            if input_helper.key_pressed(winit::event::VirtualKeyCode::Return) {
-                has_typed_yet = true;
-                text_buffer.push('\n');
-            }
+			if input_helper.key_pressed(winit::event::VirtualKeyCode::Return) {
+				has_typed_yet = true;
+				text_buffer.push('\n');
+			}
 
-            if has_typed_yet {
-                glyph_brush.queue(Section::default().with_text(vec![Text::default().with_text(&text_buffer)]));
-            } else {
-                glyph_brush.queue(Section::default().with_text(vec![Text::default().with_text("Start typing and your message will show up here!")]))
-            }
+			if has_typed_yet {
+				glyph_brush.queue(Section::default().with_text(vec![Text::default().with_text(&text_buffer)]));
+			} else {
+				glyph_brush.queue(
+					Section::default()
+						.with_text(vec![Text::default().with_text("Start typing and your message will show up here!")]),
+				)
+			}
 			glyph_brush.process_queued(&size_handle);
 
-			let mut frame = renderer.next_frame().render_with(&mut pipeline);
+			let mut frame = renderer.next_frame();
+			let mut frame = pipeline.render_to(&mut frame);
 			frame.clear(Color { r: 0, g: 0, b: 0, a: 255 });
 			frame.draw(&glyph_brush);
 		}

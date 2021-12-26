@@ -49,13 +49,17 @@ impl GonPipeline {
 		// The number of object transform matrices we can store in push constants, and therefore how many objects we can draw at once
 		// Equal to the number of matrices we can store, minus 1 for the world matrix
 		let matrix_array_size =
-			(context.adapter.limits().max_push_constant_size as usize / std::mem::size_of::<Matrix4>() - 1)
-				.min(127) as u32;
+			(context.adapter.limits().max_push_constant_size as usize / std::mem::size_of::<Matrix4>() - 1).min(127)
+				as u32;
 
-		let colour_vs_module = context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.vert.spv"));
-		let colour_fs_module = context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.frag.spv"));
-		let texture_vs_module = context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.vert.spv"));
-		let texture_fs_module = context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.frag.spv"));
+		let colour_vs_module =
+			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.vert.spv"));
+		let colour_fs_module =
+			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.frag.spv"));
+		let texture_vs_module =
+			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.vert.spv"));
+		let texture_fs_module =
+			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.frag.spv"));
 
 		let stroked_graphics_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Polystrip Gon/Stroked layout"),
@@ -79,7 +83,7 @@ impl GonPipeline {
 			},
 			primitive: wgpu::PrimitiveState {
 				topology: wgpu::PrimitiveTopology::LineList,
-				strip_index_format: Some(wgpu::IndexFormat::Uint16),
+				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
 				cull_mode: None,
 				unclipped_depth: false,
@@ -144,7 +148,7 @@ impl GonPipeline {
 			},
 			primitive: wgpu::PrimitiveState {
 				topology: wgpu::PrimitiveTopology::TriangleList,
-				strip_index_format: Some(wgpu::IndexFormat::Uint16),
+				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
 				cull_mode: None,
 				unclipped_depth: false,
@@ -209,7 +213,7 @@ impl GonPipeline {
 			},
 			primitive: wgpu::PrimitiveState {
 				topology: wgpu::PrimitiveTopology::TriangleList,
-				strip_index_format: Some(wgpu::IndexFormat::Uint16),
+				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
 				cull_mode: None,
 				unclipped_depth: false,
@@ -335,9 +339,12 @@ impl<'a> RenderPipeline<'a> for GonPipeline {
 
 		GonFrame {
 			context: base.context.clone(),
-			render_pass: RenderPass::Uninitialised(Some(&mut base.encoder), base.resources.image),
+			render_pass: RenderPass::Uninitialised(
+				Some(&mut base.encoder),
+				base.resources.image,
+				&self.depth_textures[frame_idx].view,
+			),
 			pipeline: self,
-			frame_idx,
 			world_transform: Matrix4::identity(),
 		}
 	}
@@ -390,19 +397,19 @@ impl Default for GonPipelineBuilder {
 }
 
 enum RenderPass<'a> {
-	Uninitialised(Option<&'a mut wgpu::CommandEncoder>, &'a wgpu::TextureView),
+	Uninitialised(Option<&'a mut wgpu::CommandEncoder>, &'a wgpu::TextureView, &'a wgpu::TextureView),
 	Initialised(wgpu::RenderPass<'a>),
 }
 
 impl<'a> RenderPass<'a> {
 	fn init_clear(&mut self, color: Color) {
 		match self {
-			RenderPass::Uninitialised(encoder, view) => {
+			RenderPass::Uninitialised(encoder, color_view, depth_view) => {
 				*self =
 					RenderPass::Initialised(encoder.take().unwrap().begin_render_pass(&wgpu::RenderPassDescriptor {
 						label: None,
 						color_attachments: &[wgpu::RenderPassColorAttachment {
-							view,
+							view: color_view,
 							resolve_target: None,
 							ops: wgpu::Operations {
 								load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -414,7 +421,11 @@ impl<'a> RenderPass<'a> {
 								store: true,
 							},
 						}],
-						depth_stencil_attachment: None,
+						depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+							view: depth_view,
+							depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: true }),
+							stencil_ops: None,
+						}),
 					}))
 			}
 			RenderPass::Initialised(_) => {}
@@ -423,16 +434,20 @@ impl<'a> RenderPass<'a> {
 
 	fn init_load(&mut self) {
 		match self {
-			RenderPass::Uninitialised(encoder, view) => {
+			RenderPass::Uninitialised(encoder, color_view, depth_view) => {
 				*self =
 					RenderPass::Initialised(encoder.take().unwrap().begin_render_pass(&wgpu::RenderPassDescriptor {
 						label: None,
 						color_attachments: &[wgpu::RenderPassColorAttachment {
-							view,
+							view: color_view,
 							resolve_target: None,
 							ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: true },
 						}],
-						depth_stencil_attachment: None,
+						depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+							view: depth_view,
+							depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: true }),
+							stencil_ops: None,
+						}),
 					}))
 			}
 			RenderPass::Initialised(_) => {}
@@ -441,7 +456,7 @@ impl<'a> RenderPass<'a> {
 
 	fn get(&mut self) -> &mut wgpu::RenderPass<'a> {
 		match self {
-			RenderPass::Uninitialised(_, _) => {
+			RenderPass::Uninitialised(_, _, _) => {
 				self.init_load();
 				self.get()
 			}
@@ -455,7 +470,6 @@ pub struct GonFrame<'a> {
 	context: Rc<PolystripDevice>,
 	render_pass: RenderPass<'a>,
 	pipeline: &'a GonPipeline,
-	frame_idx: usize,
 	world_transform: Matrix4,
 }
 
@@ -471,7 +485,7 @@ impl<'a> GonFrame<'a> {
 		self.render_pass.init_clear(color);
 	}
 
-	/// Sets the global transform matrix for draw calls after this method call.
+	/// Sets the global transform matrix for subsequent draw calls.
 	///
 	/// If this method is called multiple times, draw calls will use the matrix provided most recently.
 	/// Draw calls made before this method call use the identity matrix as the global transform matrix.
@@ -498,7 +512,7 @@ impl<'a> GonFrame<'a> {
 			render_pass.set_push_constants(
 				wgpu::ShaderStages::VERTEX,
 				std::mem::size_of::<Matrix4>() as u32,
-				bytemuck::cast_slice(&chunk.iter().map(|&mat| mat.into()).collect::<Vec<[[f32; 4]; 4]>>()), //TODO: Remove this allocation
+				bytemuck::cast_slice(chunk),
 			);
 			render_pass.draw_indexed(0..shape.index_count, 0, 0..chunk.len() as u32);
 		}
@@ -779,11 +793,7 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		StrokedShape {
-			vertex_buffer,
-			index_buffer,
-			index_count: indices.len() as u32 * 2,
-		}
+		StrokedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 2 }
 	}
 
 	fn create_colored(&self, vertices: &[ColorVertex], indices: &[[u16; 3]]) -> ColoredShape {
@@ -797,11 +807,7 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		ColoredShape {
-			vertex_buffer,
-			index_buffer,
-			index_count: indices.len() as u32 * 3,
-		}
+		ColoredShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
 	}
 
 	fn create_textured(&self, vertices: &[TextureVertex], indices: &[[u16; 3]]) -> TexturedShape {
@@ -815,11 +821,7 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		TexturedShape {
-			vertex_buffer,
-			index_buffer,
-			index_count: indices.len() as u32 * 3,
-		}
+		TexturedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
 	}
 }
 

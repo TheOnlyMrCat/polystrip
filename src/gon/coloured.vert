@@ -1,6 +1,6 @@
 #version 450
 
-#define MAX_TRANSFORMS 127
+#define MAX_TRANSFORMS 63
 
 layout(location=0) in vec3 in_position;
 layout(location=1) in vec4 in_colour;

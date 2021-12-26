@@ -70,7 +70,10 @@ fn create_shapes(context: &impl HasRenderer) -> (StrokedShape, ColoredShape, Col
 }
 
 // The rendering logic is extracted to a separate function for testing purposes. This would work the same inline.
-fn render_frame<'a>(frame: &mut GonFrame<'a>, (stroked, pentagon, triangle): &'a (StrokedShape, ColoredShape, ColoredShape)) {
+fn render_frame<'a>(
+	frame: &mut GonFrame<'a>,
+	(stroked, pentagon, triangle): &'a (StrokedShape, ColoredShape, ColoredShape),
+) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(stroked, &[Matrix4::translate(Vector2::new(0.5, 0.0))]);
 	frame.draw_colored(pentagon, &[Matrix4::translate(Vector2::new(0.5, 0.0))]);

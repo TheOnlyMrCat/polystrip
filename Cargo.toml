@@ -18,8 +18,8 @@ gon = []
 tui = []
 
 [dependencies]
-wgpu.version = "0.12"
-wgpu.features = ["spirv"]
+# Use git dependency on wgpu for now, until push constants are on a stable release
+wgpu = { version = "0.12", git = "https://github.com/gfx-rs/wgpu", rev = "bdfddca628eac810a847e82289772e2efd8a38a0", features = ["spirv"] }
 
 bytemuck = "1.5"
 mint = "0.5"
@@ -30,7 +30,7 @@ glyph_brush = { version = "0.7", optional = true }
 
 [dev-dependencies]
 winit = "0.26"
-winit_input_helper = "0.10.0"
+winit_input_helper = "0.11.0"
 image = "0.23"
 pollster = "0.2"
 

@@ -1,6 +1,6 @@
-use polystrip::gon::{GonPipeline, TextureVertex, TexturedShape};
+use polystrip::gon::{GonPipeline, PolystripShapeExt, TextureVertex};
 use polystrip::math::{Color, Matrix4, Vector2};
-use polystrip::{RenderSize, PolystripDevice, Texture, WindowTarget};
+use polystrip::{PolystripDevice, RenderPipeline, RenderSize, Texture, WindowTarget};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -12,9 +12,20 @@ fn main() {
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
-	let mut renderer = WindowTarget::new(PolystripDevice::new().wrap(), &window, &size_handle, 3);
+	let mut renderer =
+		unsafe { WindowTarget::new(pollster::block_on(PolystripDevice::new()).wrap(), &window, &size_handle) };
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
+
+	let mut shape = renderer.create_textured(
+		&[
+			TextureVertex { position: renderer.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
+			TextureVertex { position: renderer.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
+			TextureVertex { position: renderer.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
+			TextureVertex { position: renderer.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
+		][..],
+		&[[0, 1, 3], [1, 2, 3]][..],
+	);
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
@@ -39,6 +50,27 @@ fn main() {
 		}
 		Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
 			size_handle.set(new_size.width, new_size.height);
+			shape = renderer.create_textured(
+				&[
+					TextureVertex {
+						position: renderer.pixel(50, 50).with_height(0.0),
+						tex_coords: Vector2::new(0.0, 0.0),
+					},
+					TextureVertex {
+						position: renderer.pixel(50, 150).with_height(0.0),
+						tex_coords: Vector2::new(0.0, 1.0),
+					},
+					TextureVertex {
+						position: renderer.pixel(150, 150).with_height(0.0),
+						tex_coords: Vector2::new(1.0, 1.0),
+					},
+					TextureVertex {
+						position: renderer.pixel(150, 50).with_height(0.0),
+						tex_coords: Vector2::new(1.0, 0.0),
+					},
+				][..],
+				&[[0, 1, 3], [1, 2, 3]][..],
+			);
 			sandstone_matrices.clear();
 			squares_matrices.clear();
 			for y in 0..10 {
@@ -52,33 +84,10 @@ fn main() {
 			}
 		}
 		Event::MainEventsCleared => {
-			let mut frame = renderer.next_frame().render_with(&mut pipeline);
+			let mut frame = renderer.next_frame();
+			let mut frame = pipeline.render_to(&mut frame);
 			frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
-			frame.draw_textured(
-				&TexturedShape {
-					vertices: [
-						TextureVertex {
-							position: frame.pixel(50, 50).with_height(0.0),
-							tex_coords: Vector2::new(0.0, 0.0),
-						},
-						TextureVertex {
-							position: frame.pixel(50, 150).with_height(0.0),
-							tex_coords: Vector2::new(0.0, 1.0),
-						},
-						TextureVertex {
-							position: frame.pixel(150, 150).with_height(0.0),
-							tex_coords: Vector2::new(1.0, 1.0),
-						},
-						TextureVertex {
-							position: frame.pixel(150, 50).with_height(0.0),
-							tex_coords: Vector2::new(1.0, 0.0),
-						},
-					][..]
-						.into(),
-					indices: [[0, 1, 3], [1, 2, 3]][..].into(),
-				},
-				&[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)],
-			);
+			frame.draw_textured(&shape, &[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)]);
 		}
 		_ => {}
 	});
@@ -95,6 +104,16 @@ fn instanced_drawing() {
 	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
 	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
 	let pixel_translator = texture.pixel_translator();
+
+	let shape = renderer.create_textured(
+		&[
+			TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
+			TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
+			TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
+			TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
+		][..],
+		&[[0, 1, 3], [1, 2, 3]][..],
+	);
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
 	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
@@ -114,19 +133,7 @@ fn instanced_drawing() {
 	}
 
 	let mut frame = texture.create_frame().render_with(&mut pipeline);
-	frame.draw_textured(
-		&TexturedShape {
-			vertices: [
-				TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
-				TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
-				TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
-				TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
-			][..]
-				.into(),
-			indices: [[0, 1, 3], [1, 2, 3]][..].into(),
-		},
-		&[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)],
-	);
+	frame.draw_textured(&shape, &[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)]);
 	frame.present();
 
 	assert_eq!(*texture.get_data(), *expected_output);
