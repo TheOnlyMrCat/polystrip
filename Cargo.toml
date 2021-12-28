@@ -19,7 +19,8 @@ tui = []
 
 [dependencies]
 # Use git dependency on wgpu for now, until push constants are on a stable release
-wgpu = { version = "0.12", git = "https://github.com/gfx-rs/wgpu", rev = "bdfddca628eac810a847e82289772e2efd8a38a0", features = ["spirv"] }
+wgpu = { version = "0.12", git = "https://github.com/gfx-rs/wgpu", rev = "bdfddca", features = ["glsl"] }
+naga = { version = "0.8", git = "https://github.com/gfx-rs/naga", rev = "8df5421" }
 
 bytemuck = "1.5"
 mint = "0.5"

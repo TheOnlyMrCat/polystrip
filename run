@@ -1,7 +1,6 @@
 $opt default_positionals
 
 #- b
-make shaders
 cargo build --features glyph_brush
 #/
 

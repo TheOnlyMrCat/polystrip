@@ -1,6 +1,5 @@
 //! The gon pipeline for 2D rendering
 
-use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -53,13 +52,47 @@ impl GonPipeline {
 				as u32;
 
 		let colour_vs_module =
-			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.vert.spv"));
+			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+				label: Some("Polystrip Gon/Colour Vertex shader"),
+				source: wgpu::ShaderSource::Glsl {
+					shader: include_str!("gon/coloured.vert").into(),
+					stage: naga::ShaderStage::Vertex,
+					defines: [(
+						"MAX_TRANSFORMS".to_owned(),
+						matrix_array_size.to_string(),
+					)].into_iter().collect(),
+				},
+			});
 		let colour_fs_module =
-			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/coloured.frag.spv"));
+			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+				label: Some("Polystrip Gon/Colour Fragment shader"),
+				source: wgpu::ShaderSource::Glsl {
+					shader: include_str!("gon/coloured.frag").into(),
+					stage: naga::ShaderStage::Fragment,
+					defines: Default::default(),
+				},
+			});
 		let texture_vs_module =
-			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.vert.spv"));
+			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+				label: Some("Polystrip Gon/Texture Vertex shader"),
+				source: wgpu::ShaderSource::Glsl {
+					shader: include_str!("gon/textured.vert").into(),
+					stage: naga::ShaderStage::Vertex,
+					defines: [(
+						"MAX_TRANSFORMS".to_owned(),
+						matrix_array_size.to_string(),
+					)].into_iter().collect(),
+				},
+			});
 		let texture_fs_module =
-			context.device.create_shader_module(&wgpu::include_spirv!("../gen/gon/textured.frag.spv"));
+			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+				label: Some("Polystrip Gon/Texture Fragment shader"),
+				source: wgpu::ShaderSource::Glsl {
+					shader: include_str!("gon/textured.frag").into(),
+					stage: naga::ShaderStage::Fragment,
+					defines: Default::default(),
+				},
+			});
 
 		let stroked_graphics_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Polystrip Gon/Stroked layout"),
