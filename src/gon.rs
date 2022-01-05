@@ -18,11 +18,8 @@ pub struct GonPipeline {
 	size_handle: Rc<RenderSize>,
 
 	stroked_graphics_pipeline: wgpu::RenderPipeline,
-	stroked_graphics_pipeline_layout: wgpu::PipelineLayout,
 	colour_graphics_pipeline: wgpu::RenderPipeline,
-	colour_graphics_pipeline_layout: wgpu::PipelineLayout,
 	texture_graphics_pipeline: wgpu::RenderPipeline,
-	texture_graphics_pipeline_layout: wgpu::PipelineLayout,
 
 	frames_in_flight: usize,
 	matrix_array_size: u32,
@@ -51,48 +48,38 @@ impl GonPipeline {
 			(context.adapter.limits().max_push_constant_size as usize / std::mem::size_of::<Matrix4>() - 1).min(127)
 				as u32;
 
-		let colour_vs_module =
-			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-				label: Some("Polystrip Gon/Colour Vertex shader"),
-				source: wgpu::ShaderSource::Glsl {
-					shader: include_str!("gon/coloured.vert").into(),
-					stage: naga::ShaderStage::Vertex,
-					defines: [(
-						"MAX_TRANSFORMS".to_owned(),
-						matrix_array_size.to_string(),
-					)].into_iter().collect(),
-				},
-			});
-		let colour_fs_module =
-			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-				label: Some("Polystrip Gon/Colour Fragment shader"),
-				source: wgpu::ShaderSource::Glsl {
-					shader: include_str!("gon/coloured.frag").into(),
-					stage: naga::ShaderStage::Fragment,
-					defines: Default::default(),
-				},
-			});
-		let texture_vs_module =
-			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-				label: Some("Polystrip Gon/Texture Vertex shader"),
-				source: wgpu::ShaderSource::Glsl {
-					shader: include_str!("gon/textured.vert").into(),
-					stage: naga::ShaderStage::Vertex,
-					defines: [(
-						"MAX_TRANSFORMS".to_owned(),
-						matrix_array_size.to_string(),
-					)].into_iter().collect(),
-				},
-			});
-		let texture_fs_module =
-			context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-				label: Some("Polystrip Gon/Texture Fragment shader"),
-				source: wgpu::ShaderSource::Glsl {
-					shader: include_str!("gon/textured.frag").into(),
-					stage: naga::ShaderStage::Fragment,
-					defines: Default::default(),
-				},
-			});
+		let colour_vs_module = context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+			label: Some("Polystrip Gon/Colour Vertex shader"),
+			source: wgpu::ShaderSource::Glsl {
+				shader: include_str!("gon/coloured.vert").into(),
+				stage: naga::ShaderStage::Vertex,
+				defines: [("MAX_TRANSFORMS".to_owned(), matrix_array_size.to_string())].into_iter().collect(),
+			},
+		});
+		let colour_fs_module = context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+			label: Some("Polystrip Gon/Colour Fragment shader"),
+			source: wgpu::ShaderSource::Glsl {
+				shader: include_str!("gon/coloured.frag").into(),
+				stage: naga::ShaderStage::Fragment,
+				defines: Default::default(),
+			},
+		});
+		let texture_vs_module = context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+			label: Some("Polystrip Gon/Texture Vertex shader"),
+			source: wgpu::ShaderSource::Glsl {
+				shader: include_str!("gon/textured.vert").into(),
+				stage: naga::ShaderStage::Vertex,
+				defines: [("MAX_TRANSFORMS".to_owned(), matrix_array_size.to_string())].into_iter().collect(),
+			},
+		});
+		let texture_fs_module = context.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+			label: Some("Polystrip Gon/Texture Fragment shader"),
+			source: wgpu::ShaderSource::Glsl {
+				shader: include_str!("gon/textured.frag").into(),
+				stage: naga::ShaderStage::Fragment,
+				defines: Default::default(),
+			},
+		});
 
 		let stroked_graphics_pipeline_layout = context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Polystrip Gon/Stroked layout"),
@@ -109,9 +96,9 @@ impl GonPipeline {
 				module: &colour_vs_module,
 				entry_point: "main",
 				buffers: &[wgpu::VertexBufferLayout {
-					array_stride: std::mem::size_of::<ColorVertex>() as u64,
+					array_stride: std::mem::size_of::<GpuColorVertex>() as u64,
 					step_mode: wgpu::VertexStepMode::Vertex,
-					attributes: ColorVertex::attributes(),
+					attributes: GpuColorVertex::attributes(),
 				}],
 			},
 			primitive: wgpu::PrimitiveState {
@@ -120,7 +107,7 @@ impl GonPipeline {
 				front_face: wgpu::FrontFace::Ccw,
 				cull_mode: None,
 				unclipped_depth: false,
-				polygon_mode: wgpu::PolygonMode::Line,
+				polygon_mode: wgpu::PolygonMode::Fill,
 				conservative: false,
 			},
 			depth_stencil: Some(wgpu::DepthStencilState {
@@ -174,9 +161,9 @@ impl GonPipeline {
 				module: &colour_vs_module,
 				entry_point: "main",
 				buffers: &[wgpu::VertexBufferLayout {
-					array_stride: std::mem::size_of::<ColorVertex>() as u64,
+					array_stride: std::mem::size_of::<GpuColorVertex>() as u64,
 					step_mode: wgpu::VertexStepMode::Vertex,
-					attributes: ColorVertex::attributes(),
+					attributes: GpuColorVertex::attributes(),
 				}],
 			},
 			primitive: wgpu::PrimitiveState {
@@ -239,9 +226,9 @@ impl GonPipeline {
 				module: &texture_vs_module,
 				entry_point: "main",
 				buffers: &[wgpu::VertexBufferLayout {
-					array_stride: std::mem::size_of::<TextureVertex>() as u64,
+					array_stride: std::mem::size_of::<GpuTextureVertex>() as u64,
 					step_mode: wgpu::VertexStepMode::Vertex,
-					attributes: TextureVertex::attributes(),
+					attributes: GpuTextureVertex::attributes(),
 				}],
 			},
 			primitive: wgpu::PrimitiveState {
@@ -300,11 +287,8 @@ impl GonPipeline {
 			size_handle: render_size,
 
 			stroked_graphics_pipeline,
-			stroked_graphics_pipeline_layout,
 			colour_graphics_pipeline,
-			colour_graphics_pipeline_layout,
 			texture_graphics_pipeline,
-			texture_graphics_pipeline_layout,
 
 			frames_in_flight: config.frames_in_flight,
 			matrix_array_size,
@@ -429,6 +413,7 @@ impl Default for GonPipelineBuilder {
 	}
 }
 
+#[allow(clippy::large_enum_variant)]
 enum RenderPass<'a> {
 	Uninitialised(Option<&'a mut wgpu::CommandEncoder>, &'a wgpu::TextureView, &'a wgpu::TextureView),
 	Initialised(wgpu::RenderPass<'a>),
@@ -528,7 +513,7 @@ impl<'a> GonFrame<'a> {
 
 	/// Draws a [`StrokedShape`](vertex/struct.StrokedShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_stroked(&mut self, shape: &'a StrokedShape, obj_transforms: &[Matrix4]) {
+	pub fn draw_stroked(&mut self, shape: &'a GpuStrokedShape, obj_transforms: &[Matrix4]) {
 		let render_pass = self.render_pass.get();
 
 		render_pass.set_vertex_buffer(0, shape.vertex_buffer.slice(..));
@@ -553,7 +538,7 @@ impl<'a> GonFrame<'a> {
 
 	/// Draws a [`ColoredShape`](vertex/struct.ColoredShape.html). The shape will be drawn in front of any shapes drawn
 	/// before it.
-	pub fn draw_colored(&mut self, shape: &'a ColoredShape, obj_transforms: &[Matrix4]) {
+	pub fn draw_colored(&mut self, shape: &'a GpuColoredShape, obj_transforms: &[Matrix4]) {
 		let render_pass = self.render_pass.get();
 
 		render_pass.set_vertex_buffer(0, shape.vertex_buffer.slice(..));
@@ -580,7 +565,7 @@ impl<'a> GonFrame<'a> {
 	/// before it.
 	///
 	/// `iterations` is a slice of texture references and matrices to draw that texture with.
-	pub fn draw_textured(&mut self, shape: &'a TexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
+	pub fn draw_textured(&mut self, shape: &'a GpuTexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
 		let render_pass = self.render_pass.get();
 
 		render_pass.set_vertex_buffer(0, shape.vertex_buffer.slice(..));
@@ -611,7 +596,7 @@ impl<'a> GonFrame<'a> {
 		}
 	}
 
-	pub fn draw(&mut self, object: &'a impl Drawable) {
+	pub fn draw(&mut self, object: &impl Drawable<'a>) {
 		object.draw_to(self);
 	}
 
@@ -633,22 +618,32 @@ impl<'a> GonFrame<'a> {
 	}
 }
 
-pub trait Drawable {
-	fn draw_to<'a>(&'a self, frame: &mut GonFrame<'a>);
+impl HasRenderer for GonFrame<'_> {
+	fn context_ref(&self) -> &PolystripDevice {
+		self.context.as_ref()
+	}
+
+	fn clone_context(&self) -> Rc<PolystripDevice> {
+		self.context.clone()
+	}
+}
+
+pub trait Drawable<'a> {
+	fn draw_to(&self, frame: &mut GonFrame<'a>);
 }
 
 #[cfg(feature = "glyph_brush")]
 pub struct GlyphBrush<F = glyph_brush::ab_glyph::FontArc, H = glyph_brush::DefaultSectionHasher> {
-	brush: glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>,
+	brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
 	texture: Texture,
-	current_shapes: Vec<TexturedShape>,
+	current_shapes: Vec<GpuTexturedShape>,
 }
 
 #[cfg(feature = "glyph_brush")]
 impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrush<F, H> {
 	pub fn from_glyph_brush(
 		context: &impl HasRenderer,
-		brush: glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>,
+		brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
 	) -> GlyphBrush<F, H> {
 		GlyphBrush {
 			texture: Texture::new_solid_color(context, Color::ZERO, brush.texture_dimensions()),
@@ -675,37 +670,37 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 			},
 			|vertex| {
 				[
-					TextureVertex {
+					GpuTextureVertex {
 						position: Vector3::new(
 							vertex.pixel_coords.min.x * 2. / size.0 as f32 - 1.0,
 							-(vertex.pixel_coords.min.y * 2. / size.1 as f32 - 1.0),
 							vertex.extra.z,
 						),
-						tex_coords: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.min.y),
+						tex_coord: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.min.y),
 					},
-					TextureVertex {
+					GpuTextureVertex {
 						position: Vector3::new(
 							vertex.pixel_coords.max.x * 2. / size.0 as f32 - 1.0,
 							-(vertex.pixel_coords.min.y * 2. / size.1 as f32 - 1.0),
 							vertex.extra.z,
 						),
-						tex_coords: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.min.y),
+						tex_coord: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.min.y),
 					},
-					TextureVertex {
+					GpuTextureVertex {
 						position: Vector3::new(
 							vertex.pixel_coords.max.x * 2. / size.0 as f32 - 1.0,
 							-(vertex.pixel_coords.max.y * 2. / size.1 as f32 - 1.0),
 							vertex.extra.z,
 						),
-						tex_coords: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.max.y),
+						tex_coord: Vector2::new(vertex.tex_coords.max.x, vertex.tex_coords.max.y),
 					},
-					TextureVertex {
+					GpuTextureVertex {
 						position: Vector3::new(
 							vertex.pixel_coords.min.x * 2. / size.0 as f32 - 1.0,
 							-(vertex.pixel_coords.max.y * 2. / size.1 as f32 - 1.0),
 							vertex.extra.z,
 						),
-						tex_coords: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.max.y),
+						tex_coord: Vector2::new(vertex.tex_coords.min.x, vertex.tex_coords.max.y),
 					},
 				]
 			},
@@ -723,20 +718,15 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 			}
 		}
 	}
-}
 
-#[cfg(feature = "glyph_brush")]
-impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Drawable for GlyphBrush<F, H> {
-	fn draw_to<'a>(&'a self, frame: &mut GonFrame<'a>) {
-		for shape in &self.current_shapes {
-			frame.draw_textured(shape, &[(&self.texture, &[Matrix4::identity()])]);
-		}
+	pub fn place(&self) -> GlyphBrushDrawable<'_, F, H> {
+		GlyphBrushDrawable { brush: self, transform: Matrix4::identity() }
 	}
 }
 
 #[cfg(feature = "glyph_brush")]
 impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Deref for GlyphBrush<F, H> {
-	type Target = glyph_brush::GlyphBrush<[TextureVertex; 4], glyph_brush::Extra, F, H>;
+	type Target = glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>;
 
 	fn deref(&self) -> &Self::Target {
 		&self.brush
@@ -750,6 +740,21 @@ impl<F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> DerefMut for Gly
 	}
 }
 
+#[cfg(feature = "glyph_brush")]
+pub struct GlyphBrushDrawable<'a, F, H> {
+	brush: &'a GlyphBrush<F, H>,
+	transform: Matrix4,
+}
+
+#[cfg(feature = "glyph_brush")]
+impl<'a, F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Drawable<'a> for GlyphBrushDrawable<'a, F, H> {
+	fn draw_to(&self, frame: &mut GonFrame<'a>) {
+		for shape in &self.brush.current_shapes {
+			frame.draw_textured(shape, &[(&self.brush.texture, &[self.transform])]);
+		}
+	}
+}
+
 pub const QUAD_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
 
 /// A vertex describing a position and a position on a texture.
@@ -757,15 +762,15 @@ pub const QUAD_INDICES: [[u16; 3]; 2] = [[0, 3, 1], [1, 3, 2]];
 /// Texture coordinates are interpolated linearly between vertices.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct TextureVertex {
+pub struct GpuTextureVertex {
 	pub position: Vector3,
-	pub tex_coords: Vector2,
+	pub tex_coord: Vector2,
 }
 
-unsafe impl bytemuck::Pod for TextureVertex {}
-unsafe impl bytemuck::Zeroable for TextureVertex {}
+unsafe impl bytemuck::Pod for GpuTextureVertex {}
+unsafe impl bytemuck::Zeroable for GpuTextureVertex {}
 
-impl TextureVertex {
+impl GpuTextureVertex {
 	pub(crate) fn attributes<'a>() -> &'a [wgpu::VertexAttribute] {
 		use std::mem::size_of;
 
@@ -785,15 +790,15 @@ impl TextureVertex {
 /// Colors are interpolated linearly between vertices.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct ColorVertex {
+pub struct GpuColorVertex {
 	pub position: Vector3,
 	pub color: Color,
 }
 
-unsafe impl bytemuck::Pod for ColorVertex {}
-unsafe impl bytemuck::Zeroable for ColorVertex {}
+unsafe impl bytemuck::Pod for GpuColorVertex {}
+unsafe impl bytemuck::Zeroable for GpuColorVertex {}
 
-impl ColorVertex {
+impl GpuColorVertex {
 	pub(crate) fn attributes<'a>() -> &'a [wgpu::VertexAttribute] {
 		use std::mem::size_of;
 
@@ -809,13 +814,13 @@ impl ColorVertex {
 }
 
 pub trait PolystripShapeExt {
-	fn create_stroked(&self, vertices: &[ColorVertex], indices: &[[u16; 2]]) -> StrokedShape;
-	fn create_colored(&self, vertices: &[ColorVertex], indices: &[[u16; 3]]) -> ColoredShape;
-	fn create_textured(&self, vertices: &[TextureVertex], indices: &[[u16; 3]]) -> TexturedShape;
+	fn create_stroked(&self, vertices: &[GpuColorVertex], indices: &[[u16; 2]]) -> GpuStrokedShape;
+	fn create_colored(&self, vertices: &[GpuColorVertex], indices: &[[u16; 3]]) -> GpuColoredShape;
+	fn create_textured(&self, vertices: &[GpuTextureVertex], indices: &[[u16; 3]]) -> GpuTexturedShape;
 }
 
 impl PolystripShapeExt for PolystripDevice {
-	fn create_stroked(&self, vertices: &[ColorVertex], indices: &[[u16; 2]]) -> StrokedShape {
+	fn create_stroked(&self, vertices: &[GpuColorVertex], indices: &[[u16; 2]]) -> GpuStrokedShape {
 		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 			label: None,
 			contents: bytemuck::cast_slice(vertices),
@@ -826,10 +831,10 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		StrokedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 2 }
+		GpuStrokedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 2 }
 	}
 
-	fn create_colored(&self, vertices: &[ColorVertex], indices: &[[u16; 3]]) -> ColoredShape {
+	fn create_colored(&self, vertices: &[GpuColorVertex], indices: &[[u16; 3]]) -> GpuColoredShape {
 		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 			label: None,
 			contents: bytemuck::cast_slice(vertices),
@@ -840,10 +845,10 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		ColoredShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
+		GpuColoredShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
 	}
 
-	fn create_textured(&self, vertices: &[TextureVertex], indices: &[[u16; 3]]) -> TexturedShape {
+	fn create_textured(&self, vertices: &[GpuTextureVertex], indices: &[[u16; 3]]) -> GpuTexturedShape {
 		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 			label: None,
 			contents: bytemuck::cast_slice(vertices),
@@ -854,7 +859,7 @@ impl PolystripShapeExt for PolystripDevice {
 			contents: bytemuck::cast_slice(indices),
 			usage: wgpu::BufferUsages::INDEX,
 		});
-		TexturedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
+		GpuTexturedShape { vertex_buffer, index_buffer, index_count: indices.len() as u32 * 3 }
 	}
 }
 
@@ -862,15 +867,15 @@ impl<T> PolystripShapeExt for T
 where
 	T: HasRenderer,
 {
-	fn create_stroked(&self, vertices: &[ColorVertex], indices: &[[u16; 2]]) -> StrokedShape {
+	fn create_stroked(&self, vertices: &[GpuColorVertex], indices: &[[u16; 2]]) -> GpuStrokedShape {
 		self.context_ref().create_stroked(vertices, indices)
 	}
 
-	fn create_colored(&self, vertices: &[ColorVertex], indices: &[[u16; 3]]) -> ColoredShape {
+	fn create_colored(&self, vertices: &[GpuColorVertex], indices: &[[u16; 3]]) -> GpuColoredShape {
 		self.context_ref().create_colored(vertices, indices)
 	}
 
-	fn create_textured(&self, vertices: &[TextureVertex], indices: &[[u16; 3]]) -> TexturedShape {
+	fn create_textured(&self, vertices: &[GpuTextureVertex], indices: &[[u16; 3]]) -> GpuTexturedShape {
 		self.context_ref().create_textured(vertices, indices)
 	}
 }
@@ -880,10 +885,30 @@ where
 /// The colors of the lines are determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
 #[derive(Debug)]
-pub struct StrokedShape {
+pub struct GpuStrokedShape {
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
 	index_count: u32,
+}
+
+impl GpuStrokedShape {
+	pub fn with_instances<'a, 'b>(&'a self, instances: &'b [Matrix4]) -> StrokedShapeDrawable<'a, 'b> {
+		StrokedShapeDrawable {
+			shape: self,
+			instances,
+		}
+	}
+}
+
+pub struct StrokedShapeDrawable<'a, 'b> {
+	shape: &'a GpuStrokedShape,
+	instances: &'b [Matrix4],
+}
+
+impl<'a> Drawable<'a> for StrokedShapeDrawable<'a, '_> {
+    fn draw_to(&self, frame: &mut GonFrame<'a>) {
+        frame.draw_stroked(self.shape, self.instances);
+    }
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
@@ -891,10 +916,30 @@ pub struct StrokedShape {
 /// The color of the shape is determined by interpolating the colors at each
 /// [`ColorVertex`](struct.ColorVertex).
 #[derive(Debug)]
-pub struct ColoredShape {
+pub struct GpuColoredShape {
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
 	index_count: u32,
+}
+
+impl GpuColoredShape {
+	pub fn with_instances<'a, 'b>(&'a self, instances: &'b [Matrix4]) -> ColoredShapeDrawable<'a, 'b> {
+		ColoredShapeDrawable {
+			shape: self,
+			instances,
+		}
+	}
+}
+
+pub struct ColoredShapeDrawable<'a, 'b> {
+	shape: &'a GpuColoredShape,
+	instances: &'b [Matrix4],
+}
+
+impl<'a> Drawable<'a> for ColoredShapeDrawable<'a, '_> {
+	fn draw_to(&self, frame: &mut GonFrame<'a>) {
+		frame.draw_colored(self.shape, self.instances);
+	}
 }
 
 /// A set of vertices and indices describing a geometric shape as a set of triangles.
@@ -903,33 +948,139 @@ pub struct ColoredShape {
 /// [`TextureVertex`](struct.TextureVertex), and sampling the [`Texture`](../struct.Texture)
 /// provided to the [`GonFrame::draw_textured`](struct.GonFrame#method.draw_textured) call this shape
 /// is drawn with
-#[derive(Debug)]
-pub struct TexturedShape {
+pub struct GpuTexturedShape {
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
 	index_count: u32,
 }
 
-// impl TexturedShape<'_, '_> {
-// 	/// A quad rendering the full texture, the top two points being at height 1, the bottom two at height 0
-// 	pub const QUAD_FULL_STANDING: TexturedShape<'static, 'static> = TexturedShape {
-// 		vertices: Cow::Borrowed(&[
-// 			TextureVertex { position: Vector3::new(0., 0., 1.), tex_coords: Vector2::new(0., 0.) },
-// 			TextureVertex { position: Vector3::new(1., 0., 1.), tex_coords: Vector2::new(1., 0.) },
-// 			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
-// 			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
-// 		]),
-// 		indices: Cow::Borrowed(&QUAD_INDICES),
-// 	};
+impl GpuTexturedShape {
+	pub fn with_instances<'a, 'b, 'c>(&'a self, instances: &'c [(&'a Texture, &'b [Matrix4])]) -> TexturedShapeDrawable<'a, 'b, 'c> {
+		TexturedShapeDrawable {
+			shape: self,
+			instances,
+		}
+	}
+}
 
-// 	/// A quad rendering the full texture, all points at height 0
-// 	pub const QUAD_FULL_FLAT: TexturedShape<'static, 'static> = TexturedShape {
-// 		vertices: Cow::Borrowed(&[
-// 			TextureVertex { position: Vector3::new(0., 0., 0.), tex_coords: Vector2::new(0., 0.) },
-// 			TextureVertex { position: Vector3::new(1., 0., 0.), tex_coords: Vector2::new(1., 0.) },
-// 			TextureVertex { position: Vector3::new(1., 1., 0.), tex_coords: Vector2::new(1., 1.) },
-// 			TextureVertex { position: Vector3::new(0., 1., 0.), tex_coords: Vector2::new(0., 1.) },
-// 		]),
-// 		indices: Cow::Borrowed(&QUAD_INDICES),
-// 	};
-// }
+pub struct TexturedShapeDrawable<'a, 'b, 'c> {
+	shape: &'a GpuTexturedShape,
+	instances: &'c [(&'a Texture, &'b [Matrix4])],
+}
+
+impl<'a> Drawable<'a> for TexturedShapeDrawable<'a, '_, '_> {
+	fn draw_to(&self, frame: &mut GonFrame<'a>) {
+		frame.draw_textured(self.shape, self.instances);
+	}
+}
+
+pub struct PixelColorVertex {
+	pub position: Vector3,
+	pub color: Color,
+}
+
+impl PixelColorVertex {
+	pub fn convert_for_size(&self, (width, height): (u32, u32)) -> GpuColorVertex {
+		GpuColorVertex {
+			position: Vector3::new(
+				self.position.x * 2.0 / width as f32 - 1.0,
+				-(self.position.y * 2.0 / height as f32 - 1.0),
+				self.position.z,
+			),
+			color: self.color,
+		}
+	}
+}
+
+pub struct PixelTextureVertex {
+	pub position: Vector3,
+	pub tex_coord: Vector2,
+}
+
+impl PixelTextureVertex {
+	pub fn convert_for_size(&self, (width, height): (u32, u32)) -> GpuTextureVertex {
+		GpuTextureVertex {
+			position: Vector3::new(
+				self.position.x * 2.0 / width as f32 - 1.0,
+				-(self.position.y * 2.0 / height as f32 - 1.0),
+				self.position.z,
+			),
+			tex_coord: self.tex_coord,
+		}
+	}
+}
+
+pub struct PixelStrokedShape {
+	vertices: Vec<PixelColorVertex>,
+	indices: Vec<[u16; 2]>,
+	size: Rc<RenderSize>,
+	cache: Option<(GpuStrokedShape, (u32, u32))>,
+}
+
+impl PixelStrokedShape {
+	pub fn new(size: &impl HasRenderSize, vertices: Vec<PixelColorVertex>, indices: Vec<[u16; 2]>) -> Self {
+		PixelStrokedShape { vertices, indices, size: size.clone_size_handle(), cache: None }
+	}
+
+	pub fn gpu_shape(&mut self, context: &impl HasRenderer) -> &GpuStrokedShape {
+		let current_size = self.size.get();
+		if !matches!(self.cache, Some((_, size)) if size == current_size) {
+			let shape = context.create_stroked(
+				&self.vertices.iter().map(|v| v.convert_for_size(current_size)).collect::<Vec<_>>(),
+				&self.indices,
+			);
+			self.cache = Some((shape, current_size));
+		}
+		&self.cache.as_ref().unwrap().0
+	}
+}
+
+pub struct PixelColoredShape {
+	vertices: Vec<PixelColorVertex>,
+	indices: Vec<[u16; 3]>,
+	size: Rc<RenderSize>,
+	cache: Option<(GpuColoredShape, (u32, u32))>,
+}
+
+impl PixelColoredShape {
+	pub fn new(size: &impl HasRenderSize, vertices: Vec<PixelColorVertex>, indices: Vec<[u16; 3]>) -> Self {
+		PixelColoredShape { vertices, indices, size: size.clone_size_handle(), cache: None }
+	}
+
+	pub fn gpu_shape(&mut self, context: &impl HasRenderer) -> &GpuColoredShape {
+		let current_size = self.size.get();
+		if !matches!(self.cache, Some((_, size)) if size == current_size) {
+			let shape = context.create_colored(
+				&self.vertices.iter().map(|v| v.convert_for_size(current_size)).collect::<Vec<_>>(),
+				&self.indices,
+			);
+			self.cache = Some((shape, current_size));
+		}
+		&self.cache.as_ref().unwrap().0
+	}
+}
+
+pub struct PixelTexturedShape {
+	vertices: Vec<PixelTextureVertex>,
+	indices: Vec<[u16; 3]>,
+	size: Rc<RenderSize>,
+	cache: Option<(GpuTexturedShape, (u32, u32))>,
+}
+
+impl PixelTexturedShape {
+	pub fn new(size: &impl HasRenderSize, vertices: Vec<PixelTextureVertex>, indices: Vec<[u16; 3]>) -> Self {
+		PixelTexturedShape { vertices, indices, size: size.clone_size_handle(), cache: None }
+	}
+
+	pub fn gpu_shape(&mut self, context: &impl HasRenderer) -> &GpuTexturedShape {
+		let current_size = self.size.get();
+		if !matches!(self.cache, Some((_, size)) if size == current_size) {
+			let shape = context.create_textured(
+				&self.vertices.iter().map(|v| v.convert_for_size(current_size)).collect::<Vec<_>>(),
+				&self.indices,
+			);
+			self.cache = Some((shape, current_size));
+		}
+		&self.cache.as_ref().unwrap().0
+	}
+}

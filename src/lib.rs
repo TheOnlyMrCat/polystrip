@@ -28,6 +28,33 @@ use raw_window_handle::HasRawWindowHandle;
 use crate::math::*;
 use crate::pixel::PixelTranslator;
 
+bitflags::bitflags! {
+	pub struct CompatiblePipeline: u32 {
+		const GON = 1 << 0;
+	}
+}
+
+impl CompatiblePipeline {
+	pub fn required_features(&self) -> wgpu::Features {
+		if self.contains(CompatiblePipeline::GON) {
+			wgpu::Features::PUSH_CONSTANTS
+		} else {
+			wgpu::Features::empty()
+		}
+	}
+
+	pub fn required_limits(&self, adapter_limits: wgpu::Limits) -> wgpu::Limits {
+		let mut max_push_constant_size = 0;
+		if self.contains(CompatiblePipeline::GON) {
+			max_push_constant_size = adapter_limits.max_push_constant_size;
+		}
+		wgpu::Limits {
+			max_push_constant_size,
+			..Default::default()
+		}
+	}
+}
+
 /// Customization options for building a Renderer. Options are detailed on builder methods.
 ///
 /// ```no_run
@@ -35,12 +62,24 @@ use crate::pixel::PixelTranslator;
 /// let renderer = RendererBuilder::new()
 ///     .build();
 /// ```
-pub struct DeviceBuilder {}
+pub struct DeviceBuilder {
+	compatible_pipelines: CompatiblePipeline,
+}
 
 impl DeviceBuilder {
 	/// Creates a new `RendererBuilder` with default values
 	pub fn new() -> DeviceBuilder {
-		DeviceBuilder {}
+		DeviceBuilder {
+			#[cfg(feature = "gon")]
+			compatible_pipelines: CompatiblePipeline::GON,
+			#[cfg(not(feature = "gon"))]
+			compatible_pipelines: CompatiblePipeline::empty(),
+		}
+	}
+
+	pub fn compatible_with(mut self, compatible_pipeline: CompatiblePipeline) -> Self {
+		self.compatible_pipelines |= compatible_pipeline;
+		self
 	}
 
 	/// Builds the renderer, initialising the `wgpu` backend.
@@ -84,12 +123,9 @@ impl PolystripDevice {
 		let (device, queue) = adapter
 			.request_device(
 				&wgpu::DeviceDescriptor {
-					label: Some("polystrip"),
-					features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::POLYGON_MODE_LINE,
-					limits: wgpu::Limits {
-						max_push_constant_size: adapter.limits().max_push_constant_size,
-						..Default::default()
-					},
+					label: Some("Polystrip"),
+					features: config.compatible_pipelines.required_features(),
+					limits: config.compatible_pipelines.required_limits(adapter.limits()),
 				},
 				None,
 			)
@@ -136,7 +172,7 @@ pub trait HasRenderer {
 
 impl HasRenderer for Rc<PolystripDevice> {
 	fn context_ref(&self) -> &PolystripDevice {
-		&self
+		self
 	}
 
 	fn clone_context(&self) -> Rc<PolystripDevice> {

@@ -1,4 +1,4 @@
-use polystrip::gon::{ColorVertex, ColoredShape, GonFrame, GonPipeline, PolystripShapeExt, StrokedShape};
+use polystrip::gon::{GpuColorVertex, GpuColoredShape, GonFrame, GonPipeline, PolystripShapeExt, GpuStrokedShape};
 use polystrip::math::{Color, Matrix4, Vector2, Vector3};
 use polystrip::{HasRenderer, PolystripDevice, RenderPipeline, RenderSize, WindowTarget};
 
@@ -35,34 +35,34 @@ fn main() {
 	});
 }
 
-fn create_shapes(context: &impl HasRenderer) -> (StrokedShape, ColoredShape, ColoredShape) {
+fn create_shapes(context: &impl HasRenderer) -> (GpuStrokedShape, GpuColoredShape, GpuColoredShape) {
 	(
 		context.create_stroked(
 			&[
-				ColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::WHITE },
-				ColorVertex { position: Vector3::new(-0.375, 0.125, 1.0), color: Color::WHITE },
-				ColorVertex { position: Vector3::new(-0.25, -0.5, 1.0), color: Color::WHITE },
-				ColorVertex { position: Vector3::new(0.25, -0.5, 1.0), color: Color::WHITE },
-				ColorVertex { position: Vector3::new(0.375, 0.125, 1.0), color: Color::WHITE },
+				GpuColorVertex { position: Vector3::new(0.0, 0.5, 1.0), color: Color::WHITE },
+				GpuColorVertex { position: Vector3::new(-0.375, 0.125, 1.0), color: Color::WHITE },
+				GpuColorVertex { position: Vector3::new(-0.25, -0.5, 1.0), color: Color::WHITE },
+				GpuColorVertex { position: Vector3::new(0.25, -0.5, 1.0), color: Color::WHITE },
+				GpuColorVertex { position: Vector3::new(0.375, 0.125, 1.0), color: Color::WHITE },
 			][..],
 			&[[0, 1], [0, 2], [0, 3], [0, 4], [1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]][..],
 		),
 		context.create_colored(
 			&[
-				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
-				ColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
-				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
-				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
-				ColorVertex { position: Vector3::new(0.375, 0.125, 0.0), color: Color::MAGENTA },
+				GpuColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
+				GpuColorVertex { position: Vector3::new(-0.375, 0.125, 0.0), color: Color::YELLOW },
+				GpuColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+				GpuColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
+				GpuColorVertex { position: Vector3::new(0.375, 0.125, 0.0), color: Color::MAGENTA },
 			][..],
 			// Note the vertices are specified going counter-clockwise
 			&[[0, 1, 4], [1, 2, 4], [2, 3, 4]][..],
 		),
 		context.create_colored(
 			&[
-				ColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
-				ColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
-				ColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
+				GpuColorVertex { position: Vector3::new(0.0, 0.5, 0.0), color: Color::RED },
+				GpuColorVertex { position: Vector3::new(-0.25, -0.5, 0.0), color: Color::GREEN },
+				GpuColorVertex { position: Vector3::new(0.25, -0.5, 0.0), color: Color::BLUE },
 			][..],
 			&[[0, 1, 2]][..],
 		),
@@ -72,7 +72,7 @@ fn create_shapes(context: &impl HasRenderer) -> (StrokedShape, ColoredShape, Col
 // The rendering logic is extracted to a separate function for testing purposes. This would work the same inline.
 fn render_frame<'a>(
 	frame: &mut GonFrame<'a>,
-	(stroked, pentagon, triangle): &'a (StrokedShape, ColoredShape, ColoredShape),
+	(stroked, pentagon, triangle): &'a (GpuStrokedShape, GpuColoredShape, GpuColoredShape),
 ) {
 	// This stroked shape is drawn before the colored shape on top of it, but will still appear on top due to the height given to it
 	frame.draw_stroked(stroked, &[Matrix4::translate(Vector2::new(0.5, 0.0))]);

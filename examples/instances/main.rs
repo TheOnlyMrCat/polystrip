@@ -1,5 +1,5 @@
-use polystrip::gon::{GonPipeline, PolystripShapeExt, TextureVertex};
-use polystrip::math::{Color, Matrix4, Vector2};
+use polystrip::gon::{GonPipeline, PixelTextureVertex, PixelTexturedShape};
+use polystrip::math::{Color, Matrix4, Vector2, Vector3};
 use polystrip::{PolystripDevice, RenderPipeline, RenderSize, Texture, WindowTarget};
 
 use winit::event::{Event, WindowEvent};
@@ -17,19 +17,32 @@ fn main() {
 	let mut pipeline = GonPipeline::new(&renderer, &renderer);
 	let pixel_translator = renderer.pixel_translator();
 
-	let mut shape = renderer.create_textured(
-		&[
-			TextureVertex { position: renderer.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
-			TextureVertex { position: renderer.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
-			TextureVertex { position: renderer.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
-			TextureVertex { position: renderer.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
-		][..],
-		&[[0, 1, 3], [1, 2, 3]][..],
+	let mut shape = PixelTexturedShape::new(
+		&renderer,
+		vec![
+			PixelTextureVertex {
+				position: Vector3::new(50.0, 50.0, 0.0),
+				tex_coord: Vector2::new(0.0, 0.0),
+			},
+			PixelTextureVertex {
+				position: Vector3::new(150.0, 50.0, 0.0),
+				tex_coord: Vector2::new(1.0, 0.0),
+			},
+			PixelTextureVertex {
+				position: Vector3::new(150.0, 150.0, 0.0),
+				tex_coord: Vector2::new(1.0, 1.0),
+			},
+			PixelTextureVertex {
+				position: Vector3::new(50.0, 150.0, 0.0),
+				tex_coord: Vector2::new(0.0, 1.0),
+			},
+		],
+		vec![[0, 1, 2], [0, 2, 3]],
 	);
 
-	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
+	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba8();
 	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
-	let squares_img = image::load_from_memory(include_bytes!("squares.png")).unwrap().to_rgba();
+	let squares_img = image::load_from_memory(include_bytes!("squares.png")).unwrap().to_rgba8();
 	let squares = Texture::new_from_rgba(&renderer, &*squares_img, squares_img.dimensions());
 
 	let mut sandstone_matrices = Vec::new();
@@ -50,27 +63,6 @@ fn main() {
 		}
 		Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
 			size_handle.set(new_size.width, new_size.height);
-			shape = renderer.create_textured(
-				&[
-					TextureVertex {
-						position: renderer.pixel(50, 50).with_height(0.0),
-						tex_coords: Vector2::new(0.0, 0.0),
-					},
-					TextureVertex {
-						position: renderer.pixel(50, 150).with_height(0.0),
-						tex_coords: Vector2::new(0.0, 1.0),
-					},
-					TextureVertex {
-						position: renderer.pixel(150, 150).with_height(0.0),
-						tex_coords: Vector2::new(1.0, 1.0),
-					},
-					TextureVertex {
-						position: renderer.pixel(150, 50).with_height(0.0),
-						tex_coords: Vector2::new(1.0, 0.0),
-					},
-				][..],
-				&[[0, 1, 3], [1, 2, 3]][..],
-			);
 			sandstone_matrices.clear();
 			squares_matrices.clear();
 			for y in 0..10 {
@@ -87,7 +79,7 @@ fn main() {
 			let mut frame = renderer.next_frame();
 			let mut frame = pipeline.render_to(&mut frame);
 			frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
-			frame.draw_textured(&shape, &[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)]);
+			frame.draw(&shape.gpu_shape(&frame).with_instances(&[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)]));
 		}
 		_ => {}
 	});
@@ -107,10 +99,10 @@ fn instanced_drawing() {
 
 	let shape = renderer.create_textured(
 		&[
-			TextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coords: Vector2::new(0.0, 0.0) },
-			TextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coords: Vector2::new(0.0, 1.0) },
-			TextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coords: Vector2::new(1.0, 1.0) },
-			TextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coords: Vector2::new(1.0, 0.0) },
+			GpuTextureVertex { position: frame.pixel(50, 50).with_height(0.0), tex_coord: Vector2::new(0.0, 0.0) },
+			GpuTextureVertex { position: frame.pixel(50, 150).with_height(0.0), tex_coord: Vector2::new(0.0, 1.0) },
+			GpuTextureVertex { position: frame.pixel(150, 150).with_height(0.0), tex_coord: Vector2::new(1.0, 1.0) },
+			GpuTextureVertex { position: frame.pixel(150, 50).with_height(0.0), tex_coord: Vector2::new(1.0, 0.0) },
 		][..],
 		&[[0, 1, 3], [1, 2, 3]][..],
 	);

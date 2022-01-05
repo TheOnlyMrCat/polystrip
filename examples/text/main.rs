@@ -69,7 +69,7 @@ fn main() {
 			let mut frame = renderer.next_frame();
 			let mut frame = pipeline.render_to(&mut frame);
 			frame.clear(Color { r: 0, g: 0, b: 0, a: 255 });
-			frame.draw(&glyph_brush);
+			frame.draw(&glyph_brush.place());
 		}
 	});
 }
