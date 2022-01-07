@@ -1,6 +1,6 @@
+use polystrip::{PolystripDevice, RenderPipeline, RenderSize, Texture, WindowTarget};
 use polystrip::gon::{GonPipeline, PixelTextureVertex, PixelTexturedShape};
 use polystrip::math::{Color, Matrix4, Vector2, Vector3};
-use polystrip::{PolystripDevice, RenderPipeline, RenderSize, Texture, WindowTarget};
 
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -8,7 +8,7 @@ use winit::window::WindowBuilder;
 
 fn main() {
 	let el = EventLoop::new();
-	let window = WindowBuilder::new().with_title("Polystrip example (textures)").build(&el).unwrap();
+	let window = WindowBuilder::new().with_title("Polystrip example (Instanced shapes)").build(&el).unwrap();
 
 	let size = window.inner_size();
 	let size_handle = RenderSize::new(size.width, size.height).wrap();
