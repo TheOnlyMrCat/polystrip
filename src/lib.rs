@@ -470,7 +470,7 @@ pub struct FrameResources<'a> {
 /// A texture which can be copied to and rendered by a [`Frame`](struct.Frame.html).
 ///
 /// It can be used only with the [`Renderer`](struct.Renderer.html) which created it.
-pub struct Texture {
+pub struct ImageTexture {
 	context: Rc<PolystripDevice>,
 	texture: wgpu::Texture,
 	view: wgpu::TextureView,
@@ -480,14 +480,14 @@ pub struct Texture {
 	height: u32,
 }
 
-impl Texture {
+impl ImageTexture {
 	/// Create a new texture from the given rgba data, associated with this `Renderer`.
 	///
 	/// # Arguments
 	/// * `data`: A reference to a byte array containing the pixel data. The data must be formatted to `Rgba8` in
 	///           the sRGB color space, in row-major order.
 	/// * `size`: The size of the texture, in pixels, in (width, height) order.
-	pub fn new_from_rgba(context: &impl HasRenderer, data: &[u8], size: (u32, u32)) -> Texture {
+	pub fn new_from_rgba(context: &impl HasRenderer, data: &[u8], size: (u32, u32)) -> ImageTexture {
 		Self::_from_rgba(context.clone_context(), data, size)
 	}
 
@@ -495,11 +495,11 @@ impl Texture {
 	///
 	/// # Arguments
 	/// * `size`: The size of the texture, in (width, height) order.
-	pub fn new_solid_color(context: &impl HasRenderer, color: Color, size: (u32, u32)) -> Texture {
+	pub fn new_solid_color(context: &impl HasRenderer, color: Color, size: (u32, u32)) -> ImageTexture {
 		Self::_solid_color(context.clone_context(), color, size)
 	}
 
-	fn _from_rgba(context: Rc<PolystripDevice>, data: &[u8], (width, height): (u32, u32)) -> Texture {
+	fn _from_rgba(context: Rc<PolystripDevice>, data: &[u8], (width, height): (u32, u32)) -> ImageTexture {
 		let texture = context.device.create_texture(&wgpu::TextureDescriptor {
 			label: None,
 			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -508,7 +508,6 @@ impl Texture {
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
 			usage: wgpu::TextureUsages::TEXTURE_BINDING
-				| wgpu::TextureUsages::RENDER_ATTACHMENT
 				| wgpu::TextureUsages::COPY_DST,
 		});
 
@@ -535,10 +534,10 @@ impl Texture {
 			],
 		});
 
-		Texture { context, texture, view, sampler, bind_group, width, height }
+		ImageTexture { context, texture, view, sampler, bind_group, width, height }
 	}
 
-	fn _solid_color(context: Rc<PolystripDevice>, color: Color, (width, height): (u32, u32)) -> Texture {
+	fn _solid_color(context: Rc<PolystripDevice>, color: Color, (width, height): (u32, u32)) -> ImageTexture {
 		let texture = context.device.create_texture(&wgpu::TextureDescriptor {
 			label: None,
 			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -547,7 +546,6 @@ impl Texture {
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
 			usage: wgpu::TextureUsages::TEXTURE_BINDING
-				| wgpu::TextureUsages::RENDER_ATTACHMENT
 				| wgpu::TextureUsages::COPY_DST,
 		});
 
@@ -584,7 +582,7 @@ impl Texture {
 		}));
 		context.queue.submit([encoder.finish()]);
 
-		Texture { context, texture, view, sampler, bind_group, width, height }
+		ImageTexture { context, texture, view, sampler, bind_group, width, height }
 	}
 
 	/// Replaces the data in the given section of the image. The data is interpreted as RGBA8 in row-major order
@@ -618,6 +616,13 @@ impl Texture {
 		self.height
 	}
 
+	pub fn sampled(&self) -> SampledTexture<'_> {
+		SampledTexture {
+			context: &self.context,
+			bind_group: &self.bind_group,
+		}
+	}
+
 	/// Gets the data from this `Texture` in RGBA8 format, in a newly-allocated slice.
 	pub fn get_data(&self) -> Box<[u8]> {
 		unimplemented!()
@@ -635,7 +640,7 @@ impl Texture {
 	}
 }
 
-impl HasRenderer for Texture {
+impl HasRenderer for ImageTexture {
 	fn context_ref(&self) -> &PolystripDevice {
 		&self.context
 	}
@@ -645,16 +650,76 @@ impl HasRenderer for Texture {
 	}
 }
 
-impl RenderTarget for Texture {
+pub struct RenderTexture {
+	context: Rc<PolystripDevice>,
+	texture: wgpu::Texture,
+	view: wgpu::TextureView,
+	sampler: wgpu::Sampler,
+	bind_group: wgpu::BindGroup,
+	width: u32,
+	height: u32,
+}
+
+impl RenderTexture {
+	/// Creates a new `RenderTexture` with the given dimensions.
+	/// 
+	/// The contents of the texture are undefined until the first frame is rendered to it.
+	/// The texture may only be rendered to or used in a frame by the same `PolystripDevice` that created it.
+	pub fn new(context: &impl HasRenderer, (width, height): (u32, u32)) -> RenderTexture {
+		let context = context.clone_context();
+		let texture = context.device.create_texture(&wgpu::TextureDescriptor {
+			label: None,
+			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+			mip_level_count: 1,
+			sample_count: 1,
+			dimension: wgpu::TextureDimension::D2,
+			format: wgpu::TextureFormat::Bgra8UnormSrgb,
+			usage: wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::RENDER_ATTACHMENT,
+		});
+
+		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let sampler = context.device.create_sampler(&wgpu::SamplerDescriptor::default());
+
+		let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: None,
+			layout: &context.texture_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+				wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+			],
+		});
+
+		RenderTexture { context, texture, view, sampler, bind_group, width, height }
+	}
+
+	pub fn sampled(&self) -> SampledTexture<'_> {
+		SampledTexture {
+			context: &self.context,
+			bind_group: &self.bind_group,
+		}
+	}
+}
+
+impl HasRenderer for RenderTexture {
+	fn context_ref(&self) -> &PolystripDevice {
+		&self.context
+	}
+
+	fn clone_context(&self) -> Rc<PolystripDevice> {
+		self.context.clone()
+	}
+}
+
+impl RenderTarget for RenderTexture {
 	fn create_frame(&mut self) -> BaseFrame<'_> {
-		BaseFrame::new(&self.context, TextureFrame { texture: &self.texture, view: &self.view }, |drop| {
+		BaseFrame::new(&self.context, TextureFrame { view: &self.view }, |drop| {
 			FrameResources { image: drop.view }
 		})
 	}
 }
 
 struct TextureFrame<'a> {
-	texture: &'a wgpu::Texture,
 	view: &'a wgpu::TextureView,
 }
 
@@ -666,6 +731,11 @@ impl<'a> RenderDrop<'a> for TextureFrame<'a> {
 	fn cleanup(&mut self, _context: &PolystripDevice) {
 		// Nothing to clean up
 	}
+}
+
+pub struct SampledTexture<'a> {
+	context: &'a Rc<PolystripDevice>,
+	bind_group: &'a wgpu::BindGroup,
 }
 
 /// Wrapper for a depth texture, necessary for custom `RenderTarget`s

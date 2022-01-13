@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use crate::math::{Color, Rect, Vector2, Matrix4};
-use crate::{RenderSize, Texture};
+use crate::{RenderSize, ImageTexture};
 
 #[cfg(feature = "gon")]
 use crate::gon::{GpuColorVertex, GpuTextureVertex};

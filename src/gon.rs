@@ -8,9 +8,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use wgpu::util::DeviceExt;
 
+use crate::SampledTexture;
 use crate::math::*;
 use crate::PolystripDevice;
-use crate::{BaseFrame, DepthTexture, HasRenderSize, HasRenderer, RenderPipeline, RenderSize, Texture};
+use crate::{BaseFrame, DepthTexture, HasRenderSize, HasRenderer, RenderPipeline, RenderSize, ImageTexture};
 
 /// The `gon` pipeline for 2D rendering.
 pub struct GonPipeline {
@@ -122,7 +123,7 @@ impl GonPipeline {
 				},
 				bias: wgpu::DepthBiasState::default(),
 			}),
-			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: true },
 			fragment: Some(wgpu::FragmentState {
 				module: &colour_fs_module,
 				entry_point: "main",
@@ -187,7 +188,7 @@ impl GonPipeline {
 				},
 				bias: wgpu::DepthBiasState::default(),
 			}),
-			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: true },
 			fragment: Some(wgpu::FragmentState {
 				module: &colour_fs_module,
 				entry_point: "main",
@@ -252,7 +253,7 @@ impl GonPipeline {
 				},
 				bias: wgpu::DepthBiasState::default(),
 			}),
-			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+			multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: true },
 			fragment: Some(wgpu::FragmentState {
 				module: &texture_fs_module,
 				entry_point: "main",
@@ -565,7 +566,7 @@ impl<'a> GonFrame<'a> {
 	/// before it.
 	///
 	/// `iterations` is a slice of texture references and matrices to draw that texture with.
-	pub fn draw_textured(&mut self, shape: &'a GpuTexturedShape, iterations: &[(&'a Texture, &[Matrix4])]) {
+	pub fn draw_textured(&mut self, shape: &'a GpuTexturedShape, iterations: &[(SampledTexture<'a>, &[Matrix4])]) {
 		let render_pass = self.render_pass.get();
 
 		render_pass.set_vertex_buffer(0, shape.vertex_buffer.slice(..));
@@ -579,11 +580,11 @@ impl<'a> GonFrame<'a> {
 		);
 
 		for (texture, obj_transforms) in iterations {
-			if !Rc::ptr_eq(&self.context, &texture.context) {
+			if !Rc::ptr_eq(&self.context, texture.context) {
 				panic!("Texture was not made with renderer that made this frame");
 			}
 
-			render_pass.set_bind_group(0, &texture.bind_group, &[]);
+			render_pass.set_bind_group(0, texture.bind_group, &[]);
 
 			for chunk in obj_transforms.chunks(self.pipeline.matrix_array_size as usize) {
 				render_pass.set_push_constants(
@@ -635,7 +636,7 @@ pub trait Drawable<'a> {
 #[cfg(feature = "glyph_brush")]
 pub struct GlyphBrush<F = glyph_brush::ab_glyph::FontArc, H = glyph_brush::DefaultSectionHasher> {
 	brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
-	texture: Texture,
+	texture: ImageTexture,
 	current_shapes: Vec<GpuTexturedShape>,
 }
 
@@ -646,7 +647,7 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 		brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
 	) -> GlyphBrush<F, H> {
 		GlyphBrush {
-			texture: Texture::new_solid_color(context, Color::ZERO, brush.texture_dimensions()),
+			texture: ImageTexture::new_solid_color(context, Color::ZERO, brush.texture_dimensions()),
 			brush,
 			current_shapes: Vec::new(),
 		}
@@ -713,7 +714,7 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 			}
 			Ok(glyph_brush::BrushAction::ReDraw) => {}
 			Err(glyph_brush::BrushError::TextureTooSmall { suggested }) => {
-				self.texture = Texture::new_solid_color(&self.texture, Color::ZERO, suggested);
+				self.texture = ImageTexture::new_solid_color(&self.texture, Color::ZERO, suggested);
 				self.brush.resize_texture(suggested.0, suggested.1);
 			}
 		}
@@ -750,7 +751,7 @@ pub struct GlyphBrushDrawable<'a, F, H> {
 impl<'a, F: glyph_brush::ab_glyph::Font, H: std::hash::BuildHasher> Drawable<'a> for GlyphBrushDrawable<'a, F, H> {
 	fn draw_to(&self, frame: &mut GonFrame<'a>) {
 		for shape in &self.brush.current_shapes {
-			frame.draw_textured(shape, &[(&self.brush.texture, &[self.transform])]);
+			frame.draw_textured(shape, &[(self.brush.texture.sampled(), &[self.transform])]);
 		}
 	}
 }
@@ -955,7 +956,7 @@ pub struct GpuTexturedShape {
 }
 
 impl GpuTexturedShape {
-	pub fn with_instances<'a, 'b, 'c>(&'a self, instances: &'c [(&'a Texture, &'b [Matrix4])]) -> TexturedShapeDrawable<'a, 'b, 'c> {
+	pub fn with_instances<'a, 'b, 'c>(&'a self, instances: &'c [(SampledTexture<'a>, &'b [Matrix4])]) -> TexturedShapeDrawable<'a, 'b, 'c> {
 		TexturedShapeDrawable {
 			shape: self,
 			instances,
@@ -965,7 +966,7 @@ impl GpuTexturedShape {
 
 pub struct TexturedShapeDrawable<'a, 'b, 'c> {
 	shape: &'a GpuTexturedShape,
-	instances: &'c [(&'a Texture, &'b [Matrix4])],
+	instances: &'c [(SampledTexture<'a>, &'b [Matrix4])],
 }
 
 impl<'a> Drawable<'a> for TexturedShapeDrawable<'a, '_, '_> {

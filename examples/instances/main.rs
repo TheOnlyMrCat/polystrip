@@ -1,4 +1,4 @@
-use polystrip::{PolystripDevice, RenderPipeline, RenderSize, Texture, WindowTarget};
+use polystrip::{PolystripDevice, RenderPipeline, RenderSize, ImageTexture, WindowTarget};
 use polystrip::gon::{GonPipeline, PixelTextureVertex, PixelTexturedShape};
 use polystrip::math::{Color, Matrix4, Vector2, Vector3};
 
@@ -41,9 +41,9 @@ fn main() {
 	);
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba8();
-	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
+	let sandstone = ImageTexture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
 	let squares_img = image::load_from_memory(include_bytes!("squares.png")).unwrap().to_rgba8();
-	let squares = Texture::new_from_rgba(&renderer, &*squares_img, squares_img.dimensions());
+	let squares = ImageTexture::new_from_rgba(&renderer, &*squares_img, squares_img.dimensions());
 
 	let mut sandstone_matrices = Vec::new();
 	let mut squares_matrices = Vec::new();
@@ -79,7 +79,7 @@ fn main() {
 			let mut frame = renderer.next_frame();
 			let mut frame = pipeline.render_to(&mut frame);
 			frame.clear(Color { r: 128, g: 128, b: 128, a: 255 });
-			frame.draw(&shape.gpu_shape(&frame).with_instances(&[(&sandstone, &sandstone_matrices), (&squares, &squares_matrices)]));
+			frame.draw(&shape.gpu_shape(&frame).with_instances(&[(sandstone.sampled(), &sandstone_matrices), (squares.sampled(), &squares_matrices)]));
 		}
 		_ => {}
 	});
@@ -94,7 +94,7 @@ fn instanced_drawing() {
 	let renderer = PolystripDevice::new().wrap();
 	let size_handle = RenderSize::new(1100, 1100).wrap();
 	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
-	let mut texture = Texture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
+	let mut texture = ImageTexture::new_solid_color(&renderer, Color::ZERO, (1100, 1100));
 	let pixel_translator = texture.pixel_translator();
 
 	let shape = renderer.create_textured(
@@ -108,9 +108,9 @@ fn instanced_drawing() {
 	);
 
 	let sandstone_img = image::load_from_memory(include_bytes!("sandstone3.png")).unwrap().to_rgba();
-	let sandstone = Texture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
+	let sandstone = ImageTexture::new_from_rgba(&renderer, &*sandstone_img, sandstone_img.dimensions());
 	let squares_img = image::load_from_memory(include_bytes!("squares.png")).unwrap().to_rgba();
-	let squares = Texture::new_from_rgba(&renderer, &*squares_img, squares_img.dimensions());
+	let squares = ImageTexture::new_from_rgba(&renderer, &*squares_img, squares_img.dimensions());
 
 	let mut sandstone_matrices = Vec::new();
 	let mut squares_matrices = Vec::new();

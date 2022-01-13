@@ -84,14 +84,14 @@ fn render_frame<'a>(
 #[test]
 fn shapes() {
 	use image::ImageFormat;
-	use polystrip::{RenderTarget, Texture};
+	use polystrip::{RenderTarget, ImageTexture};
 
 	let expected_output =
 		image::load_from_memory_with_format(include_bytes!("expected.png"), ImageFormat::Png).unwrap().to_rgba();
 	let renderer = PolystripDevice::new().wrap();
 	let size_handle = RenderSize::new(640, 480).wrap();
 	let mut pipeline = GonPipeline::new(&renderer, &size_handle);
-	let mut texture = Texture::new_solid_color(&renderer, Color::BLACK, (640, 480));
+	let mut texture = ImageTexture::new_solid_color(&renderer, Color::BLACK, (640, 480));
 
 	let shapes = create_shapes(&renderer);
 
