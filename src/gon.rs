@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use wgpu::util::DeviceExt;
 
+use crate::RenderTexture;
 use crate::SampledTexture;
 use crate::math::*;
 use crate::PolystripDevice;
@@ -636,7 +637,7 @@ pub trait Drawable<'a> {
 #[cfg(feature = "glyph_brush")]
 pub struct GlyphBrush<F = glyph_brush::ab_glyph::FontArc, H = glyph_brush::DefaultSectionHasher> {
 	brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
-	texture: ImageTexture,
+	texture: RenderTexture,
 	current_shapes: Vec<GpuTexturedShape>,
 }
 
@@ -647,7 +648,7 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 		brush: glyph_brush::GlyphBrush<[GpuTextureVertex; 4], glyph_brush::Extra, F, H>,
 	) -> GlyphBrush<F, H> {
 		GlyphBrush {
-			texture: ImageTexture::new_solid_color(context, Color::ZERO, brush.texture_dimensions()),
+			texture: RenderTexture::new(context, brush.texture_dimensions()),
 			brush,
 			current_shapes: Vec::new(),
 		}
@@ -714,7 +715,7 @@ impl<F: glyph_brush::ab_glyph::Font + Sync, H: std::hash::BuildHasher> GlyphBrus
 			}
 			Ok(glyph_brush::BrushAction::ReDraw) => {}
 			Err(glyph_brush::BrushError::TextureTooSmall { suggested }) => {
-				self.texture = ImageTexture::new_solid_color(&self.texture, Color::ZERO, suggested);
+				self.texture = RenderTexture::new(&self.texture, suggested);
 				self.brush.resize_texture(suggested.0, suggested.1);
 			}
 		}

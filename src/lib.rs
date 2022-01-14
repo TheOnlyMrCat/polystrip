@@ -499,6 +499,7 @@ impl ImageTexture {
 		Self::_solid_color(context.clone_context(), color, size)
 	}
 
+	//TODO: Seperate all &impl HasRenderer functions like this! Better for compile times.
 	fn _from_rgba(context: Rc<PolystripDevice>, data: &[u8], (width, height): (u32, u32)) -> ImageTexture {
 		let texture = context.device.create_texture(&wgpu::TextureDescriptor {
 			label: None,
@@ -600,7 +601,19 @@ impl ImageTexture {
 	/// # Ok(())
 	/// # }
 	pub fn write_section(&mut self, section: Rect, data: &[u8]) {
-		unimplemented!()
+		self.context.queue.write_texture(
+			wgpu::ImageCopyTextureBase {
+				origin: wgpu::Origin3d { x: section.x as u32, y: section.y as u32, z: 0 },
+				..self.texture.as_image_copy()
+			},
+			data,
+			wgpu::ImageDataLayout {
+				offset: 0,
+				bytes_per_row: Some(std::num::NonZeroU32::new(section.w as u32 * 4).unwrap()),
+				rows_per_image: None,
+			},
+			wgpu::Extent3d { width: section.w as u32, height: section.h as u32, depth_or_array_layers: 1 },
+		);
 	}
 
 	/// Get the dimensions of this texture, in (width, height) order.
@@ -675,7 +688,8 @@ impl RenderTexture {
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Bgra8UnormSrgb,
 			usage: wgpu::TextureUsages::TEXTURE_BINDING
-				| wgpu::TextureUsages::RENDER_ATTACHMENT,
+				| wgpu::TextureUsages::RENDER_ATTACHMENT
+				| wgpu::TextureUsages::COPY_DST,
 		});
 
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -691,6 +705,36 @@ impl RenderTexture {
 		});
 
 		RenderTexture { context, texture, view, sampler, bind_group, width, height }
+	}
+
+	/// Replaces the data in the given section of the image. The data is interpreted as RGBA8 in row-major order
+	///
+	/// ```
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// # use polystrip::{Renderer, Texture, gon::GonPipeline, math::Rect};
+	/// # let texture_data = image::load_from_memory(include_bytes!("../test/res/squares.png"))?.to_rgba();
+	/// # let new_data = image::load_from_memory(include_bytes!("../test/res/sandstone3.png"))?.to_rgba();
+	/// # let expected_output = image::load_from_memory(include_bytes!("../test/res/expected/texture_write_section.png"))?.to_rgba();
+	/// # let mut texture = Texture::new_from_rgba(&Renderer::new().wrap(), &texture_data, (32, 32));
+	/// let section = Rect { x: 8, y: 8, w: 16, h: 16 };
+	/// texture.write_section(section, &new_data);
+	/// assert_eq!(*texture.get_data(), *expected_output);
+	/// # Ok(())
+	/// # }
+	pub fn write_section(&mut self, section: Rect, data: &[u8]) {
+		self.context.queue.write_texture(
+			wgpu::ImageCopyTextureBase {
+				origin: wgpu::Origin3d { x: section.x as u32, y: section.y as u32, z: 0 },
+				..self.texture.as_image_copy()
+			},
+			data,
+			wgpu::ImageDataLayout {
+				offset: 0,
+				bytes_per_row: Some(std::num::NonZeroU32::new(section.w as u32 * 4).unwrap()),
+				rows_per_image: None,
+			},
+			wgpu::Extent3d { width: section.w as u32, height: section.h as u32, depth_or_array_layers: 1 },
+		);
 	}
 
 	pub fn sampled(&self) -> SampledTexture<'_> {
