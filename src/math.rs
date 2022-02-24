@@ -15,10 +15,13 @@
 //! `(1.0, 1.0)` is the bottom-right corner
 
 use std::ops::{Deref, DerefMut};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// A color in the sRGB color space, with red, green, blue, and alpha components all represented with `u8`s
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Color {
 	pub r: u8,
 	pub g: u8,
@@ -47,6 +50,7 @@ impl Color {
 
 /// A rectangle in pixel coordinates. (x, y) is the top-left corner; (w, h) expanding rightward and downward.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Rect {
 	pub x: i32,
 	pub y: i32,
@@ -62,6 +66,7 @@ impl Rect {
 
 /// A 2D vector in screen space
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde_math", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Vector2(pub mint::Vector2<f32>);
 
@@ -125,6 +130,7 @@ impl DerefMut for Vector2 {
 ///
 /// Additionally, height interpolates linearly between vertices.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde_math", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Vector3(pub mint::Vector3<f32>);
 
@@ -177,6 +183,7 @@ impl DerefMut for Vector3 {
 
 /// A 4 x 4 column major matrix in screen space
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde_math", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Matrix4(pub mint::ColumnMatrix4<f32>);
 
