@@ -246,10 +246,8 @@ impl Matrix4 {
 	/// Returns a simple perspective matrix from the four passed parameters. Equivalent to the
 	/// [`gluPerspective`](https://www.khronos.org/registry/OpenGL-Refpages/gl2.1/xhtml/gluPerspective.xml) function in OpenGL.
 	///
-	/// See also [`RendererBuilder::real_3d`](crate::RendererBuilder::real_3d)
-	///
 	/// # Parameters
-	/// * `fovy`: The angle of the field of view up and down, in radians. Must be nonzero and cannot be a multiple of tau (2π)
+	/// * `fovy`: The angle of the field of view up and down, in radians. Must be nonzero and cannot be a multiple of 2π (τ)
 	/// * `aspect`: The ratio of screen width to screen height. Should be updated when the window is resized. Must be nonzero.
 	/// * `near`: Distance from the camera to the near clipping plane, in screen-space coordinates.
 	/// * `far`: Distance from the camera to the far clipping plane, in screen-space coordinates. Must not be equal to `near`.

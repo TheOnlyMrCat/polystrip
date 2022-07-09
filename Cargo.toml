@@ -3,14 +3,11 @@ name = "polystrip"
 description = "A 2D accelerated graphics rendering library"
 keywords = ["gamedev", "graphics", "rendering"]
 categories = ["game-development", "graphics", "rendering::engine"]
-version = "0.6.0"
+version = "0.7.0"
 authors = ["TheOnlyMrCat <skylifegame@gmail.com>"]
 repository = "https://github.com/TheOnlyMrCat/polystrip"
 license = "MIT OR Apache-2.0"
 edition = "2021"
-
-[package.metadata.docs.rs]
-features = ["glyph_brush"]
 
 [features]
 default = ["gon"]
@@ -19,24 +16,16 @@ tui = []
 serde_math = ["serde", "mint/serde"]
 
 [dependencies]
-wgpu = { version = "0.12", git = "https://github.com/gfx-rs/wgpu", rev = "b88808b", features = ["glsl"] }
-naga = { version = "0.8", git = "https://github.com/gfx-rs/naga", rev = "8df5421" }
+wgpu = "0.13.1"
 
-bytemuck = "1.5"
-mint = "0.5"
-raw-window-handle = "0.4"
+bytemuck = "1.10.0"
+mint = "0.5.9"
+raw-window-handle = "0.4.3"
 
-glyph_brush = { version = "0.7", optional = true }
-bitflags = "1.3.2"
-
-serde = { version = "1.0", features = ["derive"], optional = true }
+serde = { version = "1.0.138", features = ["derive"], optional = true }
 
 [dev-dependencies]
-winit = "0.26"
-winit_input_helper = "0.11.0"
-image = "0.23"
-pollster = "0.2"
-
-[[example]]
-name = "text"
-required-features = ["gon", "glyph_brush"]
+winit = "0.26.1"
+winit_input_helper = "0.12.0"
+image = "0.24.2"
+pollster = "0.2.5"

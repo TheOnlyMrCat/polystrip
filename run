@@ -1,22 +1,6 @@
-$opt default_positionals
+[polystrip:build]
+cargo build
 
-#- b
-cargo build --features glyph_brush
-#/
-
-#- r
-METAL_DEVICE_WRAPPER_TYPE=1 ! Enable metal API validation.
-cargo run --features glyph_brush --example $1
-#/
-
-#test
-cargo test --all-targets --no-fail-fast
-#/
-
-#doc b!
-cargo doc
-#/
-
-#doc
-cargo doc --open
-#/
+[polystrip:run]
+export METAL_DEVICE_WRAPPER_TYPE=1 # Enable metal API validation.
+cargo run --example $1
