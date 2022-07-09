@@ -4,3 +4,6 @@ cargo build
 [polystrip:run]
 export METAL_DEVICE_WRAPPER_TYPE=1 # Enable metal API validation.
 cargo run --example $1
+
+[doc]
+cargo doc
