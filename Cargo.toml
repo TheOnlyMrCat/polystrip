@@ -23,6 +23,10 @@ mint = "0.5.9"
 raw-window-handle = "0.4.3"
 
 serde = { version = "1.0.138", features = ["derive"], optional = true }
+indexmap = "1.9.1"
+wgpu-types = "0.13.0"
+ahash = "0.7.6"
+either = "1.7.0"
 
 [dev-dependencies]
 winit = "0.26.1"
