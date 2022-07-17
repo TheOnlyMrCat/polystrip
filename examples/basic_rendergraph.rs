@@ -30,16 +30,19 @@ fn main() {
         } => {
             *control_flow = ControlFlow::Exit;
         }
+        Event::WindowEvent {
+            event: WindowEvent::Resized(new_size),
+            ..
+        } => {
+            window.resize(new_size.into());
+        }
         Event::MainEventsCleared => {
             let mut graph = RenderGraph::new(&mut renderer);
             let mut node = graph.add_node();
             let output_texture = node.add_output_texture(TextureHandle::RENDER_TARGET);
             let pipeline = node.passthrough_ref(&pipeline);
             node.build_renderpass(
-                RenderPassTarget::color(
-                    output_texture,
-                    wgpu::Color::BLACK,
-                ),
+                RenderPassTarget::color(output_texture, wgpu::Color::BLACK),
                 |pass, passthrough, _resources| {
                     pass.set_pipeline(passthrough.get(pipeline));
                     pass.draw(0..3, 0..1);
@@ -92,9 +95,8 @@ fn create_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
                 format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
-            })]
+            })],
         }),
         multiview: None,
     })
 }
-

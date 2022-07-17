@@ -4,8 +4,8 @@ pub use wgpu;
 
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use ahash::{AHashSet, AHasher};
 use either::{Either, Left, Right};
@@ -222,7 +222,7 @@ impl RenderTarget for WindowTarget {
 
 pub struct Dependency<T>(T);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureHandle {
     id: u32,
 }
@@ -260,7 +260,11 @@ impl RenderPassTarget {
         }
     }
 
-    pub fn color_with_resolve(handle: Dependency<TextureHandle>, resolve: Dependency<TextureHandle>, clear: wgpu::Color) -> RenderPassTarget {
+    pub fn color_with_resolve(
+        handle: Dependency<TextureHandle>,
+        resolve: Dependency<TextureHandle>,
+        clear: wgpu::Color,
+    ) -> RenderPassTarget {
         RenderPassTarget {
             color: vec![RenderPassColorTarget {
                 handle,
@@ -363,7 +367,9 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     pub fn add_node<'a>(&'a mut self) -> NodeBuilder<'a, 'r, 'node> {
         NodeBuilder {
             graph: self,
+            inputs: Vec::new(),
             outputs: Vec::new(),
+            external_output: false,
             passthrough: PassthroughContainer::new(),
         }
     }
@@ -375,14 +381,28 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             output_texture: output.view(),
         };
 
-        let mut encoder = self
-            .renderer
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Polystrip Command Encoder"),
-            });
+        let mut encoder =
+            self.renderer
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Polystrip Command Encoder"),
+                });
 
-        for node in self.nodes {
+        let mut used_resources = AHashSet::new();
+        used_resources.insert(TextureHandle::RENDER_TARGET);
+        let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
+        for node in self.nodes.into_iter().rev() {
+            let outputs_used = node
+                .outputs
+                .iter()
+                .any(|output| used_resources.contains(output));
+            if outputs_used || node.external_output {
+                used_resources.extend(node.inputs.iter().cloned());
+                pruned_nodes.push(node);
+            }
+        }
+
+        for node in pruned_nodes.into_iter().rev() {
             match node.render_pass {
                 Some(pass_targets) => {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -432,49 +452,82 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
 pub struct NodeBuilder<'a, 'r, 'node> {
     graph: &'a mut RenderGraph<'r, 'node>,
+    inputs: Vec<TextureHandle>,
     outputs: Vec<TextureHandle>,
+    external_output: bool,
     passthrough: PassthroughContainer<'node>,
 }
 
 impl<'node> NodeBuilder<'_, '_, 'node> {
+    pub fn add_input_texture(&mut self, handle: TextureHandle) -> Dependency<TextureHandle> {
+        self.inputs.push(handle);
+        Dependency(handle)
+    }
+
     pub fn add_output_texture(&mut self, handle: TextureHandle) -> Dependency<TextureHandle> {
+        self.inputs.push(handle);
         self.outputs.push(handle);
         Dependency(handle)
     }
 
-    pub fn passthrough_ref<T>(&mut self, data: &'node T) -> PassthroughRef<T> {
+    pub fn add_external_output(&mut self) {
+        self.external_output = true;
+    }
+
+    pub fn passthrough_ref<T: 'node>(&mut self, data: &'node T) -> PassthroughRef<T> {
         self.passthrough.insert(data)
+    }
+
+    pub fn passthrough_mut<T: 'node>(&mut self, data: &'node mut T) -> PassthroughMut<T> {
+        self.passthrough.insert_mut(data)
     }
 
     pub fn build_with_encoder<F>(self, exec: F)
     where
-        F: for<'b, 'pass> FnOnce(&'b mut wgpu::CommandEncoder, PassthroughContainer<'pass>, &'b RenderPassResources<'pass>)
-            + 'node,
+        F: for<'b, 'pass> FnOnce(
+                &'b mut wgpu::CommandEncoder,
+                PassthroughContainer<'pass>,
+                &'b RenderPassResources<'pass>,
+            ) + 'node,
     {
         self.graph.nodes.push(GraphNode {
+            inputs: self.inputs,
             outputs: self.outputs,
+            external_output: self.external_output,
             passthrough: self.passthrough,
             render_pass: None,
-            exec: Box::new(move |encoder, passthrough, res| exec(encoder.unwrap_left(), passthrough, res)),
+            exec: Box::new(move |encoder, passthrough, res| {
+                exec(encoder.unwrap_left(), passthrough, res)
+            }),
         })
     }
 
     pub fn build_renderpass<F>(self, pass: RenderPassTarget, exec: F)
     where
-        F: for<'b, 'pass> FnOnce(&'b mut wgpu::RenderPass<'pass>, PassthroughContainer<'pass>, &'b RenderPassResources<'pass>)
-            + 'node,
+        F: for<'b, 'pass> FnOnce(
+                &'b mut wgpu::RenderPass<'pass>,
+                PassthroughContainer<'pass>,
+                &'b RenderPassResources<'pass>,
+            ) + 'node,
     {
         self.graph.nodes.push(GraphNode {
+            inputs: self.inputs,
             outputs: self.outputs,
+            external_output: self.external_output,
             passthrough: self.passthrough,
             render_pass: Some(pass),
-            exec: Box::new(move |encoder, passthrough, res| exec(encoder.unwrap_right(), passthrough, res)),
+            exec: Box::new(move |encoder, passthrough, res| {
+                exec(encoder.unwrap_right(), passthrough, res)
+            }),
         })
     }
 }
 
+#[allow(clippy::type_complexity)]
 struct GraphNode<'node> {
+    inputs: Vec<TextureHandle>,
     outputs: Vec<TextureHandle>,
+    external_output: bool,
     passthrough: PassthroughContainer<'node>,
     render_pass: Option<RenderPassTarget>,
     exec: Box<
@@ -489,13 +542,19 @@ struct GraphNode<'node> {
 pub struct PassthroughContainer<'a> {
     id: usize,
     data: Vec<*const ()>,
-    _marker: PhantomData<&'a ()>
+    _marker: PhantomData<&'a ()>,
 }
 
 pub struct PassthroughRef<T> {
     container_id: usize,
     data_idx: usize,
-    _marker: PhantomData<*const T>, // For variance
+    _marker: PhantomData<*const T>,
+}
+
+pub struct PassthroughMut<T> {
+    container_id: usize,
+    data_idx: usize,
+    _marker: PhantomData<*mut T>,
 }
 
 impl<'a> PassthroughContainer<'a> {
@@ -516,6 +575,15 @@ impl<'a> PassthroughContainer<'a> {
             _marker: PhantomData,
         }
     }
+
+    fn insert_mut<T>(&mut self, data: &'a mut T) -> PassthroughMut<T> {
+        self.data.push(data as *const T as *const ());
+        PassthroughMut {
+            container_id: self.id,
+            data_idx: self.data.len() - 1,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<'pass> PassthroughContainer<'pass> {
@@ -525,6 +593,15 @@ impl<'pass> PassthroughContainer<'pass> {
             // SAFETY: `handle` cannot have been created except by us, and is type-tagged to be
             // something covariant to the original type stored.
             &*(self.data[handle.data_idx] as *const T)
+        }
+    }
+
+    pub fn get_mut<T>(&self, handle: PassthroughMut<T>) -> &'pass T {
+        assert_eq!(self.id, handle.container_id);
+        unsafe {
+            // SAFETY: `handl` cannot have been created except by us, cannot have been cloned, and
+            // is type-tagged to be invariant to the original type stored
+            &*(self.data[handle.data_idx] as *mut T)
         }
     }
 }
