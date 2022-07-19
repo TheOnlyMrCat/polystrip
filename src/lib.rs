@@ -447,6 +447,12 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
         self.renderer.queue.submit([encoder.finish()]);
         output.present();
+
+        for texture_idx in (0..self.renderer.textures.len()).rev() {
+            if !used_resources.contains(&TextureHandle { id: texture_idx as u32 }) {
+                self.renderer.textures.swap_remove_index(texture_idx);
+            }
+        }
     }
 }
 
