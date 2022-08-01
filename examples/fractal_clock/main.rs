@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use pollster::FutureExt;
-use polystrip::{
-    PolystripDevice, RenderGraph, RenderPassColorTarget, RenderPassDepthTarget, RenderPassTarget,
-    TextureHandle,
-};
+use polystrip::{PolystripDevice, RenderGraph, RenderPassTarget, TextureHandle};
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -624,7 +621,7 @@ impl Pipelines {
             let a = (self.fractal_depth - i) as f32 / self.fractal_depth as f32;
             let h = r2 + 0.5 * a;
             let s = 0.5 + 0.5 * r3 - 0.5 * (1.0 - a);
-            let v = 0.3 * 0.5 * r1;
+            let v = (0.3 * 0.5 * r1).max(0.5);
             if i == self.fractal_depth {
                 let [r, g, b] = rgb_from_hsl((h, 1.0, 0.5));
                 colours.push([r, g, b, 0.5]);
@@ -727,23 +724,18 @@ impl Pipelines {
         let resolve = render_node.add_output_texture(resolve_texture_handle);
         let depth = render_node.add_output_texture(depth_texture_handle);
         render_node.build_renderpass(
-            RenderPassTarget {
-                color: vec![RenderPassColorTarget {
-                    handle: resolve,
-                    resolve: Some(output),
-                    clear: wgpu::Color {
+            RenderPassTarget::new()
+                .with_msaa_color(
+                    resolve,
+                    output,
+                    wgpu::Color {
                         r: 0.01,
                         g: 0.01,
                         b: 0.01,
                         a: 1.0,
                     },
-                }],
-                depth: Some(RenderPassDepthTarget {
-                    handle: depth,
-                    depth_clear: Some(1.0),
-                    stencil_clear: None,
-                }),
-            },
+                )
+                .with_depth(depth, 1.0),
             |pass, passthrough, _resources| {
                 let this = passthrough.get(self_handle);
                 if this.fractal_depth > 1 {

@@ -42,7 +42,7 @@ fn main() {
             let output_texture = node.add_output_texture(TextureHandle::RENDER_TARGET);
             let pipeline = node.passthrough_ref(&pipeline);
             node.build_renderpass(
-                RenderPassTarget::color(output_texture, wgpu::Color::BLACK),
+                RenderPassTarget::new().with_color(output_texture, wgpu::Color::BLACK),
                 |pass, passthrough, _resources| {
                     pass.set_pipeline(passthrough.get(pipeline));
                     pass.draw(0..3, 0..1);

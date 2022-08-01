@@ -231,6 +231,7 @@ impl TextureHandle {
     pub const RENDER_TARGET: TextureHandle = TextureHandle { id: u32::MAX };
 }
 
+#[derive(Default)]
 pub struct RenderPassTarget {
     pub color: Vec<RenderPassColorTarget>,
     pub depth: Option<RenderPassDepthTarget>,
@@ -249,30 +250,43 @@ pub struct RenderPassDepthTarget {
 }
 
 impl RenderPassTarget {
-    pub fn color(handle: Dependency<TextureHandle>, clear: wgpu::Color) -> RenderPassTarget {
-        RenderPassTarget {
-            color: vec![RenderPassColorTarget {
-                handle,
-                resolve: None,
-                clear,
-            }],
+    pub fn new() -> RenderPassTarget {
+        Self {
+            color: vec![],
             depth: None,
         }
     }
 
-    pub fn color_with_resolve(
+    pub fn with_color(mut self, handle: Dependency<TextureHandle>, clear: wgpu::Color) -> Self {
+        self.color.push(RenderPassColorTarget {
+            handle,
+            resolve: None,
+            clear,
+        });
+        self
+    }
+
+    pub fn with_msaa_color(
+        mut self,
         handle: Dependency<TextureHandle>,
         resolve: Dependency<TextureHandle>,
         clear: wgpu::Color,
-    ) -> RenderPassTarget {
-        RenderPassTarget {
-            color: vec![RenderPassColorTarget {
-                handle,
-                resolve: Some(resolve),
-                clear,
-            }],
-            depth: None,
-        }
+    ) -> Self {
+        self.color.push(RenderPassColorTarget {
+            handle,
+            resolve: Some(resolve),
+            clear,
+        });
+        self
+    }
+
+    pub fn with_depth(mut self, handle: Dependency<TextureHandle>, clear: f32) -> Self {
+        self.depth = Some(RenderPassDepthTarget {
+            handle,
+            depth_clear: Some(clear),
+            stencil_clear: None,
+        });
+        self
     }
 }
 
@@ -449,7 +463,9 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         output.present();
 
         for texture_idx in (0..self.renderer.textures.len()).rev() {
-            if !used_resources.contains(&TextureHandle { id: texture_idx as u32 }) {
+            if !used_resources.contains(&TextureHandle {
+                id: texture_idx as u32,
+            }) {
                 self.renderer.textures.swap_remove_index(texture_idx);
             }
         }
