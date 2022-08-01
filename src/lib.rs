@@ -2,12 +2,12 @@ pub mod math;
 
 pub use wgpu;
 
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use ahash::{AHashSet, AHasher};
+use fxhash::FxHashSet;
 use either::{Either, Left, Right};
 use indexmap::IndexMap;
 
@@ -328,7 +328,7 @@ impl<'pass> RenderPassResources<'pass> {
 
 pub struct RenderGraph<'r, 'node> {
     renderer: &'r mut Renderer,
-    current_textures: AHashSet<u32>,
+    current_textures: FxHashSet<u32>,
     nodes: Vec<GraphNode<'node>>,
 }
 
@@ -336,7 +336,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     pub fn new(renderer: &'r mut Renderer) -> RenderGraph<'r, 'node> {
         RenderGraph {
             renderer,
-            current_textures: AHashSet::new(),
+            current_textures: FxHashSet::default(),
             nodes: Vec::new(),
         }
     }
@@ -345,13 +345,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         &mut self,
         descriptor: wgpu::TextureDescriptor,
     ) -> TextureHandle {
-        let mut hash_descriptor = descriptor.map_label(|s| {
-            let mut hasher = AHasher::default();
-            if let Some(s) = s {
-                s.hash(&mut hasher)
-            }
-            hasher.finish()
-        });
+        let mut hash_descriptor = descriptor.map_label(fxhash::hash64);
         let id = loop {
             match self.renderer.textures.get_index_of(&hash_descriptor) {
                 Some(id) => {
@@ -402,7 +396,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                     label: Some("Polystrip Command Encoder"),
                 });
 
-        let mut used_resources = AHashSet::new();
+        let mut used_resources = FxHashSet::default();
         used_resources.insert(TextureHandle::RENDER_TARGET);
         let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
         for node in self.nodes.into_iter().rev() {
