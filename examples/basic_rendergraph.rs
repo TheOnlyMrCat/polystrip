@@ -38,16 +38,17 @@ fn main() {
         }
         Event::MainEventsCleared => {
             let mut graph = RenderGraph::new(&mut renderer);
-            let mut node = graph.add_node();
-            let output_texture = node.add_output_texture(TextureHandle::RENDER_TARGET);
-            let pipeline = node.passthrough_ref(&pipeline);
-            node.build_renderpass(
-                RenderPassTarget::new().with_color(output_texture, wgpu::Color::BLACK),
-                |pass, passthrough, _resources| {
-                    pass.set_pipeline(passthrough.get(pipeline));
-                    pass.draw(0..3, 0..1);
-                },
-            );
+            graph
+                .add_node()
+                .with_passthrough(&pipeline)
+                .build_renderpass(
+                    RenderPassTarget::new()
+                        .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
+                    |pass, [], [], container, (pipeline,)| {
+                        pass.set_pipeline(container.get(pipeline));
+                        pass.draw(0..3, 0..1);
+                    },
+                );
             graph.execute(&mut window);
         }
         _ => {}

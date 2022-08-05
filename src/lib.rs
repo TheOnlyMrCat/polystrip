@@ -1,11 +1,12 @@
+#![feature(generic_associated_types)]
+// Can also experiment with #![feature(generic_const_exprs)]
+
 pub mod math;
 
 pub use wgpu;
 
-use std::hash::Hash;
-use std::marker::PhantomData;
+use std::{hash::Hash, marker::PhantomData};
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use either::{Either, Left, Right};
@@ -220,8 +221,6 @@ impl RenderTarget for WindowTarget {
     }
 }
 
-pub struct Dependency<T>(T);
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferHandle {
     id: usize,
@@ -252,13 +251,13 @@ pub struct RenderPassTarget {
 }
 
 pub struct RenderPassColorTarget {
-    pub handle: Dependency<TextureHandle>,
-    pub resolve: Option<Dependency<TextureHandle>>,
+    pub handle: TextureHandle,
+    pub resolve: Option<TextureHandle>,
     pub clear: wgpu::Color,
 }
 
 pub struct RenderPassDepthTarget {
-    pub handle: Dependency<TextureHandle>,
+    pub handle: TextureHandle,
     pub depth_clear: Option<f32>,
     pub stencil_clear: Option<u32>,
 }
@@ -271,7 +270,7 @@ impl RenderPassTarget {
         }
     }
 
-    pub fn with_color(mut self, handle: Dependency<TextureHandle>, clear: wgpu::Color) -> Self {
+    pub fn with_color(mut self, handle: TextureHandle, clear: wgpu::Color) -> Self {
         self.color.push(RenderPassColorTarget {
             handle,
             resolve: None,
@@ -282,8 +281,8 @@ impl RenderPassTarget {
 
     pub fn with_msaa_color(
         mut self,
-        handle: Dependency<TextureHandle>,
-        resolve: Dependency<TextureHandle>,
+        handle: TextureHandle,
+        resolve: TextureHandle,
         clear: wgpu::Color,
     ) -> Self {
         self.color.push(RenderPassColorTarget {
@@ -294,7 +293,7 @@ impl RenderPassTarget {
         self
     }
 
-    pub fn with_depth(mut self, handle: Dependency<TextureHandle>, clear: f32) -> Self {
+    pub fn with_depth(mut self, handle: TextureHandle, clear: f32) -> Self {
         self.depth = Some(RenderPassDepthTarget {
             handle,
             depth_clear: Some(clear),
@@ -529,21 +528,21 @@ pub struct RenderPassResources<'pass> {
 }
 
 impl<'pass> RenderPassResources<'pass> {
-    pub fn get_buffer(&self, handle: Dependency<BufferHandle>) -> &'pass wgpu::Buffer {
-        self.resources.buffers.get(&handle.0.id).unwrap()
+    pub fn get_buffer(&self, handle: BufferHandle) -> &'pass wgpu::Buffer {
+        self.resources.buffers.get(&handle.id).unwrap()
     }
 
-    pub fn get_texture(&self, handle: Dependency<TextureHandle>) -> &'pass wgpu::TextureView {
-        if handle.0.id == usize::MAX {
+    pub fn get_texture(&self, handle: TextureHandle) -> &'pass wgpu::TextureView {
+        if handle.id == usize::MAX {
             self.output_texture
         } else {
-            let (_, view) = self.resources.textures.get(&handle.0.id).unwrap();
+            let (_, view) = self.resources.textures.get(&handle.id).unwrap();
             view
         }
     }
 
-    pub fn get_bind_group(&self, handle: Dependency<BindGroupHandle>) -> &'pass wgpu::BindGroup {
-        &self.resources.bind_groups.get(&handle.0.id).unwrap().0
+    pub fn get_bind_group(&self, handle: BindGroupHandle) -> &'pass wgpu::BindGroup {
+        &self.resources.bind_groups.get(&handle.id).unwrap().0
     }
 }
 
@@ -640,7 +639,7 @@ pub struct RenderGraph<'r, 'node> {
     renderer: &'r mut Renderer,
     current_buffers: FxHashSet<usize>,
     current_textures: FxHashSet<usize>,
-    nodes: Vec<GraphNode<'node>>,
+    nodes: Vec<Box<dyn GraphNodeImpl<'node> + 'node>>,
 }
 
 impl<'r, 'node> RenderGraph<'r, 'node> {
@@ -709,15 +708,23 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
-    pub fn add_node<'a>(&'a mut self) -> NodeBuilder<'a, 'r, 'node> {
+    pub fn add_bind_group(
+        &mut self,
+        layout: &wgpu::BindGroupLayout,
+        resources: impl IntoBindGroupResources,
+    ) -> BindGroupHandle {
+        self.renderer.add_bind_group(layout, resources)
+    }
+
+    pub fn add_node<'a>(
+        &'a mut self,
+    ) -> NodeBuilder<'a, 'r, 'node, [BufferHandle; 0], [TextureHandle; 0], ()> {
         NodeBuilder {
             graph: self,
-            input_buffers: Vec::new(),
-            output_buffers: Vec::new(),
-            input_textures: Vec::new(),
-            output_textures: Vec::new(),
-            external_output: false,
-            passthrough: PassthroughContainer::new(),
+            buffers: [],
+            textures: [],
+            passthrough: (),
+            passthrough_container: PassthroughContainer::new(),
         }
     }
 
@@ -731,28 +738,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                     label: Some("Polystrip Command Encoder"),
                 });
 
-        let mut used_buffers = FxHashSet::default();
-        let mut used_textures = FxHashSet::default();
-        used_textures.insert(TextureHandle::RENDER_TARGET);
-        let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
-        for node in self.nodes.into_iter().rev() {
-            let outputs_used = node
-                .output_buffers
-                .iter()
-                .any(|output| used_buffers.contains(output))
-                || node
-                    .output_textures
-                    .iter()
-                    .any(|output| used_textures.contains(output));
-            if outputs_used || node.external_output {
-                used_buffers.extend(node.input_buffers.iter().cloned());
-                used_textures.extend(node.input_textures.iter().cloned());
-                pruned_nodes.push(node);
-            }
-        }
-
-        for node in pruned_nodes.into_iter().rev() {
-            match node.render_pass {
+        for mut node in self.nodes.into_iter() {
+            match node.render_pass() {
                 Some(pass_targets) => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
@@ -790,194 +777,346 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             }
                         }),
                     });
-                    (node.exec)(Right(&mut pass), node.passthrough, &resources);
+                    node.exec(Right(&mut pass), &resources);
                 }
                 None => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
-                    (node.exec)(Left(&mut encoder), node.passthrough, &resources);
+                    node.exec(Left(&mut encoder), &resources);
                 }
             }
         }
 
         self.renderer.queue.submit([encoder.finish()]);
         output.present();
-
-        self.renderer.temp_buffers.retain(|_, &mut id| {
-            let pred = used_buffers.contains(&BufferHandle { id });
-            if !pred {
-                self.renderer.buffers.remove(&id);
-            }
-            pred
-        });
-
-        self.renderer.temp_textures.retain(|_, &mut id| {
-            let pred = used_textures.contains(&TextureHandle { id });
-            if !pred {
-                self.renderer.textures.remove(&id);
-            }
-            pred
-        });
     }
 }
 
-pub struct NodeBuilder<'a, 'r, 'node> {
+pub struct NodeBuilder<'a, 'r, 'node, B, T, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
-    input_buffers: Vec<BufferHandle>,
-    output_buffers: Vec<BufferHandle>,
-    input_textures: Vec<TextureHandle>,
-    output_textures: Vec<TextureHandle>,
-    external_output: bool,
-    passthrough: PassthroughContainer<'node>,
+    buffers: B,
+    textures: T,
+    passthrough: P,
+    passthrough_container: PassthroughContainer<'node>,
 }
 
-impl<'node> NodeBuilder<'_, '_, 'node> {
-    pub fn add_input_buffer(&mut self, handle: BufferHandle) -> Dependency<BufferHandle> {
-        self.input_buffers.push(handle);
-        Dependency(handle)
-    }
-
-    pub fn add_output_buffer(&mut self, handle: BufferHandle) -> Dependency<BufferHandle> {
-        self.input_buffers.push(handle);
-        self.output_buffers.push(handle);
-        Dependency(handle)
-    }
-
-    pub fn add_input_texture(&mut self, handle: TextureHandle) -> Dependency<TextureHandle> {
-        self.input_textures.push(handle);
-        Dependency(handle)
-    }
-
-    pub fn add_output_texture(&mut self, handle: TextureHandle) -> Dependency<TextureHandle> {
-        self.input_textures.push(handle);
-        self.output_textures.push(handle);
-        Dependency(handle)
-    }
-
-    pub fn add_input_bind_group(&mut self, handle: BindGroupHandle) -> Dependency<BindGroupHandle> {
-        let (_, resources) = self.graph.renderer.bind_groups.get(&handle.id).unwrap();
-        for (_, resource) in resources {
-            match resource {
-                BindGroupResource::Buffer(BufferBinding { buffer, .. }) => {
-                    self.input_buffers.push(*buffer)
-                }
-                BindGroupResource::Texture(handle) => self.input_textures.push(*handle),
-                BindGroupResource::BufferArray(bindings) => {
-                    for binding in bindings {
-                        self.input_buffers.push(binding.buffer);
-                    }
-                }
-                BindGroupResource::TextureArray(textures) => {
-                    for handle in textures {
-                        self.input_textures.push(*handle);
-                    }
-                }
-                BindGroupResource::Sampler(_) | BindGroupResource::SamplerArray(_) => {}
-            }
+impl<'a, 'r, 'node, B, T, P> NodeBuilder<'a, 'r, 'node, B, T, P>
+where
+    B: ResourceArray<BufferHandle> + 'node,
+    T: ResourceArray<TextureHandle> + 'node,
+    P: 'node,
+{
+    pub fn with_buffer(
+        self,
+        handle: BufferHandle,
+    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, T, P> {
+        NodeBuilder {
+            graph: self.graph,
+            buffers: self.buffers.extend_one(handle),
+            textures: self.textures,
+            passthrough: self.passthrough,
+            passthrough_container: self.passthrough_container,
         }
-        Dependency(handle)
     }
 
-    pub fn add_external_output(&mut self) {
-        self.external_output = true;
+    pub fn with_texture(
+        self,
+        handle: TextureHandle,
+    ) -> NodeBuilder<'a, 'r, 'node, B, <T as ResourceArray<TextureHandle>>::ExtendOne, P> {
+        NodeBuilder {
+            graph: self.graph,
+            buffers: self.buffers,
+            textures: self.textures.extend_one(handle),
+            passthrough: self.passthrough,
+            passthrough_container: self.passthrough_container,
+        }
     }
 
-    pub fn passthrough_ref<T: 'node>(&mut self, data: &'node T) -> PassthroughRef<T> {
-        self.passthrough.insert(data)
-    }
-
-    pub fn passthrough_mut<T: 'node>(&mut self, data: &'node mut T) -> PassthroughMut<T> {
-        self.passthrough.insert_mut(data)
+    pub fn with_passthrough<A: 'node>(
+        self,
+        item: &'node A,
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <P as ExtendTuple<PassthroughRef<A>>>::ExtendOne>
+    where P: ExtendTuple<PassthroughRef<A>>
+    {
+        let mut container = self.passthrough_container;
+        let item = container.insert(item);
+        NodeBuilder {
+            graph: self.graph,
+            buffers: self.buffers,
+            textures: self.textures,
+            passthrough: self.passthrough.extend_one(item),
+            passthrough_container: container,
+        }
     }
 
     pub fn build_with_encoder<F>(self, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::CommandEncoder,
+                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
                 PassthroughContainer<'pass>,
-                &'b RenderPassResources<'pass>,
+                P,
             ) + 'node,
     {
-        self.graph.nodes.push(GraphNode {
-            input_buffers: self.input_buffers,
-            output_buffers: self.output_buffers,
-            input_textures: self.input_textures,
-            output_textures: self.output_textures,
-            external_output: self.external_output,
-            passthrough: self.passthrough,
-            render_pass: None,
-            exec: Box::new(move |encoder, passthrough, res| {
-                exec(encoder.unwrap_left(), passthrough, res)
+        self.graph.nodes.push(Box::new(GraphNode {
+            inner: Some(GraphNodeInner {
+                buffers: self.buffers,
+                textures: self.textures,
+                passthrough: self.passthrough,
+                passthrough_container: self.passthrough_container,
+                render_pass: None,
+                exec: Box::new(move |encoder, buffers, textures, container, passthrough| {
+                    (exec)(encoder.unwrap_left(), buffers, textures, container, passthrough)
+                }),
             }),
-        })
+        }));
     }
 
-    pub fn build_renderpass<F>(self, pass: RenderPassTarget, exec: F)
+    pub fn build_renderpass<F>(self, render_pass: RenderPassTarget, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::RenderPass<'pass>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
                 PassthroughContainer<'pass>,
-                &'b RenderPassResources<'pass>,
+                P,
             ) + 'node,
     {
-        self.graph.nodes.push(GraphNode {
-            input_buffers: self.input_buffers,
-            output_buffers: self.output_buffers,
-            input_textures: self.input_textures,
-            output_textures: self.output_textures,
-            external_output: self.external_output,
-            passthrough: self.passthrough,
-            render_pass: Some(pass),
-            exec: Box::new(move |encoder, passthrough, res| {
-                exec(encoder.unwrap_right(), passthrough, res)
+        self.graph.nodes.push(Box::new(GraphNode {
+            inner: Some(GraphNodeInner {
+                buffers: self.buffers,
+                textures: self.textures,
+                passthrough: self.passthrough,
+                passthrough_container: self.passthrough_container,
+                render_pass: Some(render_pass),
+                exec: Box::new(move |pass, buffers, textures, container, passthrough| {
+                    (exec)(pass.unwrap_right(), buffers, textures, container, passthrough)
+                }),
             }),
-        })
+        }))
     }
 }
 
+struct GraphNode<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> {
+    //TODO: This could be made a MaybeUninit, if absolutely necessary. It probably isn't necessary.
+    inner: Option<GraphNodeInner<'node, B, T, P>>,
+}
+
 #[allow(clippy::type_complexity)]
-struct GraphNode<'node> {
-    input_buffers: Vec<BufferHandle>,
-    output_buffers: Vec<BufferHandle>,
-    input_textures: Vec<TextureHandle>,
-    output_textures: Vec<TextureHandle>,
-    external_output: bool,
-    passthrough: PassthroughContainer<'node>,
+struct GraphNodeInner<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> {
+    buffers: B,
+    textures: T,
+    passthrough: P,
+    passthrough_container: PassthroughContainer<'node>,
     render_pass: Option<RenderPassTarget>,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 Either<&'b mut wgpu::CommandEncoder, &'b mut wgpu::RenderPass<'pass>>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
                 PassthroughContainer<'pass>,
-                &'b RenderPassResources<'pass>,
+                P,
             ) + 'node,
     >,
 }
 
+trait GraphNodeImpl<'node> {
+    fn render_pass(&mut self) -> Option<RenderPassTarget>;
+    fn exec<'pass>(
+        &mut self,
+        encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
+        resources: &RenderPassResources,
+    ) where 'node: 'pass;
+}
+
+impl<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> GraphNodeImpl<'node>
+    for GraphNode<'node, B, T, P>
+{
+    fn render_pass(&mut self) -> Option<RenderPassTarget> {
+        self.inner.as_mut().unwrap().render_pass.take()
+    }
+
+    fn exec<'pass>(
+        &mut self,
+        encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
+        renderer: &RenderPassResources,
+    ) where 'node: 'pass {
+        let inner = self.inner.take().unwrap();
+        (inner.exec)(
+            encoder_or_pass,
+            inner.buffers.fetch_resources(renderer),
+            inner.textures.fetch_resources(renderer),
+            inner.passthrough_container,
+            inner.passthrough,
+        )
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+use sealed::Sealed;
+
+pub trait ExtendTuple<T>: Sealed {
+    type ExtendOne;
+
+    fn extend_one(self, _: T) -> Self::ExtendOne;
+}
+
+impl Sealed for () {}
+
+impl<T> ExtendTuple<T> for () {
+    type ExtendOne = (T,);
+
+    fn extend_one(self, element: T) -> Self::ExtendOne {
+        (element,)
+    }
+}
+
+macro_rules! extend_tuple {
+    ($tuple:ident, $element:ident, $($letters:ident,)*) => {{
+        let ($($letters,)*) = $tuple;
+        ($($letters,)* $element)
+    }};
+}
+
+macro_rules! impl_extend_tuple {
+    ($head:ident,) => {
+        impl<$head> Sealed for ($head,) {}
+
+        impl<$head, T> ExtendTuple<T> for ($head,) {
+            type ExtendOne = ($head, T);
+
+            #[allow(non_snake_case)]
+            fn extend_one(self, element: T) -> Self::ExtendOne {
+                extend_tuple!(self, element, $head,)
+            }
+        }
+    };
+    ($head:ident, $($tail:ident,)*) => {
+        impl<$head, $($tail,)*> Sealed for ($head, $($tail,)*) {}
+
+        impl<$head, $($tail,)* T> ExtendTuple<T> for ($head, $($tail,)*) {
+            type ExtendOne = ($head, $($tail,)* T);
+
+            #[allow(non_snake_case)]
+            fn extend_one(self, element:T) -> Self::ExtendOne {
+                extend_tuple!(self, element, $head, $($tail,)*)
+            }
+        }
+        impl_extend_tuple!($($tail,)*);
+    };
+}
+impl_extend_tuple!(A, B, C, D, E, F, G, H, I, J, K, L,);
+
+pub trait RenderResource {
+    type Resource<'a>;
+
+    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a>;
+}
+
+impl RenderResource for BufferHandle {
+    type Resource<'a> = &'a wgpu::Buffer;
+
+    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
+        resources.get_buffer(self)
+    }
+}
+
+impl RenderResource for TextureHandle {
+    type Resource<'a> = &'a wgpu::TextureView;
+
+    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
+        resources.get_texture(self)
+    }
+}
+
+pub trait ResourceArray<T: RenderResource>: Sealed {
+    type Fetched<'a>;
+    type ExtendOne;
+
+    fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a>;
+    fn extend_one(self, _: T) -> Self::ExtendOne;
+}
+
+impl<T> Sealed for [T; 0] {}
+
+impl<T: RenderResource> ResourceArray<T> for [T; 0] {
+    type Fetched<'a> = [<T as RenderResource>::Resource<'a>; 0];
+    type ExtendOne = [T; 1];
+
+    fn fetch_resources<'a>(self, _resources: &'a RenderPassResources) -> Self::Fetched<'a> {
+        []
+    }
+
+    fn extend_one(self, element: T) -> Self::ExtendOne {
+        [element]
+    }
+}
+
+macro_rules! extend_array {
+    ($array:ident, $element:ident, $($letters:ident,)*) => {{
+        let [$($letters,)*] = $array;
+        [$($letters,)* $element]
+    }};
+}
+
+macro_rules! impl_resource_array {
+    ($size:expr, $head:ident,) => {
+        impl<T> Sealed for [T; $size] {}
+
+        impl<T: RenderResource> ResourceArray<T> for [T; $size] {
+            type Fetched<'a> = [<T as RenderResource>::Resource<'a>; $size];
+            type ExtendOne = [T; {$size + 1}];
+
+            fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a> {
+                self.map(|element| <T as RenderResource>::fetch_resource(element, resources))
+            }
+
+            fn extend_one(self, element: T) -> Self::ExtendOne {
+                extend_array!(self, element, $head,)
+            }
+        }
+    };
+    ($size:expr, $head:ident, $($letters:ident,)*) => {
+        impl<T> Sealed for [T; $size] {}
+
+        impl<T: RenderResource> ResourceArray<T> for [T; $size] {
+            type Fetched<'a> = [<T as RenderResource>::Resource<'a>; $size];
+            type ExtendOne = [T; {$size + 1}];
+
+            fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a> {
+                self.map(|element| <T as RenderResource>::fetch_resource(element, resources))
+            }
+
+            fn extend_one(self, element: T) -> Self::ExtendOne {
+                extend_array!(self, element, $head, $($letters,)*)
+            }
+        }
+        impl_resource_array!(($size - 1), $($letters,)*);
+    };
+}
+impl_resource_array!(
+    32, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac,
+    ad, ae, af,
+);
+
 pub struct PassthroughContainer<'a> {
-    id: usize,
     data: Vec<*const ()>,
     _marker: PhantomData<&'a ()>,
 }
 
 pub struct PassthroughRef<T> {
-    container_id: usize,
     data_idx: usize,
     _marker: PhantomData<*const T>,
 }
 
-pub struct PassthroughMut<T> {
-    container_id: usize,
-    data_idx: usize,
-    _marker: PhantomData<*mut T>,
-}
-
 impl<'a> PassthroughContainer<'a> {
     fn new() -> Self {
-        static ID: AtomicUsize = AtomicUsize::new(0);
         Self {
-            id: ID.fetch_add(1, Ordering::Relaxed),
             data: vec![],
             _marker: PhantomData,
         }
@@ -986,16 +1125,6 @@ impl<'a> PassthroughContainer<'a> {
     fn insert<T>(&mut self, data: &'a T) -> PassthroughRef<T> {
         self.data.push(data as *const T as *const ());
         PassthroughRef {
-            container_id: self.id,
-            data_idx: self.data.len() - 1,
-            _marker: PhantomData,
-        }
-    }
-
-    fn insert_mut<T>(&mut self, data: &'a mut T) -> PassthroughMut<T> {
-        self.data.push(data as *const T as *const ());
-        PassthroughMut {
-            container_id: self.id,
             data_idx: self.data.len() - 1,
             _marker: PhantomData,
         }
@@ -1004,20 +1133,10 @@ impl<'a> PassthroughContainer<'a> {
 
 impl<'pass> PassthroughContainer<'pass> {
     pub fn get<T>(&self, handle: PassthroughRef<T>) -> &'pass T {
-        assert_eq!(self.id, handle.container_id);
         unsafe {
             // SAFETY: `handle` cannot have been created except by us, and is type-tagged to be
             // something covariant to the original type stored.
             &*(self.data[handle.data_idx] as *const T)
-        }
-    }
-
-    pub fn get_mut<T>(&self, handle: PassthroughMut<T>) -> &'pass mut T {
-        assert_eq!(self.id, handle.container_id);
-        unsafe {
-            // SAFETY: `handle` cannot have been created except by us, cannot have been cloned, and
-            // is type-tagged to be invariant to the original type stored
-            &mut *(self.data[handle.data_idx] as *mut T)
         }
     }
 }

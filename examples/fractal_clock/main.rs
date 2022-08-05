@@ -658,39 +658,39 @@ impl Pipelines {
             ]),
         );
 
-        let mut compute_node = graph.add_node();
-        compute_node.add_external_output();
-        let self_handle = compute_node.passthrough_ref(self);
-        compute_node.build_with_encoder(move |encoder, passthrough, _resources| {
-            let this = passthrough.get(self_handle);
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("FC Render Compute Pass"),
-            });
-            pass.set_pipeline(&this.vertices_compute_pipeline);
-            pass.set_bind_group(0, &this.vertex_bind_group, &[]);
-            for (i, (buffer, bind_group)) in this.initial_vertex_uniform_buffers.iter().enumerate()
-            {
-                this.queue.write_buffer(
-                    buffer,
-                    0,
-                    bytemuck::cast_slice(&[
-                        i as f32,
-                        second_frac * std::f32::consts::TAU,
-                        minute_frac * std::f32::consts::TAU,
-                        hour_frac * std::f32::consts::TAU,
-                    ]),
-                );
-                pass.set_bind_group(1, bind_group, &[]);
+        graph.add_node().with_passthrough(self).build_with_encoder(
+            move |encoder, [], [], passthrough, (this,)| {
+                let this = passthrough.get(this);
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("FC Render Compute Pass"),
+                });
+                pass.set_pipeline(&this.vertices_compute_pipeline);
+                pass.set_bind_group(0, &this.vertex_bind_group, &[]);
+                for (i, (buffer, bind_group)) in
+                    this.initial_vertex_uniform_buffers.iter().enumerate()
+                {
+                    this.queue.write_buffer(
+                        buffer,
+                        0,
+                        bytemuck::cast_slice(&[
+                            i as f32,
+                            second_frac * std::f32::consts::TAU,
+                            minute_frac * std::f32::consts::TAU,
+                            hour_frac * std::f32::consts::TAU,
+                        ]),
+                    );
+                    pass.set_bind_group(1, bind_group, &[]);
 
-                let workgroup_size = workgroup_size_for_depth((i + 1) as _) as u32;
-                let workgroup_y = workgroup_size / 256 + 1;
-                let workgroup_x = workgroup_size % 256 + 1;
+                    let workgroup_size = workgroup_size_for_depth((i + 1) as _) as u32;
+                    let workgroup_y = workgroup_size / 256 + 1;
+                    let workgroup_x = workgroup_size % 256 + 1;
 
-                pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
-            }
-        });
+                    pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
+                }
+            },
+        );
 
-        let depth_texture_handle = graph.add_intermediate_texture(wgpu::TextureDescriptor {
+        let depth_texture= graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC Depth Texture"),
             size: wgpu::Extent3d {
                 width: self.width,
@@ -704,7 +704,7 @@ impl Pipelines {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
-        let resolve_texture_handle = graph.add_intermediate_texture(wgpu::TextureDescriptor {
+        let resolve_texture= graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC MSAA Resolve Texture"),
             size: wgpu::Extent3d {
                 width: self.width,
@@ -718,16 +718,11 @@ impl Pipelines {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
-        let mut render_node = graph.add_node();
-        let self_handle = render_node.passthrough_ref(self);
-        let output = render_node.add_output_texture(TextureHandle::RENDER_TARGET);
-        let resolve = render_node.add_output_texture(resolve_texture_handle);
-        let depth = render_node.add_output_texture(depth_texture_handle);
-        render_node.build_renderpass(
+        graph.add_node().with_passthrough(self).build_renderpass(
             RenderPassTarget::new()
                 .with_msaa_color(
-                    resolve,
-                    output,
+                    resolve_texture,
+                    TextureHandle::RENDER_TARGET,
                     wgpu::Color {
                         r: 0.01,
                         g: 0.01,
@@ -735,9 +730,9 @@ impl Pipelines {
                         a: 1.0,
                     },
                 )
-                .with_depth(depth, 1.0),
-            |pass, passthrough, _resources| {
-                let this = passthrough.get(self_handle);
+                .with_depth(depth_texture, 1.0),
+            |pass, [], [], passthrough, (this,)| {
+                let this = passthrough.get(this);
                 if this.fractal_depth > 1 {
                     pass.set_pipeline(&this.fractal_render_pipeline);
                     pass.set_bind_group(0, &this.camera_bind_group, &[]);
