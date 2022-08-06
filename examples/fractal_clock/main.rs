@@ -659,8 +659,7 @@ impl Pipelines {
         );
 
         graph.add_node().with_passthrough(self).build_with_encoder(
-            move |encoder, [], [], passthrough, (this,)| {
-                let this = passthrough.get(this);
+            move |encoder, [], [], (this,)| {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("FC Render Compute Pass"),
                 });
@@ -731,8 +730,7 @@ impl Pipelines {
                     },
                 )
                 .with_depth(depth_texture, 1.0),
-            |pass, [], [], passthrough, (this,)| {
-                let this = passthrough.get(this);
+            |pass, [], [], (this,)| {
                 if this.fractal_depth > 1 {
                     pass.set_pipeline(&this.fractal_render_pipeline);
                     pass.set_bind_group(0, &this.camera_bind_group, &[]);

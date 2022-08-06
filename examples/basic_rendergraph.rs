@@ -44,8 +44,8 @@ fn main() {
                 .build_renderpass(
                     RenderPassTarget::new()
                         .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
-                    |pass, [], [], container, (pipeline,)| {
-                        pass.set_pipeline(container.get(pipeline));
+                    |pass, [], [], (pipeline,)| {
+                        pass.set_pipeline(pipeline);
                         pass.draw(0..3, 0..1);
                     },
                 );

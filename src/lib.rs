@@ -5,7 +5,7 @@ pub mod math;
 
 pub use wgpu;
 
-use std::{hash::Hash, marker::PhantomData};
+use std::hash::Hash;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
@@ -724,7 +724,6 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             buffers: [],
             textures: [],
             passthrough: (),
-            passthrough_container: PassthroughContainer::new(),
         }
     }
 
@@ -799,14 +798,13 @@ pub struct NodeBuilder<'a, 'r, 'node, B, T, P> {
     buffers: B,
     textures: T,
     passthrough: P,
-    passthrough_container: PassthroughContainer<'node>,
 }
 
 impl<'a, 'r, 'node, B, T, P> NodeBuilder<'a, 'r, 'node, B, T, P>
 where
     B: ResourceArray<BufferHandle> + 'node,
     T: ResourceArray<TextureHandle> + 'node,
-    P: 'node,
+    P: RenderPassthrough + 'node,
 {
     pub fn with_buffer(
         self,
@@ -817,7 +815,6 @@ where
             buffers: self.buffers.extend_one(handle),
             textures: self.textures,
             passthrough: self.passthrough,
-            passthrough_container: self.passthrough_container,
         }
     }
 
@@ -830,24 +827,20 @@ where
             buffers: self.buffers,
             textures: self.textures.extend_one(handle),
             passthrough: self.passthrough,
-            passthrough_container: self.passthrough_container,
         }
     }
 
     pub fn with_passthrough<A: 'node>(
         self,
         item: &'node A,
-    ) -> NodeBuilder<'a, 'r, 'node, B, T, <P as ExtendTuple<PassthroughRef<A>>>::ExtendOne>
-    where P: ExtendTuple<PassthroughRef<A>>
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <P as ExtendTuple<*const A>>::ExtendOne>
+    where P: ExtendTuple<*const A>
     {
-        let mut container = self.passthrough_container;
-        let item = container.insert(item);
         NodeBuilder {
             graph: self.graph,
             buffers: self.buffers,
             textures: self.textures,
-            passthrough: self.passthrough.extend_one(item),
-            passthrough_container: container,
+            passthrough: self.passthrough.extend_one(item as *const A),
         }
     }
 
@@ -857,8 +850,7 @@ where
                 &'b mut wgpu::CommandEncoder,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                PassthroughContainer<'pass>,
-                P,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
         self.graph.nodes.push(Box::new(GraphNode {
@@ -866,10 +858,9 @@ where
                 buffers: self.buffers,
                 textures: self.textures,
                 passthrough: self.passthrough,
-                passthrough_container: self.passthrough_container,
                 render_pass: None,
-                exec: Box::new(move |encoder, buffers, textures, container, passthrough| {
-                    (exec)(encoder.unwrap_left(), buffers, textures, container, passthrough)
+                exec: Box::new(move |encoder, buffers, textures, passthrough| {
+                    (exec)(encoder.unwrap_left(), buffers, textures, passthrough)
                 }),
             }),
         }));
@@ -881,8 +872,7 @@ where
                 &'b mut wgpu::RenderPass<'pass>,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                PassthroughContainer<'pass>,
-                P,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
         self.graph.nodes.push(Box::new(GraphNode {
@@ -890,35 +880,32 @@ where
                 buffers: self.buffers,
                 textures: self.textures,
                 passthrough: self.passthrough,
-                passthrough_container: self.passthrough_container,
                 render_pass: Some(render_pass),
-                exec: Box::new(move |pass, buffers, textures, container, passthrough| {
-                    (exec)(pass.unwrap_right(), buffers, textures, container, passthrough)
+                exec: Box::new(move |pass, buffers, textures, passthrough| {
+                    (exec)(pass.unwrap_right(), buffers, textures, passthrough)
                 }),
             }),
         }))
     }
 }
 
-struct GraphNode<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> {
+struct GraphNode<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P: RenderPassthrough> {
     //TODO: This could be made a MaybeUninit, if absolutely necessary. It probably isn't necessary.
     inner: Option<GraphNodeInner<'node, B, T, P>>,
 }
 
 #[allow(clippy::type_complexity)]
-struct GraphNodeInner<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> {
+struct GraphNodeInner<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P: RenderPassthrough> {
     buffers: B,
     textures: T,
     passthrough: P,
-    passthrough_container: PassthroughContainer<'node>,
     render_pass: Option<RenderPassTarget>,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 Either<&'b mut wgpu::CommandEncoder, &'b mut wgpu::RenderPass<'pass>>,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                PassthroughContainer<'pass>,
-                P,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
 }
@@ -932,7 +919,7 @@ trait GraphNodeImpl<'node> {
     ) where 'node: 'pass;
 }
 
-impl<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> GraphNodeImpl<'node>
+impl<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P: RenderPassthrough + 'node> GraphNodeImpl<'node>
     for GraphNode<'node, B, T, P>
 {
     fn render_pass(&mut self) -> Option<RenderPassTarget> {
@@ -949,8 +936,12 @@ impl<'node, B: ResourceArray<BufferHandle>, T: ResourceArray<TextureHandle>, P> 
             encoder_or_pass,
             inner.buffers.fetch_resources(renderer),
             inner.textures.fetch_resources(renderer),
-            inner.passthrough_container,
-            inner.passthrough,
+            unsafe {
+                // SAFETY: Not entirely enforced here.
+                // * 'pass is shorter than 'node
+                // * Original references are borrowchecked wrt. 'node
+                inner.passthrough.reborrow()
+            },
         )
     }
 }
@@ -966,6 +957,12 @@ pub trait ExtendTuple<T>: Sealed {
     fn extend_one(self, _: T) -> Self::ExtendOne;
 }
 
+pub trait RenderPassthrough: Sealed {
+    type Reborrowed<'a> where Self: 'a;
+
+    unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a>;
+}
+
 impl Sealed for () {}
 
 impl<T> ExtendTuple<T> for () {
@@ -976,11 +973,43 @@ impl<T> ExtendTuple<T> for () {
     }
 }
 
+impl RenderPassthrough for () {
+    type Reborrowed<'a> = ();
+
+    unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a> {}
+}
+
+impl<T> Sealed for *const T {}
+impl<T> Sealed for *mut T {}
+
+impl<T> RenderPassthrough for *const T {
+    type Reborrowed<'a> = &'a T where Self: 'a;
+
+    unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a> {
+        &*self
+    }
+}
+
+impl<T> RenderPassthrough for *mut T {
+    type Reborrowed<'a> = &'a mut T where Self: 'a;
+
+    unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a> {
+        &mut *self
+    }
+}
+
 macro_rules! extend_tuple {
     ($tuple:ident, $element:ident, $($letters:ident,)*) => {{
         let ($($letters,)*) = $tuple;
         ($($letters,)* $element)
     }};
+}
+
+macro_rules! reborrow_tuple {
+    ($tuple:ident, $($letters:ident,)*) => {{
+        let ($($letters,)*) = $tuple;
+        ($($letters.reborrow(),)*)
+    }}
 }
 
 macro_rules! impl_extend_tuple {
@@ -995,6 +1024,15 @@ macro_rules! impl_extend_tuple {
                 extend_tuple!(self, element, $head,)
             }
         }
+
+        impl<$head: RenderPassthrough> RenderPassthrough for ($head,) {
+            type Reborrowed<'a> = (<$head as RenderPassthrough>::Reborrowed<'a>,) where $head: 'a;
+
+            #[allow(non_snake_case)]
+            unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a> {
+                reborrow_tuple!(self, $head,)
+            }
+        }
     };
     ($head:ident, $($tail:ident,)*) => {
         impl<$head, $($tail,)*> Sealed for ($head, $($tail,)*) {}
@@ -1005,6 +1043,15 @@ macro_rules! impl_extend_tuple {
             #[allow(non_snake_case)]
             fn extend_one(self, element:T) -> Self::ExtendOne {
                 extend_tuple!(self, element, $head, $($tail,)*)
+            }
+        }
+
+        impl<$head: RenderPassthrough, $($tail: RenderPassthrough,)*> RenderPassthrough for ($head, $($tail,)*) {
+            type Reborrowed<'a> = (<$head as RenderPassthrough>::Reborrowed<'a>, $(<$tail as RenderPassthrough>::Reborrowed<'a>,)*) where $head: 'a, $($tail: 'a,)*;
+
+            #[allow(non_snake_case)]
+            unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a> {
+                reborrow_tuple!(self, $head, $($tail,)*)
             }
         }
         impl_extend_tuple!($($tail,)*);
@@ -1104,39 +1151,3 @@ impl_resource_array!(
     ad, ae, af,
 );
 
-pub struct PassthroughContainer<'a> {
-    data: Vec<*const ()>,
-    _marker: PhantomData<&'a ()>,
-}
-
-pub struct PassthroughRef<T> {
-    data_idx: usize,
-    _marker: PhantomData<*const T>,
-}
-
-impl<'a> PassthroughContainer<'a> {
-    fn new() -> Self {
-        Self {
-            data: vec![],
-            _marker: PhantomData,
-        }
-    }
-
-    fn insert<T>(&mut self, data: &'a T) -> PassthroughRef<T> {
-        self.data.push(data as *const T as *const ());
-        PassthroughRef {
-            data_idx: self.data.len() - 1,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<'pass> PassthroughContainer<'pass> {
-    pub fn get<T>(&self, handle: PassthroughRef<T>) -> &'pass T {
-        unsafe {
-            // SAFETY: `handle` cannot have been created except by us, and is type-tagged to be
-            // something covariant to the original type stored.
-            &*(self.data[handle.data_idx] as *const T)
-        }
-    }
-}
