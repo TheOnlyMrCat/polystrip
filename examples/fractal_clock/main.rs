@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use pollster::FutureExt;
-use polystrip::{PolystripDevice, RenderGraph, RenderPassTarget, TextureHandle};
+use polystrip::graph::RenderGraph;
+use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -689,7 +690,7 @@ impl Pipelines {
             },
         );
 
-        let depth_texture= graph.add_intermediate_texture(wgpu::TextureDescriptor {
+        let depth_texture = graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC Depth Texture"),
             size: wgpu::Extent3d {
                 width: self.width,
@@ -703,7 +704,7 @@ impl Pipelines {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
-        let resolve_texture= graph.add_intermediate_texture(wgpu::TextureDescriptor {
+        let resolve_texture = graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC MSAA Resolve Texture"),
             size: wgpu::Extent3d {
                 width: self.width,

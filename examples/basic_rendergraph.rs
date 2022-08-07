@@ -1,5 +1,6 @@
 use pollster::FutureExt;
-use polystrip::{PolystripDevice, RenderGraph, RenderPassTarget, TextureHandle};
+use polystrip::graph::RenderGraph;
+use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
