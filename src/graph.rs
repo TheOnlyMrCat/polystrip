@@ -113,11 +113,12 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
     pub fn add_node<'a>(
         &'a mut self,
-    ) -> NodeBuilder<'a, 'r, 'node, [BufferHandle; 0], [TextureHandle; 0], ()> {
+    ) -> NodeBuilder<'a, 'r, 'node, [BufferHandle; 0], [TextureHandle; 0], [BindGroupHandle; 0], ()> {
         NodeBuilder {
             graph: self,
             buffers: [],
             textures: [],
+            bind_groups: [],
             passthrough: (),
         }
     }
@@ -188,27 +189,30 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     }
 }
 
-pub struct NodeBuilder<'a, 'r, 'node, B, T, P> {
+pub struct NodeBuilder<'a, 'r, 'node, B, T, G, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
     buffers: B,
     textures: T,
+    bind_groups: G,
     passthrough: P,
 }
 
-impl<'a, 'r, 'node, B, T, P> NodeBuilder<'a, 'r, 'node, B, T, P>
+impl<'a, 'r, 'node, B, T, G, P> NodeBuilder<'a, 'r, 'node, B, T, G, P>
 where
     B: ResourceArray<BufferHandle> + 'node,
     T: ResourceArray<TextureHandle> + 'node,
+    G: ResourceArray<BindGroupHandle> + 'node,
     P: RenderPassthrough + 'node,
 {
     pub fn with_buffer(
         self,
         handle: BufferHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, T, P> {
+    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, T, G, P> {
         NodeBuilder {
             graph: self.graph,
             buffers: self.buffers.extend_one(handle),
             textures: self.textures,
+            bind_groups: self.bind_groups,
             passthrough: self.passthrough,
         }
     }
@@ -216,11 +220,12 @@ where
     pub fn with_texture(
         self,
         handle: TextureHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, B, <T as ResourceArray<TextureHandle>>::ExtendOne, P> {
+    ) -> NodeBuilder<'a, 'r, 'node, B, <T as ResourceArray<TextureHandle>>::ExtendOne, G, P> {
         NodeBuilder {
             graph: self.graph,
             buffers: self.buffers,
             textures: self.textures.extend_one(handle),
+            bind_groups: self.bind_groups,
             passthrough: self.passthrough,
         }
     }
@@ -228,7 +233,7 @@ where
     pub fn with_passthrough<A: 'node>(
         self,
         item: &'node A,
-    ) -> NodeBuilder<'a, 'r, 'node, B, T, <P as ExtendTuple<*const A>>::ExtendOne>
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, G, <P as ExtendTuple<*const A>>::ExtendOne>
     where
         P: ExtendTuple<*const A>,
     {
@@ -236,6 +241,7 @@ where
             graph: self.graph,
             buffers: self.buffers,
             textures: self.textures,
+            bind_groups: self.bind_groups,
             passthrough: self.passthrough.extend_one(item as *const A),
         }
     }
@@ -246,6 +252,7 @@ where
                 &'b mut wgpu::CommandEncoder,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -254,9 +261,10 @@ where
                 buffers: self.buffers,
                 textures: self.textures,
                 passthrough: self.passthrough,
+                bind_groups: self.bind_groups,
                 render_pass: None,
-                exec: Box::new(move |encoder, buffers, textures, passthrough| {
-                    (exec)(encoder.unwrap_left(), buffers, textures, passthrough)
+                exec: Box::new(move |encoder, buffers, textures, bind_groups, passthrough| {
+                    (exec)(encoder.unwrap_left(), buffers, textures, bind_groups, passthrough)
                 }),
             }),
         }));
@@ -268,6 +276,7 @@ where
                 &'b mut wgpu::RenderPass<'pass>,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -276,9 +285,10 @@ where
                 buffers: self.buffers,
                 textures: self.textures,
                 passthrough: self.passthrough,
+                bind_groups: self.bind_groups,
                 render_pass: Some(render_pass),
-                exec: Box::new(move |pass, buffers, textures, passthrough| {
-                    (exec)(pass.unwrap_right(), buffers, textures, passthrough)
+                exec: Box::new(move |pass, buffers, textures, bind_groups, passthrough| {
+                    (exec)(pass.unwrap_right(), buffers, textures, bind_groups, passthrough)
                 }),
             }),
         }))
@@ -289,10 +299,11 @@ struct GraphNode<
     'node,
     B: ResourceArray<BufferHandle>,
     T: ResourceArray<TextureHandle>,
+    G: ResourceArray<BindGroupHandle>,
     P: RenderPassthrough,
 > {
     //TODO: This could be made a MaybeUninit, if absolutely necessary. It probably isn't necessary.
-    inner: Option<GraphNodeInner<'node, B, T, P>>,
+    inner: Option<GraphNodeInner<'node, B, T, G, P>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -300,10 +311,12 @@ struct GraphNodeInner<
     'node,
     B: ResourceArray<BufferHandle>,
     T: ResourceArray<TextureHandle>,
+    G: ResourceArray<BindGroupHandle>,
     P: RenderPassthrough,
 > {
     buffers: B,
     textures: T,
+    bind_groups: G,
     passthrough: P,
     render_pass: Option<RenderPassTarget>,
     exec: Box<
@@ -311,6 +324,7 @@ struct GraphNodeInner<
                 Either<&'b mut wgpu::CommandEncoder, &'b mut wgpu::RenderPass<'pass>>,
                 <B as ResourceArray<BufferHandle>>::Fetched<'b>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'b>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -330,8 +344,9 @@ impl<
         'node,
         B: ResourceArray<BufferHandle>,
         T: ResourceArray<TextureHandle>,
+        G: ResourceArray<BindGroupHandle>,
         P: RenderPassthrough + 'node,
-    > GraphNodeImpl<'node> for GraphNode<'node, B, T, P>
+    > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
 {
     fn render_pass(&mut self) -> Option<RenderPassTarget> {
         self.inner.as_mut().unwrap().render_pass.take()
@@ -349,6 +364,7 @@ impl<
             encoder_or_pass,
             inner.buffers.fetch_resources(renderer),
             inner.textures.fetch_resources(renderer),
+            inner.bind_groups.fetch_resources(renderer),
             unsafe {
                 // SAFETY: Not entirely enforced here.
                 // * 'pass is shorter than 'node
@@ -493,6 +509,14 @@ impl RenderResource for TextureHandle {
 
     fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
         resources.get_texture(self)
+    }
+}
+
+impl RenderResource for BindGroupHandle {
+    type Resource<'a> = &'a wgpu::BindGroup;
+
+    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
+        resources.get_bind_group(self)
     }
 }
 
