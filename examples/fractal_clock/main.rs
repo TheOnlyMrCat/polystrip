@@ -659,7 +659,7 @@ impl Pipelines {
             ]),
         );
 
-        graph.add_node().with_passthrough(self).build_with_encoder(
+        graph.add_node().with_external_output().with_passthrough(self).build_with_encoder(
             move |encoder, [], [], [], (this,)| {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("FC Render Compute Pass"),
