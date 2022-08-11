@@ -334,6 +334,18 @@ impl Renderer {
         let (bind_group, _) = self.bind_groups.get(&handle.id).unwrap();
         bind_group
     }
+
+    pub fn write_buffer(&self, handle: BufferHandle, offset: wgpu::BufferAddress, data: &[u8]) {
+        self.queue.write_buffer(self.get_buffer(handle), offset, data)
+    }
+
+    pub fn write_buffer_with(&self, handle: BufferHandle, offset: wgpu::BufferAddress, size: wgpu::BufferSize) -> wgpu::QueueWriteBufferView<'_> {
+        self.queue.write_buffer_with(self.get_buffer(handle), offset, size)
+    }
+
+    pub fn write_texture(&self, texture: wgpu::ImageCopyTexture<'_>, data: &[u8], data_layout: wgpu::ImageDataLayout, size: wgpu::Extent3d) {
+        self.queue.write_texture(texture, data, data_layout, size)
+    }
 }
 
 impl Renderer {
