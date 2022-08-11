@@ -1,7 +1,6 @@
 #![feature(generic_associated_types)]
 // Can also experiment with #![feature(generic_const_exprs)]
 
-pub mod math;
 pub mod graph;
 
 pub use wgpu;
