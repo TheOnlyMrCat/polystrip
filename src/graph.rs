@@ -105,14 +105,6 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
-    pub fn add_bind_group(
-        &mut self,
-        layout: &wgpu::BindGroupLayout,
-        resources: impl IntoBindGroupResources,
-    ) -> BindGroupHandle {
-        self.renderer.add_bind_group(layout, resources)
-    }
-
     pub fn add_node<'a>(
         &'a mut self,
     ) -> NodeBuilder<'a, 'r, 'node, [BufferHandle; 0], [TextureHandle; 0], [BindGroupHandle; 0], ()>
@@ -300,6 +292,58 @@ where
             buffers: self.buffers,
             textures: self.textures.extend_one(handle),
             bind_groups: self.bind_groups,
+            passthrough: self.passthrough,
+        }
+    }
+
+    pub fn with_bind_group(
+        self,
+        layout: &wgpu::BindGroupLayout,
+        resources: impl IntoBindGroupResources,
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
+        let handle = self.graph.renderer.add_bind_group(layout, resources);
+        NodeBuilder {
+            graph: self.graph,
+            rw_buffers: self.rw_buffers,
+            rw_textures: self.rw_textures,
+            no_cull: self.no_cull,
+            buffers: self.buffers,
+            textures: self.textures,
+            bind_groups: self.bind_groups.extend_one(handle),
+            passthrough: self.passthrough,
+        }
+    }
+
+    pub fn with_bind_group_rw(
+        mut self,
+        layout: &wgpu::BindGroupLayout,
+        resources: impl IntoBindGroupResources,
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
+        let resources = resources.into_entries();
+        for (_, entry) in &resources {
+            match entry {
+                crate::BindGroupResource::Buffer(binding) => self.rw_buffers.push(binding.buffer),
+                crate::BindGroupResource::BufferArray(handles) => {
+                    self.rw_buffers
+                        .extend(handles.iter().map(|binding| binding.buffer));
+                }
+                crate::BindGroupResource::Texture(handle) => self.rw_textures.push(*handle),
+                crate::BindGroupResource::TextureArray(handles) => {
+                    self.rw_textures.extend_from_slice(handles);
+                }
+                crate::BindGroupResource::Sampler(_)
+                | crate::BindGroupResource::SamplerArray(_) => {}
+            }
+        }
+        let handle = self.graph.renderer.add_bind_group(layout, resources);
+        NodeBuilder {
+            graph: self.graph,
+            rw_buffers: self.rw_buffers,
+            rw_textures: self.rw_textures,
+            no_cull: self.no_cull,
+            buffers: self.buffers,
+            textures: self.textures,
+            bind_groups: self.bind_groups.extend_one(handle),
             passthrough: self.passthrough,
         }
     }
