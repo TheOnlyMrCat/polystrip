@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
+use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle, Renderer, BufferHandle};
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -29,6 +29,7 @@ fn main() {
     let mut depth = 4;
     let mut renderer = wgpu_device.create_renderer();
     let mut pipelines = Pipelines::new(
+        &mut renderer,
         wgpu_device.device.clone(),
         wgpu_device.queue.clone(),
         window_size.into(),
@@ -78,13 +79,9 @@ struct Pipelines {
 
     index_buffer: wgpu::Buffer,
     index_bind_group: wgpu::BindGroup,
-    colour_buffer: wgpu::Buffer,
-    colour_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    clock_buffer: wgpu::Buffer,
-
-    initial_vertex_uniform_buffers: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    clock_buffer: BufferHandle,
 
     compute_uniform_bind_group_layout: wgpu::BindGroupLayout,
     compute_storage_bind_group_layout: wgpu::BindGroupLayout,
@@ -102,6 +99,7 @@ struct Pipelines {
 
 impl Pipelines {
     fn new(
+        renderer: &mut Renderer,
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         (width, height): (u32, u32),
@@ -111,13 +109,6 @@ impl Pipelines {
             label: Some("FC Index Buffer"),
             size: vertex_count_for_depth(fractal_depth) * vertex_size() as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        let colour_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FC Colour Buffer"),
-            size: std::mem::size_of::<[f64; 4]>() as u64 * fractal_depth as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -134,6 +125,30 @@ impl Pipelines {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let clock_buffer = renderer.insert_buffer(clock_buffer);
+        renderer.write_buffer(
+            clock_buffer,
+            std::mem::size_of::<ClockRay>() as u64 * 3,
+            bytemuck::cast_slice(
+                &(0..12)
+                    .flat_map(|i| {
+                        std::iter::once(ClockRay {
+                            start: 0.45,
+                            end: 0.5,
+                            direction: (i as f32 * std::f32::consts::TAU / 12.0),
+                            half_thickness: 0.004784689,
+                        })
+                        .chain((0..5).map(move |j| ClockRay {
+                            start: 0.475,
+                            end: 0.5,
+                            direction: (i as f32 * std::f32::consts::TAU / 12.0)
+                                + (j as f32 * std::f32::consts::TAU / 60.0),
+                            half_thickness: 0.0023923445,
+                        }))
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        );
 
         let compute_storage_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -201,15 +216,6 @@ impl Pipelines {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(index_buffer.as_entire_buffer_binding()),
-            }],
-        });
-
-        let colour_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Colour Bind Group"),
-            layout: &vertex_storage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(colour_buffer.as_entire_buffer_binding()),
             }],
         });
 
@@ -357,41 +363,14 @@ impl Pipelines {
                 entry_point: "main",
             });
 
-        let initial_vertex_uniform_buffers = (0..fractal_depth)
-            .map(|_| {
-                let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("FC Uniform Buffer"),
-                    size: std::mem::size_of::<[f32; 4]>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("FC Uniform Buffer Bind Group"),
-                    layout: &compute_uniform_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(
-                            uniform_buffer.as_entire_buffer_binding(),
-                        ),
-                    }],
-                });
-
-                (uniform_buffer, bind_group)
-            })
-            .collect::<Vec<_>>();
-
-        let mut renderer = Self {
+        let mut this = Self {
             device,
             queue,
             index_buffer,
             index_bind_group,
-            colour_buffer,
-            colour_bind_group,
             camera_buffer,
             camera_bind_group,
             clock_buffer,
-            initial_vertex_uniform_buffers,
             compute_uniform_bind_group_layout,
             compute_storage_bind_group_layout,
             vertex_storage_bind_group_layout,
@@ -404,10 +383,9 @@ impl Pipelines {
             fractal_depth,
         };
 
-        renderer.prepare_indices();
-        renderer.resize((width, height));
-        renderer.write_ticks();
-        renderer
+        this.prepare_indices();
+        this.resize((width, height));
+        this
     }
 
     fn prepare_indices(&self) {
@@ -470,74 +448,7 @@ impl Pipelines {
             }],
         });
 
-        self.colour_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FC Colour Buffer"),
-            size: std::mem::size_of::<[f64; 4]>() as u64 * fractal_depth as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        self.colour_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Colour Bind Group"),
-            layout: &self.vertex_storage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    self.colour_buffer.as_entire_buffer_binding(),
-                ),
-            }],
-        });
-
-        self.initial_vertex_uniform_buffers = (0..fractal_depth)
-            .map(|depth| {
-                let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("FC Uniform Buffer {}", depth)),
-                    size: std::mem::size_of::<[f32; 4]>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("FC Uniform Buffer {} Bind Group", depth)),
-                    layout: &self.compute_uniform_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(
-                            uniform_buffer.as_entire_buffer_binding(),
-                        ),
-                    }],
-                });
-
-                (uniform_buffer, bind_group)
-            })
-            .collect::<Vec<_>>();
-
         self.prepare_indices();
-    }
-
-    fn write_ticks(&self) {
-        self.queue.write_buffer(
-            &self.clock_buffer,
-            std::mem::size_of::<ClockRay>() as u64 * 3,
-            bytemuck::cast_slice(
-                &(0..12)
-                    .flat_map(|i| {
-                        std::iter::once(ClockRay {
-                            start: 0.45,
-                            end: 0.5,
-                            direction: (i as f32 * std::f32::consts::TAU / 12.0),
-                            half_thickness: 0.004784689,
-                        })
-                        .chain((0..5).map(move |j| ClockRay {
-                            start: 0.475,
-                            end: 0.5,
-                            direction: (i as f32 * std::f32::consts::TAU / 12.0)
-                                + (j as f32 * std::f32::consts::TAU / 60.0),
-                            half_thickness: 0.0023923445,
-                        }))
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-        );
     }
 
     pub fn resize(&mut self, (width, height): (u32, u32)) {
@@ -594,11 +505,18 @@ impl Pipelines {
                 colours.push([r, g, b, 1.0]);
             }
         }
-        self.queue
-            .write_buffer(&self.colour_buffer, 0, bytemuck::cast_slice(&colours));
 
-        self.queue.write_buffer(
-            &self.clock_buffer,
+        let colour_buffer = graph.add_intermediate_buffer(wgpu::BufferDescriptor {
+            label: Some("FC Colour Buffer"),
+            size: std::mem::size_of::<[f64; 4]>() as u64 * self.fractal_depth as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        graph.renderer()
+            .write_buffer(colour_buffer, 0, bytemuck::cast_slice(&colours));
+
+        graph.renderer().write_buffer(
+            self.clock_buffer,
             0,
             bytemuck::cast_slice(&[
                 ClockRay {
@@ -629,38 +547,35 @@ impl Pipelines {
             mapped_at_creation: false,
         });
 
-        graph
-            .add_node()
-            .with_bind_group_rw(&self.compute_storage_bind_group_layout, (vertex_buffer,))
-            .with_passthrough(self)
-            .build_with_encoder(move |encoder, [], [], [vertex_bind_group], (this,)| {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("FC Render Compute Pass"),
-                });
-                pass.set_pipeline(&this.vertices_compute_pipeline);
-                pass.set_bind_group(0, vertex_bind_group, &[]);
-                for (i, (buffer, bind_group)) in
-                    this.initial_vertex_uniform_buffers.iter().enumerate()
-                {
-                    this.queue.write_buffer(
-                        buffer,
-                        0,
-                        bytemuck::cast_slice(&[
+        for i in 0..self.fractal_depth {
+            let uniform_buffer = graph.add_intermediate_buffer(wgpu::BufferDescriptor {
+                label: None,
+                size: std::mem::size_of::<[f32; 4]>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            graph.renderer().write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[
                             i as f32,
                             second_frac * std::f32::consts::TAU,
                             minute_frac * std::f32::consts::TAU,
                             hour_frac * std::f32::consts::TAU,
-                        ]),
-                    );
-                    pass.set_bind_group(1, bind_group, &[]);
+            ]));
+            graph.add_node()
+                .with_bind_group_rw(&self.compute_storage_bind_group_layout, (vertex_buffer,))
+                .with_bind_group(&self.compute_uniform_bind_group_layout, (uniform_buffer,))
+                .with_passthrough(&self.vertices_compute_pipeline)
+                .build_compute_pass(move |pass, [], [], [vertex_bind_group, uniform_bind_group], (pipeline,)| {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, vertex_bind_group, &[]);
+                    pass.set_bind_group(1, uniform_bind_group, &[]);
 
                     let workgroup_size = workgroup_size_for_depth((i + 1) as _) as u32;
                     let workgroup_y = workgroup_size / 256 + 1;
                     let workgroup_x = workgroup_size % 256 + 1;
 
                     pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
-                }
-            });
+                })
+        }
 
         let depth_texture = graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC Depth Texture"),
@@ -693,8 +608,10 @@ impl Pipelines {
         graph
             .add_node()
             .with_buffer(vertex_buffer)
+            .with_buffer(self.clock_buffer)
+            .with_bind_group(&self.vertex_storage_bind_group_layout, (colour_buffer,))
             .with_passthrough(self)
-            .build_renderpass(
+            .build_render_pass(
                 RenderPassTarget::new()
                     .with_msaa_color(
                         resolve_texture,
@@ -707,11 +624,11 @@ impl Pipelines {
                         },
                     )
                     .with_depth(depth_texture, 1.0),
-                |pass, [vertex_buffer], [], [], (this,)| {
+                |pass, [vertex_buffer, clock_buffer], [], [colour_bind_group], (this,)| {
                     if this.fractal_depth > 1 {
                         pass.set_pipeline(&this.fractal_render_pipeline);
                         pass.set_bind_group(0, &this.camera_bind_group, &[]);
-                        pass.set_bind_group(1, &this.colour_bind_group, &[]);
+                        pass.set_bind_group(1, colour_bind_group, &[]);
                         pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                         pass.set_index_buffer(
                             this.index_buffer.slice(..),
@@ -726,7 +643,7 @@ impl Pipelines {
 
                     pass.set_pipeline(&this.clock_render_pipeline);
                     pass.set_bind_group(0, &this.camera_bind_group, &[]);
-                    pass.set_vertex_buffer(0, this.clock_buffer.slice(..));
+                    pass.set_vertex_buffer(0, clock_buffer.slice(..));
                     pass.draw(0..4, 0..75);
                 },
             )

@@ -42,7 +42,7 @@ fn main() {
             graph
                 .add_node()
                 .with_passthrough(&pipeline)
-                .build_renderpass(
+                .build_render_pass(
                     RenderPassTarget::new()
                         .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
                     |pass, [], [], [], (pipeline,)| {

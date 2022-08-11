@@ -1,4 +1,3 @@
-use either::{Either, Left, Right};
 use fxhash::FxHashSet;
 
 use crate::{
@@ -45,6 +44,14 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             intermediate_textures: FxHashSet::default(),
             nodes: Vec::new(),
         }
+    }
+
+    pub fn renderer(&self) -> &Renderer {
+        self.renderer
+    }
+
+    pub fn renderer_mut(&mut self) -> &mut Renderer {
+        self.renderer
     }
 
     pub fn add_intermediate_buffer(&mut self, descriptor: wgpu::BufferDescriptor) -> BufferHandle {
@@ -142,8 +149,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
 
         for mut node in pruned_nodes.into_iter().rev() {
-            match node.render_pass() {
-                Some(pass_targets) => {
+            match node.requested_encoder() {
+                RequestedEncoder::RenderPass(pass_targets) => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
@@ -180,14 +187,24 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             }
                         }),
                     });
-                    node.exec(Right(&mut pass), &resources);
+                    node.exec(EncoderOrPass::RenderPass(&mut pass), &resources);
                 }
-                None => {
+                RequestedEncoder::ComputePass => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
-                    node.exec(Left(&mut encoder), &resources);
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: None
+                    });
+                    node.exec(EncoderOrPass::ComputePass(&mut pass), &resources);
+                }
+                RequestedEncoder::Encoder => {
+                    let resources = RenderPassResources {
+                        resources: self.renderer,
+                        output_texture: output.view(),
+                    };
+                    node.exec(EncoderOrPass::Encoder(&mut encoder), &resources);
                 }
             }
         }
@@ -391,11 +408,11 @@ where
                 textures: self.textures,
                 passthrough: self.passthrough,
                 bind_groups: self.bind_groups,
-                render_pass: None,
+                requested_encoder: Some(RequestedEncoder::Encoder),
                 exec: Box::new(
                     move |encoder, buffers, textures, bind_groups, passthrough| {
                         (exec)(
-                            encoder.unwrap_left(),
+                            encoder.unwrap_encoder(),
                             buffers,
                             textures,
                             bind_groups,
@@ -407,7 +424,7 @@ where
         }));
     }
 
-    pub fn build_renderpass<F>(mut self, render_pass: RenderPassTarget, exec: F)
+    pub fn build_render_pass<F>(mut self, render_pass: RenderPassTarget, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::RenderPass<'pass>,
@@ -433,10 +450,10 @@ where
                 textures: self.textures,
                 passthrough: self.passthrough,
                 bind_groups: self.bind_groups,
-                render_pass: Some(render_pass),
+                requested_encoder: Some(RequestedEncoder::RenderPass(render_pass)),
                 exec: Box::new(move |pass, buffers, textures, bind_groups, passthrough| {
                     (exec)(
-                        pass.unwrap_right(),
+                        pass.unwrap_render_pass(),
                         buffers,
                         textures,
                         bind_groups,
@@ -445,6 +462,74 @@ where
                 }),
             }),
         }))
+    }
+
+    pub fn build_compute_pass<F>(self, exec: F)
+    where
+        F: for<'b, 'pass> FnOnce(
+                &'b mut wgpu::ComputePass<'pass>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
+            ) + 'node,
+    {
+        self.graph.nodes.push(Box::new(GraphNode {
+            inner: Some(GraphNodeInner {
+                rw_buffers: self.rw_buffers,
+                rw_textures: self.rw_textures,
+                no_cull: self.no_cull,
+                buffers: self.buffers,
+                textures: self.textures,
+                passthrough: self.passthrough,
+                bind_groups: self.bind_groups,
+                requested_encoder: Some(RequestedEncoder::ComputePass),
+                exec: Box::new(move |pass, buffers, textures, bind_groups, passthrough| {
+                    (exec)(
+                        pass.unwrap_compute_pass(),
+                        buffers,
+                        textures,
+                        bind_groups,
+                        passthrough,
+                    )
+                }),
+            }),
+        }))
+    }
+}
+
+enum RequestedEncoder {
+    Encoder,
+    RenderPass(RenderPassTarget),
+    ComputePass,
+}
+
+enum EncoderOrPass<'b, 'pass> {
+    Encoder(&'b mut wgpu::CommandEncoder),
+    RenderPass(&'b mut wgpu::RenderPass<'pass>),
+    ComputePass(&'b mut wgpu::ComputePass<'pass>),
+}
+
+impl<'b, 'pass> EncoderOrPass<'b, 'pass> {
+    fn unwrap_encoder(self) -> &'b mut wgpu::CommandEncoder {
+        match self {
+            Self::Encoder(encoder) => encoder,
+            _ => unreachable!(),
+        }
+    }
+
+    fn unwrap_render_pass(self) -> &'b mut wgpu::RenderPass<'pass> {
+        match self {
+            Self::RenderPass(pass) => pass,
+            _ => unreachable!(),
+        }
+    }
+
+    fn unwrap_compute_pass(self) -> &'b mut wgpu::ComputePass<'pass> {
+        match self {
+            Self::ComputePass(pass) => pass,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -474,10 +559,10 @@ struct GraphNodeInner<
     textures: T,
     bind_groups: G,
     passthrough: P,
-    render_pass: Option<RenderPassTarget>,
+    requested_encoder: Option<RequestedEncoder>,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
-                Either<&'b mut wgpu::CommandEncoder, &'b mut wgpu::RenderPass<'pass>>,
+                EncoderOrPass<'b, 'pass>,
                 <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
                 <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
@@ -487,7 +572,7 @@ struct GraphNodeInner<
 }
 
 trait GraphNodeImpl<'node> {
-    fn render_pass(&mut self) -> Option<RenderPassTarget>;
+    fn requested_encoder(&mut self) -> RequestedEncoder;
     fn cull(
         &self,
         used_buffers: &mut FxHashSet<BufferHandle>,
@@ -495,7 +580,7 @@ trait GraphNodeImpl<'node> {
     ) -> bool;
     fn exec<'pass>(
         &mut self,
-        encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
+        encoder_or_pass: EncoderOrPass<'_, 'pass>,
         resources: &'pass RenderPassResources,
     ) where
         'node: 'pass;
@@ -509,8 +594,8 @@ impl<
         P: RenderPassthrough + 'node,
     > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
 {
-    fn render_pass(&mut self) -> Option<RenderPassTarget> {
-        self.inner.as_mut().unwrap().render_pass.take()
+    fn requested_encoder(&mut self) -> RequestedEncoder {
+        self.inner.as_mut().unwrap().requested_encoder.take().unwrap()
     }
 
     fn cull(
@@ -536,7 +621,7 @@ impl<
 
     fn exec<'pass>(
         &mut self,
-        encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
+        encoder_or_pass: EncoderOrPass<'_, 'pass>,
         renderer: &'pass RenderPassResources,
     ) where
         'node: 'pass,
