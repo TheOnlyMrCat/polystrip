@@ -376,9 +376,9 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::CommandEncoder,
-                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -411,9 +411,9 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::RenderPass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -478,9 +478,9 @@ struct GraphNodeInner<
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 Either<&'b mut wgpu::CommandEncoder, &'b mut wgpu::RenderPass<'pass>>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'b>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'b>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'b>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
+                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -496,7 +496,7 @@ trait GraphNodeImpl<'node> {
     fn exec<'pass>(
         &mut self,
         encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
-        resources: &RenderPassResources,
+        resources: &'pass RenderPassResources,
     ) where
         'node: 'pass;
 }
@@ -537,7 +537,7 @@ impl<
     fn exec<'pass>(
         &mut self,
         encoder_or_pass: Either<&mut wgpu::CommandEncoder, &mut wgpu::RenderPass<'pass>>,
-        renderer: &RenderPassResources,
+        renderer: &'pass RenderPassResources,
     ) where
         'node: 'pass,
     {

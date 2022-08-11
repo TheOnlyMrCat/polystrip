@@ -76,8 +76,6 @@ struct Pipelines {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
 
-    vertex_buffer: wgpu::Buffer,
-    vertex_bind_group: wgpu::BindGroup,
     index_buffer: wgpu::Buffer,
     index_bind_group: wgpu::BindGroup,
     colour_buffer: wgpu::Buffer,
@@ -109,13 +107,6 @@ impl Pipelines {
         (width, height): (u32, u32),
         fractal_depth: u32,
     ) -> Self {
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FC Vertex Buffer"),
-            size: vertex_count_for_depth(fractal_depth) * vertex_size() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("FC Index Buffer"),
             size: vertex_count_for_depth(fractal_depth) * vertex_size() as u64,
@@ -203,15 +194,6 @@ impl Pipelines {
                     count: None,
                 }],
             });
-
-        let vertex_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Vertex Bind Group"),
-            layout: &compute_storage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(vertex_buffer.as_entire_buffer_binding()),
-            }],
-        });
 
         let index_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("FC Index Bind Group"),
@@ -402,8 +384,6 @@ impl Pipelines {
         let mut renderer = Self {
             device,
             queue,
-            vertex_buffer,
-            vertex_bind_group,
             index_buffer,
             index_bind_group,
             colour_buffer,
@@ -472,23 +452,6 @@ impl Pipelines {
     pub fn set_depth(&mut self, fractal_depth: u32) {
         let fractal_depth = fractal_depth.max(1);
         self.fractal_depth = fractal_depth;
-
-        self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FC Vertex Buffer"),
-            size: vertex_count_for_depth(fractal_depth) * vertex_size() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        self.vertex_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Vertex Bind Group"),
-            layout: &self.compute_storage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    self.vertex_buffer.as_entire_buffer_binding(),
-                ),
-            }],
-        });
 
         self.index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("FC Index Buffer"),
@@ -659,13 +622,23 @@ impl Pipelines {
             ]),
         );
 
-        graph.add_node().with_external_output().with_passthrough(self).build_with_encoder(
-            move |encoder, [], [], [], (this,)| {
+        let vertex_buffer = graph.add_intermediate_buffer(wgpu::BufferDescriptor {
+            label: Some("FC Vertex Buffer"),
+            size: vertex_count_for_depth(self.fractal_depth) * vertex_size() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        graph
+            .add_node()
+            .with_bind_group_rw(&self.compute_storage_bind_group_layout, (vertex_buffer,))
+            .with_passthrough(self)
+            .build_with_encoder(move |encoder, [], [], [vertex_bind_group], (this,)| {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("FC Render Compute Pass"),
                 });
                 pass.set_pipeline(&this.vertices_compute_pipeline);
-                pass.set_bind_group(0, &this.vertex_bind_group, &[]);
+                pass.set_bind_group(0, vertex_bind_group, &[]);
                 for (i, (buffer, bind_group)) in
                     this.initial_vertex_uniform_buffers.iter().enumerate()
                 {
@@ -687,8 +660,7 @@ impl Pipelines {
 
                     pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
                 }
-            },
-        );
+            });
 
         let depth_texture = graph.add_intermediate_texture(wgpu::TextureDescriptor {
             label: Some("FC Depth Texture"),
@@ -718,39 +690,46 @@ impl Pipelines {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         });
 
-        graph.add_node().with_passthrough(self).build_renderpass(
-            RenderPassTarget::new()
-                .with_msaa_color(
-                    resolve_texture,
-                    TextureHandle::RENDER_TARGET,
-                    wgpu::Color {
-                        r: 0.01,
-                        g: 0.01,
-                        b: 0.01,
-                        a: 1.0,
-                    },
-                )
-                .with_depth(depth_texture, 1.0),
-            |pass, [], [], [], (this,)| {
-                if this.fractal_depth > 1 {
-                    pass.set_pipeline(&this.fractal_render_pipeline);
-                    pass.set_bind_group(0, &this.camera_bind_group, &[]);
-                    pass.set_bind_group(1, &this.colour_bind_group, &[]);
-                    pass.set_vertex_buffer(0, this.vertex_buffer.slice(..));
-                    pass.set_index_buffer(this.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(
-                        6..(vertex_count_for_depth(this.fractal_depth) * 2 - 2) as _,
-                        0,
-                        0..1,
-                    );
-                }
+        graph
+            .add_node()
+            .with_buffer(vertex_buffer)
+            .with_passthrough(self)
+            .build_renderpass(
+                RenderPassTarget::new()
+                    .with_msaa_color(
+                        resolve_texture,
+                        TextureHandle::RENDER_TARGET,
+                        wgpu::Color {
+                            r: 0.01,
+                            g: 0.01,
+                            b: 0.01,
+                            a: 1.0,
+                        },
+                    )
+                    .with_depth(depth_texture, 1.0),
+                |pass, [vertex_buffer], [], [], (this,)| {
+                    if this.fractal_depth > 1 {
+                        pass.set_pipeline(&this.fractal_render_pipeline);
+                        pass.set_bind_group(0, &this.camera_bind_group, &[]);
+                        pass.set_bind_group(1, &this.colour_bind_group, &[]);
+                        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            this.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(
+                            6..(vertex_count_for_depth(this.fractal_depth) * 2 - 2) as _,
+                            0,
+                            0..1,
+                        );
+                    }
 
-                pass.set_pipeline(&this.clock_render_pipeline);
-                pass.set_bind_group(0, &this.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, this.clock_buffer.slice(..));
-                pass.draw(0..4, 0..75);
-            },
-        )
+                    pass.set_pipeline(&this.clock_render_pipeline);
+                    pass.set_bind_group(0, &this.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, this.clock_buffer.slice(..));
+                    pass.draw(0..4, 0..75);
+                },
+            )
     }
 }
 
