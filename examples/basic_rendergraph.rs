@@ -1,6 +1,6 @@
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
+use polystrip::{PolystripDevice, RenderPassTarget, RenderPipelineBuilder, TextureHandle};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -22,7 +22,9 @@ fn main() {
     };
 
     let mut renderer = wgpu_device.create_renderer();
-    let pipeline = create_pipeline(&wgpu_device.device);
+    let pipeline = RenderPipelineBuilder::from_wgsl(SHADER_SOURCE)
+        .build(&mut renderer)
+        .pipeline;
 
     el.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -74,31 +76,3 @@ fn frag(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 ";
 
-fn create_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
-    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &shader_module,
-            entry_point: "vert",
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader_module,
-            entry_point: "frag",
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview: None,
-    })
-}

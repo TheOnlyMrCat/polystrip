@@ -1,8 +1,8 @@
 use fxhash::FxHashSet;
 
 use crate::{
-    BindGroupHandle, BufferHandle, IntoBindGroupResources, RenderPassTarget, RenderTarget,
-    Renderer, TextureHandle,
+    BindGroupHandle, BindGroupLayoutHandle, BufferHandle, IntoBindGroupResources, RenderPassTarget,
+    RenderTarget, Renderer, TextureHandle,
 };
 
 pub struct RenderPassResources<'pass> {
@@ -148,6 +148,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             }
         }
 
+        let mut cleared_views = FxHashSet::default();
         for mut node in pruned_nodes.into_iter().rev() {
             match node.requested_encoder() {
                 RequestedEncoder::RenderPass(pass_targets) => {
@@ -167,7 +168,11 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                                         .resolve
                                         .map(|handle| resources.get_texture(handle)),
                                     ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(target.clear),
+                                        load: if cleared_views.insert(target.handle) {
+                                            wgpu::LoadOp::Clear(target.clear)
+                                        } else {
+                                            wgpu::LoadOp::Load
+                                        },
                                         store: true,
                                     },
                                 })
@@ -194,9 +199,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: None
-                    });
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
                     node.exec(EncoderOrPass::ComputePass(&mut pass), &resources);
                 }
                 RequestedEncoder::Encoder => {
@@ -313,9 +317,9 @@ where
         }
     }
 
-    pub fn with_bind_group(
+    pub fn with_bind_group<'b>(
         self,
-        layout: &wgpu::BindGroupLayout,
+        layout: BindGroupLayoutHandle,
         resources: impl IntoBindGroupResources,
     ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
         let handle = self.graph.renderer.add_bind_group(layout, resources);
@@ -333,7 +337,7 @@ where
 
     pub fn with_bind_group_rw(
         mut self,
-        layout: &wgpu::BindGroupLayout,
+        layout: BindGroupLayoutHandle,
         resources: impl IntoBindGroupResources,
     ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
         let resources = resources.into_entries();
@@ -595,7 +599,12 @@ impl<
     > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
 {
     fn requested_encoder(&mut self) -> RequestedEncoder {
-        self.inner.as_mut().unwrap().requested_encoder.take().unwrap()
+        self.inner
+            .as_mut()
+            .unwrap()
+            .requested_encoder
+            .take()
+            .unwrap()
     }
 
     fn cull(

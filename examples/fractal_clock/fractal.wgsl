@@ -2,6 +2,7 @@ struct VertexInput {
     @builtin(vertex_index) index: u32,
     @location(0) position: vec2<f32>,
     @location(1) depth: f32,
+    @location(2) direction: f32,
 }
 
 struct VertexOutput {
