@@ -3,8 +3,8 @@ use std::sync::Arc;
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
 use polystrip::{
-    BindGroupLayoutHandle, BufferHandle, PolystripDevice, RenderPassTarget, RenderPipeline,
-    RenderPipelineBuilder, Renderer, TextureHandle,
+    BindGroupLayoutHandle, BufferHandle, PolystripDevice, RenderPassTarget, RenderPipelineHandle,
+    Renderer, TextureHandle,
 };
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
@@ -88,8 +88,8 @@ struct Pipelines {
     compute_uniform_bind_group_layout: BindGroupLayoutHandle,
     compute_storage_bind_group_layout: BindGroupLayoutHandle,
 
-    fractal_render_pipeline: RenderPipeline,
-    clock_render_pipeline: RenderPipeline,
+    fractal_render_pipeline: RenderPipelineHandle,
+    clock_render_pipeline: RenderPipelineHandle,
     vertices_compute_pipeline: wgpu::ComputePipeline,
     indices_compute_pipeline: wgpu::ComputePipeline,
 
@@ -196,20 +196,21 @@ impl Pipelines {
         let indices_shader_module =
             device.create_shader_module(wgpu::include_wgsl!("indices.wgsl"));
 
-        let fractal_render_pipeline =
-            RenderPipelineBuilder::from_wgsl(include_str!("fractal.wgsl"))
-                .with_primitive_topology(wgpu::PrimitiveTopology::LineList)
-                .with_depth_stencil(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                })
-                .with_msaa(4)
-                .build(renderer);
+        let fractal_render_pipeline = renderer
+            .add_render_pipeline_wgsl(include_str!("fractal.wgsl"))
+            .with_primitive_topology(wgpu::PrimitiveTopology::LineList)
+            .with_depth_stencil(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+            .with_msaa(4)
+            .build();
 
-        let clock_render_pipeline = RenderPipelineBuilder::from_wgsl(include_str!("clock.wgsl"))
+        let clock_render_pipeline = renderer
+            .add_render_pipeline_wgsl(include_str!("clock.wgsl"))
             .with_vertex_step_mode(wgpu::VertexStepMode::Instance)
             .with_primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
             .with_depth_stencil(wgpu::DepthStencilState {
@@ -220,7 +221,7 @@ impl Pipelines {
                 bias: wgpu::DepthBiasState::default(),
             })
             .with_msaa(4)
-            .build(renderer);
+            .build();
 
         let compute_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -454,6 +455,8 @@ impl Pipelines {
                 .with_bind_group_rw(self.compute_storage_bind_group_layout, (vertex_buffer,))
                 .with_bind_group(self.compute_uniform_bind_group_layout, (uniform_buffer,))
                 .with_passthrough(&self.vertices_compute_pipeline)
+                // Currently, render nodes are not included in culling analysis
+                .with_external_output()
                 .build_compute_pass(
                     move |pass, [], [], [vertex_bind_group, uniform_bind_group], (pipeline,)| {
                         pass.set_pipeline(pipeline);
@@ -499,18 +502,12 @@ impl Pipelines {
 
         if self.fractal_depth > 1 {
             graph
-                .add_node()
+                .add_render_node(self.fractal_render_pipeline)
                 .with_buffer(vertex_buffer)
-                .with_bind_group(
-                    self.fractal_render_pipeline.bind_group_layouts[0],
-                    (self.camera_buffer,),
-                )
-                .with_bind_group(
-                    self.fractal_render_pipeline.bind_group_layouts[1],
-                    (colour_buffer,),
-                )
-                .with_passthrough(self)
-                .build_render_pass(
+                .with_bind_group((self.camera_buffer,))
+                .with_bind_group((colour_buffer,))
+                .with_passthrough(&self.index_buffer)
+                .build(
                     RenderPassTarget::new()
                         .with_msaa_color(
                             resolve_texture,
@@ -523,17 +520,11 @@ impl Pipelines {
                             },
                         )
                         .with_depth(depth_texture, 1.0),
-                    |pass, [vertex_buffer], [], [camera_bind_group, colour_bind_group], (this,)| {
-                        pass.set_pipeline(&this.fractal_render_pipeline.pipeline);
-                        pass.set_bind_group(0, camera_bind_group, &[]);
-                        pass.set_bind_group(1, colour_bind_group, &[]);
+                    |pass, [vertex_buffer], (index_buffer,)| {
                         pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                        pass.set_index_buffer(
-                            this.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
+                        pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(
-                            6..(vertex_count_for_depth(this.fractal_depth) * 2 - 2) as _,
+                            6..(vertex_count_for_depth(self.fractal_depth) * 2 - 2) as _,
                             0,
                             0..1,
                         );
@@ -542,14 +533,10 @@ impl Pipelines {
         }
 
         graph
-            .add_node()
+            .add_render_node(self.clock_render_pipeline)
             .with_buffer(self.clock_buffer)
-            .with_bind_group(
-                self.clock_render_pipeline.bind_group_layouts[0],
-                (self.camera_buffer,),
-            )
-            .with_passthrough(self)
-            .build_render_pass(
+            .with_bind_group((self.camera_buffer,))
+            .build(
                 RenderPassTarget::new()
                     .with_msaa_color(
                         resolve_texture,
@@ -562,9 +549,7 @@ impl Pipelines {
                         },
                     )
                     .with_depth(depth_texture, 1.0),
-                |pass, [clock_buffer], [], [camera_bind_group], (this,)| {
-                    pass.set_pipeline(&this.clock_render_pipeline.pipeline);
-                    pass.set_bind_group(0, camera_bind_group, &[]);
+                |pass, [clock_buffer], ()| {
                     pass.set_vertex_buffer(0, clock_buffer.slice(..));
                     pass.draw(0..4, 0..75);
                 },

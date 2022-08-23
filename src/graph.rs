@@ -2,7 +2,7 @@ use fxhash::FxHashSet;
 
 use crate::{
     BindGroupHandle, BindGroupLayoutHandle, BufferHandle, IntoBindGroupResources, RenderPassTarget,
-    RenderTarget, Renderer, TextureHandle,
+    RenderPipeline, RenderPipelineHandle, RenderTarget, Renderer, TextureHandle,
 };
 
 pub struct RenderPassResources<'pass> {
@@ -26,6 +26,10 @@ impl<'pass> RenderPassResources<'pass> {
 
     pub fn get_bind_group(&self, handle: BindGroupHandle) -> &'pass wgpu::BindGroup {
         &self.resources.bind_groups.get(&handle.id).unwrap().0
+    }
+
+    pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &'pass RenderPipeline {
+        &self.resources.render_pipelines.get(&handle.id).unwrap()
     }
 }
 
@@ -124,6 +128,19 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             buffers: [],
             textures: [],
             bind_groups: [],
+            passthrough: (),
+        }
+    }
+
+    pub fn add_render_node<'a>(
+        &'a mut self,
+        pipeline: RenderPipelineHandle,
+    ) -> RenderNodeBuilder<'a, 'r, 'node, [BufferHandle; 0], ()> {
+        RenderNodeBuilder {
+            graph: self,
+            pipeline,
+            bind_groups: Vec::new(),
+            buffers: [],
             passthrough: (),
         }
     }
@@ -317,7 +334,7 @@ where
         }
     }
 
-    pub fn with_bind_group<'b>(
+    pub fn with_bind_group(
         self,
         layout: BindGroupLayoutHandle,
         resources: impl IntoBindGroupResources,
@@ -544,7 +561,6 @@ struct GraphNode<
     G: ResourceArray<BindGroupHandle>,
     P: RenderPassthrough,
 > {
-    //TODO: This could be made a MaybeUninit, if absolutely necessary. It probably isn't necessary.
     inner: Option<GraphNodeInner<'node, B, T, G, P>>,
 }
 
@@ -570,6 +586,103 @@ struct GraphNodeInner<
                 <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
                 <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
                 <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
+            ) + 'node,
+    >,
+}
+
+pub struct RenderNodeBuilder<'a, 'r, 'node, B, P> {
+    graph: &'a mut RenderGraph<'r, 'node>,
+    pipeline: RenderPipelineHandle,
+    bind_groups: Vec<BindGroupHandle>,
+    buffers: B,
+    passthrough: P,
+}
+
+impl<'a, 'r, 'node, B, P> RenderNodeBuilder<'a, 'r, 'node, B, P>
+where
+    B: ResourceArray<BufferHandle> + 'node,
+    P: RenderPassthrough + 'node,
+{
+    pub fn with_buffer(
+        self,
+        handle: BufferHandle,
+    ) -> RenderNodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, P> {
+        RenderNodeBuilder {
+            graph: self.graph,
+            pipeline: self.pipeline,
+            bind_groups: self.bind_groups,
+            buffers: self.buffers.extend_one(handle),
+            passthrough: self.passthrough,
+        }
+    }
+
+    pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
+        self.bind_groups.push(
+            self.graph.renderer.add_bind_group(
+                self
+                    .graph
+                    .renderer
+                    .get_render_pipeline(self.pipeline)
+                    .bind_group_layouts[self.bind_groups.len()],
+                resources,
+            ),
+        );
+        self
+    }
+
+    pub fn with_passthrough<A: 'node>(
+        self,
+        item: &'node A,
+    ) -> RenderNodeBuilder<'a, 'r, 'node, B, <P as ExtendTuple<*const A>>::ExtendOne>
+    where
+        P: ExtendTuple<*const A>,
+    {
+        RenderNodeBuilder {
+            graph: self.graph,
+            pipeline: self.pipeline,
+            bind_groups: self.bind_groups,
+            buffers: self.buffers,
+            passthrough: self.passthrough.extend_one(item as *const A),
+        }
+    }
+
+    pub fn build<F>(self, render_pass: RenderPassTarget, exec: F)
+    where
+        F: for<'b, 'pass> FnOnce(
+                &'b mut wgpu::RenderPass<'pass>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <P as RenderPassthrough>::Reborrowed<'pass>,
+            ) + 'node,
+    {
+        self.graph.nodes.push(Box::new(RenderGraphNode {
+            inner: Some(RenderGraphNodeInner {
+                pipeline: self.pipeline,
+                bind_groups: self.bind_groups,
+                buffers: self.buffers,
+                passthrough: self.passthrough,
+                render_pass: Some(render_pass),
+                exec: Box::new(exec),
+            }),
+        }))
+    }
+}
+
+struct RenderGraphNode<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
+    inner: Option<RenderGraphNodeInner<'node, B, P>>,
+}
+
+#[allow(clippy::type_complexity)]
+struct RenderGraphNodeInner<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
+    pipeline: RenderPipelineHandle,
+    bind_groups: Vec<BindGroupHandle>,
+    buffers: B,
+    passthrough: P,
+    render_pass: Option<RenderPassTarget>,
+    exec: Box<
+        dyn for<'b, 'pass> FnOnce(
+                &'b mut wgpu::RenderPass<'pass>,
+                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -648,6 +761,42 @@ impl<
                 inner.passthrough.reborrow()
             },
         )
+    }
+}
+
+impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphNodeImpl<'node>
+    for RenderGraphNode<'node, B, P>
+{
+    fn requested_encoder(&mut self) -> RequestedEncoder {
+        RequestedEncoder::RenderPass(self.inner.as_mut().unwrap().render_pass.take().unwrap())
+    }
+
+    fn cull(
+        &self,
+        _used_buffers: &mut FxHashSet<BufferHandle>,
+        _used_textures: &mut FxHashSet<TextureHandle>,
+    ) -> bool {
+        true //TODO!
+    }
+
+    fn exec<'pass>(
+        &mut self,
+        encoder_or_pass: EncoderOrPass<'_, 'pass>,
+        resources: &'pass RenderPassResources,
+    ) where
+        'node: 'pass,
+    {
+        let inner = self.inner.take().unwrap();
+        let pass = encoder_or_pass.unwrap_render_pass();
+        //TODO: Move to outer execute() function
+        pass.set_pipeline(&resources.get_render_pipeline(inner.pipeline).pipeline);
+        for (i, handle) in inner.bind_groups.iter().cloned().enumerate() {
+            pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
+        }
+        (inner.exec)(pass, inner.buffers.fetch_resources(resources), unsafe {
+            // SAFETY: As above
+            inner.passthrough.reborrow()
+        })
     }
 }
 

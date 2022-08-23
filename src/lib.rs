@@ -246,6 +246,11 @@ pub struct BindGroupHandle {
     id: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RenderPipelineHandle {
+    id: usize,
+}
+
 impl TextureHandle {
     pub const RENDER_TARGET: TextureHandle = TextureHandle { id: usize::MAX };
 }
@@ -262,11 +267,13 @@ pub struct Renderer {
     bind_group_layouts: FxHashMap<usize, wgpu::BindGroupLayout>,
     bind_group_descriptors: FxHashMap<Vec<(u32, BindGroupResource)>, usize>,
     bind_groups: FxHashMap<usize, (wgpu::BindGroup, Vec<(u32, BindGroupResource)>)>,
+    render_pipelines: FxHashMap<usize, RenderPipeline>,
     next_buffer: usize,
     next_texture: usize,
     next_sampler: usize,
     next_bind_group_layout: usize,
     next_bind_group: usize,
+    next_render_pipeline: usize,
 }
 
 impl Renderer {
@@ -283,11 +290,13 @@ impl Renderer {
             bind_group_layouts: FxHashMap::default(),
             bind_group_descriptors: FxHashMap::default(),
             bind_groups: FxHashMap::default(),
+            render_pipelines: FxHashMap::default(),
             next_buffer: 0,
             next_texture: 0,
             next_sampler: 0,
             next_bind_group_layout: 0,
             next_bind_group: 0,
+            next_render_pipeline: 0,
         }
     }
 
@@ -359,6 +368,16 @@ impl Renderer {
         }
     }
 
+    pub fn insert_render_pipeline(&mut self, pipeline: RenderPipeline) -> RenderPipelineHandle {
+        let id = self.next_render_pipeline_id();
+        self.render_pipelines.insert(id, pipeline);
+        RenderPipelineHandle { id }
+    }
+
+    pub fn add_render_pipeline_wgsl(&mut self, shader_source: &str) -> RenderPipelineBuilder<'_> {
+        RenderPipelineBuilder::from_wgsl(self, shader_source)
+    }
+
     pub fn get_buffer(&self, handle: BufferHandle) -> &wgpu::Buffer {
         self.buffers.get(&handle.id).unwrap()
     }
@@ -379,6 +398,10 @@ impl Renderer {
     pub fn get_bind_group(&self, handle: BindGroupHandle) -> &wgpu::BindGroup {
         let (bind_group, _) = self.bind_groups.get(&handle.id).unwrap();
         bind_group
+    }
+
+    pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &RenderPipeline {
+        self.render_pipelines.get(&handle.id).unwrap()
     }
 
     pub fn write_buffer(&self, handle: BufferHandle, offset: wgpu::BufferAddress, data: &[u8]) {
@@ -429,6 +452,12 @@ impl Renderer {
     fn next_bind_group_layout_id(&mut self) -> usize {
         let id = self.next_bind_group_layout;
         self.next_bind_group_layout += 1;
+        id
+    }
+
+    fn next_render_pipeline_id(&mut self) -> usize {
+        let id = self.next_render_pipeline;
+        self.next_render_pipeline += 1;
         id
     }
 
@@ -698,7 +727,8 @@ enum BindGroupLayout {
     Handle(BindGroupLayoutHandle),
 }
 
-pub struct RenderPipelineBuilder {
+pub struct RenderPipelineBuilder<'a> {
+    renderer: &'a mut Renderer,
     shader: naga::Module,
     vertex_entry: usize,
     fragment_entry: usize,
@@ -711,8 +741,8 @@ pub struct RenderPipelineBuilder {
     sample_count: u32,
 }
 
-impl RenderPipelineBuilder {
-    pub fn from_wgsl(shader_source: &str) -> RenderPipelineBuilder {
+impl<'a> RenderPipelineBuilder<'a> {
+    fn from_wgsl(renderer: &'a mut Renderer, shader_source: &str) -> RenderPipelineBuilder<'a> {
         let shader = naga::front::wgsl::parse_str(shader_source).unwrap();
 
         let (vertex_entry, fragment_entry, global_stages) = {
@@ -847,6 +877,7 @@ impl RenderPipelineBuilder {
         }
 
         RenderPipelineBuilder {
+            renderer,
             shader,
             vertex_entry,
             fragment_entry,
@@ -891,7 +922,7 @@ impl RenderPipelineBuilder {
         self
     }
 
-    pub fn build(self, renderer: &mut Renderer) -> RenderPipeline {
+    pub fn build(self) -> RenderPipelineHandle {
         let vertex_entry_name = self.shader.entry_points[self.vertex_entry].name.clone();
         let fragment_entry_name = self.shader.entry_points[self.fragment_entry].name.clone();
 
@@ -901,7 +932,8 @@ impl RenderPipelineBuilder {
             attributes: &self.vertex_attributes,
         };
 
-        let module = renderer
+        let module = self
+            .renderer
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
@@ -914,60 +946,66 @@ impl RenderPipelineBuilder {
             .map(|layout| match layout.unwrap() {
                 BindGroupLayout::Handle(handle) => handle,
                 BindGroupLayout::Descriptor(descriptor) => {
-                    renderer.add_bind_group_layout(descriptor)
+                    self.renderer.add_bind_group_layout(descriptor)
                 }
             })
             .collect::<Vec<_>>();
 
-        let resolved_layouts = bind_group_layouts.iter().cloned().map(|handle| renderer.get_bind_group_layout(handle)).collect::<Vec<_>>();
-        let pipeline_layout = renderer
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &resolved_layouts,
-                push_constant_ranges: &[],
-            });
+        let resolved_layouts = bind_group_layouts
+            .iter()
+            .cloned()
+            .map(|handle| self.renderer.get_bind_group_layout(handle))
+            .collect::<Vec<_>>();
+        let pipeline_layout =
+            self.renderer
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &resolved_layouts,
+                    push_constant_ranges: &[],
+                });
 
-        let pipeline = renderer
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: None,
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: &vertex_entry_name,
-                    buffers: if self.vertex_attributes.is_empty() {
-                        &[]
-                    } else {
-                        std::slice::from_ref(&vertex_buffer_layout)
+        let pipeline =
+            self.renderer
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: None,
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: &vertex_entry_name,
+                        buffers: if self.vertex_attributes.is_empty() {
+                            &[]
+                        } else {
+                            std::slice::from_ref(&vertex_buffer_layout)
+                        },
                     },
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: self.primitive_topology,
-                    ..Default::default()
-                },
-                depth_stencil: self.depth_stencil,
-                multisample: wgpu::MultisampleState {
-                    count: self.sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: &fragment_entry_name,
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview: None,
-            });
+                    primitive: wgpu::PrimitiveState {
+                        topology: self.primitive_topology,
+                        ..Default::default()
+                    },
+                    depth_stencil: self.depth_stencil,
+                    multisample: wgpu::MultisampleState {
+                        count: self.sample_count,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: &fragment_entry_name,
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview: None,
+                });
 
-        RenderPipeline {
+        self.renderer.insert_render_pipeline(RenderPipeline {
             pipeline,
             bind_group_layouts,
-        }
+        })
     }
 }
 

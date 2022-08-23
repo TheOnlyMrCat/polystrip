@@ -1,6 +1,6 @@
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{PolystripDevice, RenderPassTarget, RenderPipelineBuilder, TextureHandle};
+use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -22,9 +22,7 @@ fn main() {
     };
 
     let mut renderer = wgpu_device.create_renderer();
-    let pipeline = RenderPipelineBuilder::from_wgsl(SHADER_SOURCE)
-        .build(&mut renderer)
-        .pipeline;
+    let pipeline = renderer.add_render_pipeline_wgsl(SHADER_SOURCE).build();
 
     el.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -41,17 +39,13 @@ fn main() {
         }
         Event::MainEventsCleared => {
             let mut graph = RenderGraph::new(&mut renderer);
-            graph
-                .add_node()
-                .with_passthrough(&pipeline)
-                .build_render_pass(
-                    RenderPassTarget::new()
-                        .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
-                    |pass, [], [], [], (pipeline,)| {
-                        pass.set_pipeline(pipeline);
-                        pass.draw(0..3, 0..1);
-                    },
-                );
+            graph.add_render_node(pipeline).build(
+                RenderPassTarget::new()
+                    .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
+                |pass, [], ()| {
+                    pass.draw(0..3, 0..1);
+                },
+            );
             graph.execute(&mut window);
         }
         _ => {}
@@ -75,4 +69,3 @@ fn frag(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(p.x, 0.0, 1.0), clamp(p.y, 0.0, 1.0), clamp(p.z, 0.0, 1.0), 1.0);
 }
 ";
-
