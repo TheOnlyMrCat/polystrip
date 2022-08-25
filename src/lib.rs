@@ -251,6 +251,11 @@ pub struct RenderPipelineHandle {
     id: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ComputePipelineHandle {
+    id: usize,
+}
+
 impl TextureHandle {
     pub const RENDER_TARGET: TextureHandle = TextureHandle { id: usize::MAX };
 }
@@ -268,12 +273,14 @@ pub struct Renderer {
     bind_group_descriptors: FxHashMap<Vec<(u32, BindGroupResource)>, usize>,
     bind_groups: FxHashMap<usize, (wgpu::BindGroup, Vec<(u32, BindGroupResource)>)>,
     render_pipelines: FxHashMap<usize, RenderPipeline>,
+    compute_pipelines: FxHashMap<usize, ComputePipeline>,
     next_buffer: usize,
     next_texture: usize,
     next_sampler: usize,
     next_bind_group_layout: usize,
     next_bind_group: usize,
     next_render_pipeline: usize,
+    next_compute_pipeline: usize,
 }
 
 impl Renderer {
@@ -291,12 +298,14 @@ impl Renderer {
             bind_group_descriptors: FxHashMap::default(),
             bind_groups: FxHashMap::default(),
             render_pipelines: FxHashMap::default(),
+            compute_pipelines: FxHashMap::default(),
             next_buffer: 0,
             next_texture: 0,
             next_sampler: 0,
             next_bind_group_layout: 0,
             next_bind_group: 0,
             next_render_pipeline: 0,
+            next_compute_pipeline: 0,
         }
     }
 
@@ -378,6 +387,16 @@ impl Renderer {
         RenderPipelineBuilder::from_wgsl(self, shader_source)
     }
 
+    pub fn insert_compute_pipeline(&mut self, pipeline: ComputePipeline) -> ComputePipelineHandle {
+        let id = self.next_compute_pipeline_id();
+        self.compute_pipelines.insert(id, pipeline);
+        ComputePipelineHandle { id }
+    }
+
+    pub fn add_compute_pipeline_from_wgsl(&mut self, shader_source: &str) -> ComputePipelineBuilder<'_> {
+        ComputePipelineBuilder::from_wgsl(self, shader_source)
+    }
+
     pub fn get_buffer(&self, handle: BufferHandle) -> &wgpu::Buffer {
         self.buffers.get(&handle.id).unwrap()
     }
@@ -402,6 +421,10 @@ impl Renderer {
 
     pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &RenderPipeline {
         self.render_pipelines.get(&handle.id).unwrap()
+    }
+
+    pub fn get_compute_pipeline(&self, handle: ComputePipelineHandle) -> &ComputePipeline {
+        self.compute_pipelines.get(&handle.id).unwrap()
     }
 
     pub fn write_buffer(&self, handle: BufferHandle, offset: wgpu::BufferAddress, data: &[u8]) {
@@ -458,6 +481,12 @@ impl Renderer {
     fn next_render_pipeline_id(&mut self) -> usize {
         let id = self.next_render_pipeline;
         self.next_render_pipeline += 1;
+        id
+    }
+    
+    fn next_compute_pipeline_id(&mut self) -> usize {
+        let id = self.next_compute_pipeline;
+        self.next_compute_pipeline += 1;
         id
     }
 
@@ -1015,6 +1044,124 @@ impl<'a> RenderPipelineBuilder<'a> {
                 });
 
         self.renderer.insert_render_pipeline(RenderPipeline {
+            pipeline,
+            bind_group_layouts,
+        })
+    }
+}
+
+pub struct ComputePipeline {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layouts: Vec<BindGroupLayoutHandle>,
+}
+
+pub struct ComputePipelineBuilder<'a> {
+    renderer: &'a mut Renderer,
+    shader: naga::Module,
+    entry: usize,
+    bind_group_layouts: Vec<Option<BindGroupLayout>>,
+}
+
+impl<'a> ComputePipelineBuilder<'a> {
+    fn from_wgsl(renderer: &'a mut Renderer, shader_source: &str) -> ComputePipelineBuilder<'a> {
+        let shader = naga::front::wgsl::parse_str(shader_source).unwrap();
+
+        let entry = {
+            let mut entry_index = None;
+            for (i, entry) in shader.entry_points.iter().enumerate() {
+                if let naga::ShaderStage::Compute = entry.stage {
+                    entry_index = Some(i)
+                }
+            }
+            entry_index.unwrap()
+        };
+
+        let mut bind_group_layouts = Vec::<Option<Vec<_>>>::default();
+        for (_, global) in shader.global_variables.iter() {
+            if let Some(binding) = &global.binding {
+                let shader_type = shader.types.get_handle(global.ty).unwrap();
+                let size = shader_type.inner.size(&shader.constants);
+
+                let ty = wgpu::BindingType::Buffer {
+                    ty: match global.space {
+                        naga::AddressSpace::Uniform => wgpu::BufferBindingType::Uniform,
+                        naga::AddressSpace::Storage { access } => {
+                            wgpu::BufferBindingType::Storage {
+                                read_only: !access.contains(naga::StorageAccess::STORE),
+                            }
+                        }
+                        _ => todo!(),
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(size as u64),
+                };
+
+                if bind_group_layouts.len() <= binding.group as usize {
+                    bind_group_layouts.resize(binding.group as usize + 1, None);
+                }
+                bind_group_layouts[binding.group as usize]
+                    .get_or_insert_with(Vec::new)
+                    .push(wgpu::BindGroupLayoutEntry {
+                        binding: binding.binding,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty,
+                        count: None,
+                    })
+            }
+        }
+
+        ComputePipelineBuilder {
+            renderer,
+            entry,
+            shader,
+            bind_group_layouts: bind_group_layouts
+                .into_iter()
+                .map(|v| v.map(BindGroupLayout::Descriptor))
+                .collect(),
+        }
+    }
+
+    pub fn build(self) -> ComputePipelineHandle {
+        let entry = self.shader.entry_points[self.entry].name.clone();
+
+        let module = self.renderer.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Naga(self.shader),
+        });
+        
+        let bind_group_layouts = self
+            .bind_group_layouts
+            .into_iter()
+            .map(|layout| match layout.unwrap() {
+                BindGroupLayout::Handle(handle) => handle,
+                BindGroupLayout::Descriptor(descriptor) => {
+                    self.renderer.add_bind_group_layout(descriptor)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let resolved_layouts = bind_group_layouts
+            .iter()
+            .cloned()
+            .map(|handle| self.renderer.get_bind_group_layout(handle))
+            .collect::<Vec<_>>();
+        let pipeline_layout =
+            self.renderer
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &resolved_layouts,
+                    push_constant_ranges: &[],
+                });
+
+        let pipeline = self.renderer.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: &entry,
+        });
+
+        self.renderer.insert_compute_pipeline(ComputePipeline {
             pipeline,
             bind_group_layouts,
         })

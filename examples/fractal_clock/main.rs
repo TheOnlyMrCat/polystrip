@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
 use polystrip::{
-    BindGroupLayoutHandle, BufferHandle, PolystripDevice, RenderPassTarget, RenderPipelineHandle,
+    BufferHandle, ComputePipelineHandle, PolystripDevice, RenderPassTarget, RenderPipelineHandle,
     Renderer, TextureHandle,
 };
 use time::{OffsetDateTime, UtcOffset};
@@ -63,7 +63,7 @@ fn main() {
                     Some(VirtualKeyCode::Down) if depth > 1 => depth -= 1,
                     _ => (),
                 }
-                pipelines.set_depth(depth, &renderer);
+                pipelines.set_depth(depth, &mut renderer);
             }
         }
 
@@ -80,18 +80,14 @@ struct Pipelines {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
 
-    index_buffer: wgpu::Buffer,
-    index_bind_group: wgpu::BindGroup,
+    index_buffer: BufferHandle,
     camera_buffer: BufferHandle,
     clock_buffer: BufferHandle,
 
-    compute_uniform_bind_group_layout: BindGroupLayoutHandle,
-    compute_storage_bind_group_layout: BindGroupLayoutHandle,
-
     fractal_render_pipeline: RenderPipelineHandle,
     clock_render_pipeline: RenderPipelineHandle,
-    vertices_compute_pipeline: wgpu::ComputePipeline,
-    indices_compute_pipeline: wgpu::ComputePipeline,
+    vertices_compute_pipeline: ComputePipelineHandle,
+    indices_compute_pipeline: ComputePipelineHandle,
 
     width: u32,
     height: u32,
@@ -112,6 +108,7 @@ impl Pipelines {
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
+        let index_buffer = renderer.insert_buffer(index_buffer);
 
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("FC Camera Buffer"),
@@ -152,50 +149,6 @@ impl Pipelines {
             ),
         );
 
-        let compute_storage_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("FC Storage Bind Group Layout (Compute)"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let compute_uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("FC Uniform Bind Group Layout (Compute)"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let index_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Index Bind Group"),
-            layout: &compute_storage_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(index_buffer.as_entire_buffer_binding()),
-            }],
-        });
-
-        let vertices_shader_module =
-            device.create_shader_module(wgpu::include_wgsl!("vertices.wgsl"));
-        let indices_shader_module =
-            device.create_shader_module(wgpu::include_wgsl!("indices.wgsl"));
-
         let fractal_render_pipeline = renderer
             .add_render_pipeline_wgsl(include_str!("fractal.wgsl"))
             .with_primitive_topology(wgpu::PrimitiveTopology::LineList)
@@ -223,43 +176,19 @@ impl Pipelines {
             .with_msaa(4)
             .build();
 
-        let compute_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("FC Compute Pipeline Layout"),
-                bind_group_layouts: &[
-                    &compute_storage_bind_group_layout,
-                    &compute_uniform_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
-
-        let vertices_compute_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("FC Vertices Compute Pipeline"),
-                layout: Some(&compute_pipeline_layout),
-                module: &vertices_shader_module,
-                entry_point: "main",
-            });
-
-        let indices_compute_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("FC Indices Compute Pipeline"),
-                layout: Some(&compute_pipeline_layout),
-                module: &indices_shader_module,
-                entry_point: "main",
-            });
+        let vertices_compute_pipeline = renderer
+            .add_compute_pipeline_from_wgsl(include_str!("vertices.wgsl"))
+            .build();
+        let indices_compute_pipeline = renderer
+            .add_compute_pipeline_from_wgsl(include_str!("indices.wgsl"))
+            .build();
 
         let mut this = Self {
             device,
             queue,
             index_buffer,
-            index_bind_group,
             camera_buffer,
             clock_buffer,
-            compute_uniform_bind_group_layout: renderer
-                .insert_bind_group_layout(compute_uniform_bind_group_layout),
-            compute_storage_bind_group_layout: renderer
-                .insert_bind_group_layout(compute_storage_bind_group_layout),
             fractal_render_pipeline,
             clock_render_pipeline,
             vertices_compute_pipeline,
@@ -274,11 +203,12 @@ impl Pipelines {
         this
     }
 
-    fn prepare_indices(&self, renderer: &Renderer) {
+    fn prepare_indices(&self, renderer: &mut Renderer) {
         let workgroup_size = workgroup_size_for_depth(self.fractal_depth) as u32;
         let workgroup_y = workgroup_size / 256 + 1;
         let workgroup_x = workgroup_size % 256 + 1;
 
+        let indices_compute_pipeline = renderer.get_compute_pipeline(self.indices_compute_pipeline);
         //TODO: More offsets required? Consider push constants if on native?
         let null_offset = self
             .device
@@ -289,13 +219,18 @@ impl Pipelines {
             });
         let null_offset_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Null offset bind group"),
-            layout: renderer.get_bind_group_layout(self.compute_uniform_bind_group_layout),
+            layout: renderer.get_bind_group_layout(indices_compute_pipeline.bind_group_layouts[1]),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(null_offset.as_entire_buffer_binding()),
             }],
         });
+        let index_bind_group_layout = indices_compute_pipeline.bind_group_layouts[0];
+        let index_bind_group_handle =
+            renderer.add_bind_group(index_bind_group_layout, (self.index_buffer,));
+        let index_bind_group = renderer.get_bind_group(index_bind_group_handle);
 
+        let indices_compute_pipeline = renderer.get_compute_pipeline(self.indices_compute_pipeline);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -304,8 +239,8 @@ impl Pipelines {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("FC Indices Compute Pass"),
         });
-        pass.set_pipeline(&self.indices_compute_pipeline);
-        pass.set_bind_group(0, &self.index_bind_group, &[]);
+        pass.set_pipeline(&indices_compute_pipeline.pipeline);
+        pass.set_bind_group(0, index_bind_group, &[]);
         pass.set_bind_group(1, &null_offset_bind_group, &[]);
         pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
         drop(pass);
@@ -313,26 +248,17 @@ impl Pipelines {
         self.queue.submit([encoder.finish()]);
     }
 
-    pub fn set_depth(&mut self, fractal_depth: u32, renderer: &Renderer) {
+    pub fn set_depth(&mut self, fractal_depth: u32, renderer: &mut Renderer) {
         let fractal_depth = fractal_depth.max(1);
         self.fractal_depth = fractal_depth;
 
-        self.index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("FC Index Buffer"),
             size: vertex_count_for_depth(fractal_depth) * vertex_size() as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        self.index_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("FC Index Bind Group"),
-            layout: renderer.get_bind_group_layout(self.compute_storage_bind_group_layout),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(
-                    self.index_buffer.as_entire_buffer_binding(),
-                ),
-            }],
-        });
+        self.index_buffer = renderer.insert_buffer(index_buffer);
 
         self.prepare_indices(renderer);
     }
@@ -451,25 +377,16 @@ impl Pipelines {
                 ]),
             );
             graph
-                .add_node()
-                .with_bind_group_rw(self.compute_storage_bind_group_layout, (vertex_buffer,))
-                .with_bind_group(self.compute_uniform_bind_group_layout, (uniform_buffer,))
-                .with_passthrough(&self.vertices_compute_pipeline)
-                // Currently, render nodes are not included in culling analysis
-                .with_external_output()
-                .build_compute_pass(
-                    move |pass, [], [], [vertex_bind_group, uniform_bind_group], (pipeline,)| {
-                        pass.set_pipeline(pipeline);
-                        pass.set_bind_group(0, vertex_bind_group, &[]);
-                        pass.set_bind_group(1, uniform_bind_group, &[]);
+                .add_compute_node(self.vertices_compute_pipeline)
+                .with_bind_group((vertex_buffer,))
+                .with_bind_group((uniform_buffer,))
+                .build(move |pass, [], ()| {
+                    let workgroup_size = workgroup_size_for_depth((i + 1) as _) as u32;
+                    let workgroup_y = workgroup_size / 256 + 1;
+                    let workgroup_x = workgroup_size % 256 + 1;
 
-                        let workgroup_size = workgroup_size_for_depth((i + 1) as _) as u32;
-                        let workgroup_y = workgroup_size / 256 + 1;
-                        let workgroup_x = workgroup_size % 256 + 1;
-
-                        pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
-                    },
-                )
+                    pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
+                })
         }
 
         let depth_texture = graph.add_intermediate_texture(wgpu::TextureDescriptor {
@@ -504,9 +421,9 @@ impl Pipelines {
             graph
                 .add_render_node(self.fractal_render_pipeline)
                 .with_buffer(vertex_buffer)
+                .with_buffer(self.index_buffer)
                 .with_bind_group((self.camera_buffer,))
                 .with_bind_group((colour_buffer,))
-                .with_passthrough(&self.index_buffer)
                 .build(
                     RenderPassTarget::new()
                         .with_msaa_color(
@@ -520,7 +437,7 @@ impl Pipelines {
                             },
                         )
                         .with_depth(depth_texture, 1.0),
-                    |pass, [vertex_buffer], (index_buffer,)| {
+                    |pass, [vertex_buffer, index_buffer], ()| {
                         pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                         pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                         pass.draw_indexed(
