@@ -29,7 +29,7 @@ impl<'pass> RenderPassResources<'pass> {
     }
 
     pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &'pass RenderPipeline {
-        &self.resources.render_pipelines.get(&handle.id).unwrap()
+        self.resources.render_pipelines.get(&handle.id).unwrap()
     }
 }
 
@@ -155,27 +155,68 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                     label: Some("Polystrip Command Encoder"),
                 });
 
+        struct CombinedGraphNode<'node> {
+            nodes: Vec<Box<dyn GraphNodeImpl<'node> + 'node>>,
+            compatibility: PassState,
+        }
+
+        enum PassState {
+            Encoder,
+            RenderPass(RenderPassTarget),
+            ComputePass,
+        }
+
         let mut used_buffers = FxHashSet::default();
         let mut used_textures = FxHashSet::default();
         used_textures.insert(TextureHandle::RENDER_TARGET);
         let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
-        for node in self.nodes.into_iter().rev() {
+        for mut node in self.nodes.into_iter().rev() {
             if node.cull(&mut used_buffers, &mut used_textures) {
-                pruned_nodes.push(node);
+                let node_compatibility = match node.requested_state() {
+                    RequestedState::Encoder => PassState::Encoder,
+                    RequestedState::RenderPass { target, .. } => {
+                        PassState::RenderPass(target.unwrap())
+                    }
+                    RequestedState::ComputePass => PassState::ComputePass,
+                };
+                match pruned_nodes.last_mut() {
+                    None => pruned_nodes.push(CombinedGraphNode {
+                        nodes: vec![node],
+                        compatibility: node_compatibility,
+                    }),
+                    Some(tail) => {
+                        let combine = match (&tail.compatibility, &node_compatibility) {
+                            (
+                                PassState::RenderPass(head_target),
+                                PassState::RenderPass(node_target),
+                            ) if head_target.is_compatible_with(node_target) => true,
+                            (PassState::ComputePass, PassState::ComputePass) => true,
+                            _ => false,
+                        };
+                        if combine {
+                            tail.nodes.push(node)
+                        } else {
+                            pruned_nodes.push(CombinedGraphNode {
+                                nodes: vec![node],
+                                compatibility: node_compatibility,
+                            })
+                        }
+                    }
+                }
             }
         }
 
         let mut cleared_views = FxHashSet::default();
-        for mut node in pruned_nodes.into_iter().rev() {
-            match node.requested_encoder() {
-                RequestedEncoder::RenderPass(pass_targets) => {
+        for group in pruned_nodes.into_iter().rev() {
+            match group.compatibility {
+                PassState::RenderPass(target) => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: None,
-                        color_attachments: &pass_targets
+                        color_attachments: &target
                             .color
                             .into_iter()
                             .map(|target| {
@@ -195,7 +236,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                                 })
                             })
                             .collect::<Vec<_>>(),
-                        depth_stencil_attachment: pass_targets.depth.map(|target| {
+                        depth_stencil_attachment: target.depth.map(|target| {
                             wgpu::RenderPassDepthStencilAttachment {
                                 view: resources.get_texture(target.handle),
                                 depth_ops: target.depth_clear.map(|value| wgpu::Operations {
@@ -209,23 +250,41 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             }
                         }),
                     });
-                    node.exec(EncoderOrPass::RenderPass(&mut pass), &resources);
+                    for mut node in group.nodes.into_iter().rev() {
+                        let (pipeline_handle, bind_groups) = match node.requested_state() {
+                            RequestedState::RenderPass {
+                                pipeline,
+                                bind_groups,
+                                ..
+                            } => (pipeline, bind_groups),
+                            _ => unreachable!(),
+                        };
+                        pass.set_pipeline(&resources.get_render_pipeline(pipeline_handle).pipeline);
+                        for (i, handle) in bind_groups.into_iter().enumerate() {
+                            pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
+                        }
+                        node.exec(EncoderOrPass::RenderPass(&mut pass), &resources);
+                    }
                 }
-                RequestedEncoder::ComputePass => {
+                PassState::ComputePass => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
                     let mut pass =
                         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
-                    node.exec(EncoderOrPass::ComputePass(&mut pass), &resources);
+                    for mut node in group.nodes.into_iter().rev() {
+                        node.exec(EncoderOrPass::ComputePass(&mut pass), &resources);
+                    }
                 }
-                RequestedEncoder::Encoder => {
+                PassState::Encoder => {
                     let resources = RenderPassResources {
                         resources: self.renderer,
                         output_texture: output.view(),
                     };
-                    node.exec(EncoderOrPass::Encoder(&mut encoder), &resources);
+                    for mut node in group.nodes.into_iter().rev() {
+                        node.exec(EncoderOrPass::Encoder(&mut encoder), &resources);
+                    }
                 }
             }
         }
@@ -410,7 +469,7 @@ where
         self
     }
 
-    pub fn build_with_encoder<F>(self, exec: F)
+    pub fn build<F>(self, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::CommandEncoder,
@@ -429,7 +488,7 @@ where
                 textures: self.textures,
                 passthrough: self.passthrough,
                 bind_groups: self.bind_groups,
-                requested_encoder: Some(RequestedEncoder::Encoder),
+                requested_state: RequestedState::Encoder,
                 exec: Box::new(
                     move |encoder, buffers, textures, bind_groups, passthrough| {
                         (exec)(
@@ -443,46 +502,6 @@ where
                 ),
             }),
         }));
-    }
-
-    pub fn build_render_pass<F>(mut self, render_pass: RenderPassTarget, exec: F)
-    where
-        F: for<'b, 'pass> FnOnce(
-                &'b mut wgpu::RenderPass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
-                <P as RenderPassthrough>::Reborrowed<'pass>,
-            ) + 'node,
-    {
-        for target in &render_pass.color {
-            self.rw_textures.push(target.handle);
-            self.rw_textures.extend(&target.resolve);
-        }
-        if let Some(depth_target) = &render_pass.depth {
-            self.rw_textures.push(depth_target.handle);
-        }
-        self.graph.nodes.push(Box::new(GraphNode {
-            inner: Some(GraphNodeInner {
-                rw_buffers: self.rw_buffers,
-                rw_textures: self.rw_textures,
-                no_cull: self.no_cull,
-                buffers: self.buffers,
-                textures: self.textures,
-                passthrough: self.passthrough,
-                bind_groups: self.bind_groups,
-                requested_encoder: Some(RequestedEncoder::RenderPass(render_pass)),
-                exec: Box::new(move |pass, buffers, textures, bind_groups, passthrough| {
-                    (exec)(
-                        pass.unwrap_render_pass(),
-                        buffers,
-                        textures,
-                        bind_groups,
-                        passthrough,
-                    )
-                }),
-            }),
-        }))
     }
 
     pub fn build_compute_pass<F>(self, exec: F)
@@ -504,7 +523,7 @@ where
                 textures: self.textures,
                 passthrough: self.passthrough,
                 bind_groups: self.bind_groups,
-                requested_encoder: Some(RequestedEncoder::ComputePass),
+                requested_state: RequestedState::ComputePass,
                 exec: Box::new(move |pass, buffers, textures, bind_groups, passthrough| {
                     (exec)(
                         pass.unwrap_compute_pass(),
@@ -519,9 +538,13 @@ where
     }
 }
 
-enum RequestedEncoder {
+enum RequestedState {
     Encoder,
-    RenderPass(RenderPassTarget),
+    RenderPass {
+        target: Option<RenderPassTarget>,
+        pipeline: RenderPipelineHandle,
+        bind_groups: Vec<BindGroupHandle>,
+    },
     ComputePass,
 }
 
@@ -579,7 +602,7 @@ struct GraphNodeInner<
     textures: T,
     bind_groups: G,
     passthrough: P,
-    requested_encoder: Option<RequestedEncoder>,
+    requested_state: RequestedState,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 EncoderOrPass<'b, 'pass>,
@@ -620,8 +643,7 @@ where
     pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
         self.bind_groups.push(
             self.graph.renderer.add_bind_group(
-                self
-                    .graph
+                self.graph
                     .renderer
                     .get_render_pipeline(self.pipeline)
                     .bind_group_layouts[self.bind_groups.len()],
@@ -689,7 +711,7 @@ struct RenderGraphNodeInner<'node, B: ResourceArray<BufferHandle>, P: RenderPass
 }
 
 trait GraphNodeImpl<'node> {
-    fn requested_encoder(&mut self) -> RequestedEncoder;
+    fn requested_state(&mut self) -> RequestedState;
     fn cull(
         &self,
         used_buffers: &mut FxHashSet<BufferHandle>,
@@ -711,13 +733,12 @@ impl<
         P: RenderPassthrough + 'node,
     > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
 {
-    fn requested_encoder(&mut self) -> RequestedEncoder {
-        self.inner
-            .as_mut()
-            .unwrap()
-            .requested_encoder
-            .take()
-            .unwrap()
+    fn requested_state(&mut self) -> RequestedState {
+        match &self.inner.as_ref().unwrap().requested_state {
+            RequestedState::Encoder => RequestedState::Encoder,
+            RequestedState::ComputePass => RequestedState::ComputePass,
+            _ => unreachable!(),
+        }
     }
 
     fn cull(
@@ -767,8 +788,13 @@ impl<
 impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphNodeImpl<'node>
     for RenderGraphNode<'node, B, P>
 {
-    fn requested_encoder(&mut self) -> RequestedEncoder {
-        RequestedEncoder::RenderPass(self.inner.as_mut().unwrap().render_pass.take().unwrap())
+    fn requested_state(&mut self) -> RequestedState {
+        let inner = self.inner.as_mut().unwrap();
+        RequestedState::RenderPass {
+            target: inner.render_pass.take(),
+            pipeline: inner.pipeline,
+            bind_groups: inner.bind_groups.clone(),
+        }
     }
 
     fn cull(
@@ -788,11 +814,6 @@ impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphN
     {
         let inner = self.inner.take().unwrap();
         let pass = encoder_or_pass.unwrap_render_pass();
-        //TODO: Move to outer execute() function
-        pass.set_pipeline(&resources.get_render_pipeline(inner.pipeline).pipeline);
-        for (i, handle) in inner.bind_groups.iter().cloned().enumerate() {
-            pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
-        }
         (inner.exec)(pass, inner.buffers.fetch_resources(resources), unsafe {
             // SAFETY: As above
             inner.passthrough.reborrow()

@@ -628,6 +628,18 @@ impl RenderPassTarget {
     }
 }
 
+impl RenderPassTarget {
+    pub fn is_compatible_with(&self, other: &RenderPassTarget) -> bool {
+        for (left, right) in self.color.iter().zip(other.color.iter()) {
+            if (left.handle, left.resolve) != (right.handle, right.resolve) {
+                return false;
+            }
+        }
+
+        self.depth.as_ref().map(|target| target.handle) == other.depth.as_ref().map(|target| target.handle)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BufferBinding {
     pub buffer: BufferHandle,
