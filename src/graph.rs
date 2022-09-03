@@ -1,3 +1,5 @@
+//! A basic render graph implementation.
+
 use fxhash::FxHashSet;
 
 use crate::{

@@ -22,7 +22,7 @@ fn main() {
     };
 
     let mut renderer = wgpu_device.create_renderer();
-    let pipeline = renderer.add_render_pipeline_wgsl(SHADER_SOURCE).build();
+    let pipeline = renderer.add_render_pipeline_from_wgsl(SHADER_SOURCE).build();
 
     el.run(move |event, _, control_flow| match event {
         Event::WindowEvent {

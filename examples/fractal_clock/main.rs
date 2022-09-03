@@ -147,7 +147,7 @@ impl Pipelines {
         );
 
         let fractal_render_pipeline = renderer
-            .add_render_pipeline_wgsl(include_str!("fractal.wgsl"))
+            .add_render_pipeline_from_wgsl(include_str!("fractal.wgsl"))
             .with_primitive_topology(wgpu::PrimitiveTopology::LineList)
             .with_depth_stencil(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
@@ -160,7 +160,7 @@ impl Pipelines {
             .build();
 
         let clock_render_pipeline = renderer
-            .add_render_pipeline_wgsl(include_str!("clock.wgsl"))
+            .add_render_pipeline_from_wgsl(include_str!("clock.wgsl"))
             .with_vertex_step_mode(wgpu::VertexStepMode::Instance)
             .with_primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
             .with_depth_stencil(wgpu::DepthStencilState {
