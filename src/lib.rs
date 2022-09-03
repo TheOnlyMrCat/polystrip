@@ -1,5 +1,5 @@
-#![feature(generic_associated_types)]
-// Can also experiment with #![feature(generic_const_exprs)]
+#![feature(generic_associated_types)] // Can also experiment with #![feature(generic_const_exprs)]
+#![allow(clippy::type_complexity)]
 
 pub mod graph;
 
@@ -221,43 +221,38 @@ impl RenderTarget for WindowTarget {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BufferHandle {
+pub struct Handle<T> {
     id: usize,
+    _marker: std::marker::PhantomData<*mut T>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TextureHandle {
-    id: usize,
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Handle {
+            id: self.id,
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SamplerHandle {
-    id: usize,
+impl<T> Copy for Handle<T> {}
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BindGroupLayoutHandle {
-    id: usize,
+impl<T> Eq for Handle<T> {}
+
+impl<T> Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.id);
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BindGroupHandle {
-    id: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RenderPipelineHandle {
-    id: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ComputePipelineHandle {
-    id: usize,
-}
-
-impl TextureHandle {
-    pub const RENDER_TARGET: TextureHandle = TextureHandle { id: usize::MAX };
+impl Handle<wgpu::TextureView> {
+    pub const RENDER_TARGET: Handle<wgpu::TextureView> = Handle { id: usize::MAX, _marker: std::marker::PhantomData };
 }
 
 pub struct Renderer {
@@ -309,44 +304,44 @@ impl Renderer {
         }
     }
 
-    pub fn insert_buffer(&mut self, buffer: wgpu::Buffer) -> BufferHandle {
+    pub fn insert_buffer(&mut self, buffer: wgpu::Buffer) -> Handle<wgpu::Buffer> {
         let id = self.next_buffer_id();
         self.buffers.insert(id, buffer);
-        BufferHandle { id }
+        Handle::<wgpu::Buffer> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn insert_texture(
         &mut self,
         texture: wgpu::Texture,
         view: wgpu::TextureView,
-    ) -> TextureHandle {
+    ) -> Handle<wgpu::TextureView> {
         let id = self.next_texture_id();
         self.textures.insert(id, (texture, view));
-        TextureHandle { id }
+        Handle::<wgpu::TextureView> { id, _marker: std::marker::PhantomData }
     }
 
-    pub fn insert_sampler(&mut self, sampler: wgpu::Sampler) -> SamplerHandle {
+    pub fn insert_sampler(&mut self, sampler: wgpu::Sampler) -> Handle<wgpu::Sampler> {
         let id = self.next_sampler_id();
         self.samplers.insert(id, sampler);
-        SamplerHandle { id }
+        Handle::<wgpu::Sampler> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn insert_bind_group_layout(
         &mut self,
         layout: wgpu::BindGroupLayout,
-    ) -> BindGroupLayoutHandle {
+    ) -> Handle<wgpu::BindGroupLayout> {
         let id = self.next_bind_group_layout_id();
         self.bind_group_layouts.insert(id, layout);
-        BindGroupLayoutHandle { id }
+        Handle::<wgpu::BindGroupLayout> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn add_bind_group_layout<'a>(
         &mut self,
         layout: impl Into<Cow<'a, [wgpu::BindGroupLayoutEntry]>>,
-    ) -> BindGroupLayoutHandle {
+    ) -> Handle<wgpu::BindGroupLayout> {
         let layout = layout.into();
         if let Some(index) = self.bind_group_layout_descriptors.get(layout.as_ref()) {
-            return BindGroupLayoutHandle { id: *index };
+            return Handle::<wgpu::BindGroupLayout> { id: *index, _marker: std::marker::PhantomData };
         }
         let id = self.next_bind_group_layout_id();
         let bind_group_layout =
@@ -358,83 +353,83 @@ impl Renderer {
         self.bind_group_layouts.insert(id, bind_group_layout);
         self.bind_group_layout_descriptors
             .insert(layout.into_owned(), id);
-        BindGroupLayoutHandle { id }
+        Handle::<wgpu::BindGroupLayout> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn add_bind_group(
         &mut self,
-        layout: BindGroupLayoutHandle,
+        layout: Handle<wgpu::BindGroupLayout>,
         resources: impl IntoBindGroupResources,
-    ) -> BindGroupHandle {
+    ) -> Handle<wgpu::BindGroup> {
         let key = resources.into_entries();
         match self.bind_group_descriptors.get(&key) {
-            Some(&id) => BindGroupHandle { id },
+            Some(&id) => Handle::<wgpu::BindGroup> { id, _marker: std::marker::PhantomData },
             None => {
                 let id = self.insert_bind_group(layout, key.clone());
                 self.bind_group_descriptors.insert(key, id);
-                BindGroupHandle { id }
+                Handle::<wgpu::BindGroup> { id, _marker: std::marker::PhantomData }
             }
         }
     }
 
-    pub fn insert_render_pipeline(&mut self, pipeline: RenderPipeline) -> RenderPipelineHandle {
+    pub fn insert_render_pipeline(&mut self, pipeline: RenderPipeline) -> Handle<RenderPipeline> {
         let id = self.next_render_pipeline_id();
         self.render_pipelines.insert(id, pipeline);
-        RenderPipelineHandle { id }
+        Handle::<RenderPipeline> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn add_render_pipeline_wgsl(&mut self, shader_source: &str) -> RenderPipelineBuilder<'_> {
         RenderPipelineBuilder::from_wgsl(self, shader_source)
     }
 
-    pub fn insert_compute_pipeline(&mut self, pipeline: ComputePipeline) -> ComputePipelineHandle {
+    pub fn insert_compute_pipeline(&mut self, pipeline: ComputePipeline) -> Handle<ComputePipeline> {
         let id = self.next_compute_pipeline_id();
         self.compute_pipelines.insert(id, pipeline);
-        ComputePipelineHandle { id }
+        Handle::<ComputePipeline> { id, _marker: std::marker::PhantomData }
     }
 
     pub fn add_compute_pipeline_from_wgsl(&mut self, shader_source: &str) -> ComputePipelineBuilder<'_> {
         ComputePipelineBuilder::from_wgsl(self, shader_source)
     }
 
-    pub fn get_buffer(&self, handle: BufferHandle) -> &wgpu::Buffer {
+    pub fn get_buffer(&self, handle: Handle<wgpu::Buffer>) -> &wgpu::Buffer {
         self.buffers.get(&handle.id).unwrap()
     }
 
-    pub fn get_texture(&self, handle: TextureHandle) -> (&wgpu::Texture, &wgpu::TextureView) {
+    pub fn get_texture(&self, handle: Handle<wgpu::TextureView>) -> (&wgpu::Texture, &wgpu::TextureView) {
         let (texture, view) = self.textures.get(&handle.id).unwrap();
         (texture, view)
     }
 
-    pub fn get_sampler(&self, handle: SamplerHandle) -> &wgpu::Sampler {
+    pub fn get_sampler(&self, handle: Handle<wgpu::Sampler>) -> &wgpu::Sampler {
         self.samplers.get(&handle.id).unwrap()
     }
 
-    pub fn get_bind_group_layout(&self, handle: BindGroupLayoutHandle) -> &wgpu::BindGroupLayout {
+    pub fn get_bind_group_layout(&self, handle: Handle<wgpu::BindGroupLayout>) -> &wgpu::BindGroupLayout {
         self.bind_group_layouts.get(&handle.id).unwrap()
     }
 
-    pub fn get_bind_group(&self, handle: BindGroupHandle) -> &wgpu::BindGroup {
+    pub fn get_bind_group(&self, handle: Handle<wgpu::BindGroup>) -> &wgpu::BindGroup {
         let (bind_group, _) = self.bind_groups.get(&handle.id).unwrap();
         bind_group
     }
 
-    pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &RenderPipeline {
+    pub fn get_render_pipeline(&self, handle: Handle<RenderPipeline>) -> &RenderPipeline {
         self.render_pipelines.get(&handle.id).unwrap()
     }
 
-    pub fn get_compute_pipeline(&self, handle: ComputePipelineHandle) -> &ComputePipeline {
+    pub fn get_compute_pipeline(&self, handle: Handle<ComputePipeline>) -> &ComputePipeline {
         self.compute_pipelines.get(&handle.id).unwrap()
     }
 
-    pub fn write_buffer(&self, handle: BufferHandle, offset: wgpu::BufferAddress, data: &[u8]) {
+    pub fn write_buffer(&self, handle: Handle<wgpu::Buffer>, offset: wgpu::BufferAddress, data: &[u8]) {
         self.queue
             .write_buffer(self.get_buffer(handle), offset, data)
     }
 
     pub fn write_buffer_with(
         &self,
-        handle: BufferHandle,
+        handle: Handle<wgpu::Buffer>,
         offset: wgpu::BufferAddress,
         size: wgpu::BufferSize,
     ) -> wgpu::QueueWriteBufferView<'_> {
@@ -492,7 +487,7 @@ impl Renderer {
 
     fn insert_bind_group(
         &mut self,
-        layout: BindGroupLayoutHandle,
+        layout: Handle<wgpu::BindGroupLayout>,
         resources: BindGroupResources,
     ) -> usize {
         enum Mapped<'a> {
@@ -605,13 +600,13 @@ pub struct RenderPassTarget {
 }
 
 pub struct RenderPassColorTarget {
-    pub handle: TextureHandle,
-    pub resolve: Option<TextureHandle>,
+    pub handle: Handle<wgpu::TextureView>,
+    pub resolve: Option<Handle<wgpu::TextureView>>,
     pub clear: wgpu::Color,
 }
 
 pub struct RenderPassDepthTarget {
-    pub handle: TextureHandle,
+    pub handle: Handle<wgpu::TextureView>,
     pub depth_clear: Option<f32>,
     pub stencil_clear: Option<u32>,
 }
@@ -624,7 +619,7 @@ impl RenderPassTarget {
         }
     }
 
-    pub fn with_color(mut self, handle: TextureHandle, clear: wgpu::Color) -> Self {
+    pub fn with_color(mut self, handle: Handle<wgpu::TextureView>, clear: wgpu::Color) -> Self {
         self.color.push(RenderPassColorTarget {
             handle,
             resolve: None,
@@ -635,8 +630,8 @@ impl RenderPassTarget {
 
     pub fn with_msaa_color(
         mut self,
-        handle: TextureHandle,
-        resolve: TextureHandle,
+        handle: Handle<wgpu::TextureView>,
+        resolve: Handle<wgpu::TextureView>,
         clear: wgpu::Color,
     ) -> Self {
         self.color.push(RenderPassColorTarget {
@@ -647,7 +642,7 @@ impl RenderPassTarget {
         self
     }
 
-    pub fn with_depth(mut self, handle: TextureHandle, clear: f32) -> Self {
+    pub fn with_depth(mut self, handle: Handle<wgpu::TextureView>, clear: f32) -> Self {
         self.depth = Some(RenderPassDepthTarget {
             handle,
             depth_clear: Some(clear),
@@ -671,7 +666,7 @@ impl RenderPassTarget {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BufferBinding {
-    pub buffer: BufferHandle,
+    pub buffer: Handle<wgpu::Buffer>,
     pub offset: u64,
     pub size: Option<NonZeroU64>,
 }
@@ -680,10 +675,10 @@ pub struct BufferBinding {
 pub enum BindGroupResource {
     Buffer(BufferBinding),
     BufferArray(Vec<BufferBinding>),
-    Texture(TextureHandle),
-    TextureArray(Vec<TextureHandle>),
-    Sampler(SamplerHandle),
-    SamplerArray(Vec<SamplerHandle>),
+    Texture(Handle<wgpu::TextureView>),
+    TextureArray(Vec<Handle<wgpu::TextureView>>),
+    Sampler(Handle<wgpu::Sampler>),
+    SamplerArray(Vec<Handle<wgpu::Sampler>>),
 }
 
 type BindGroupResources = Vec<(u32, BindGroupResource)>;
@@ -698,7 +693,7 @@ impl IntoBindGroupResource for BindGroupResource {
     }
 }
 
-impl IntoBindGroupResource for BufferHandle {
+impl IntoBindGroupResource for Handle<wgpu::Buffer> {
     fn into_bind_group_resource(self) -> BindGroupResource {
         BindGroupResource::Buffer(BufferBinding {
             buffer: self,
@@ -708,13 +703,13 @@ impl IntoBindGroupResource for BufferHandle {
     }
 }
 
-impl IntoBindGroupResource for TextureHandle {
+impl IntoBindGroupResource for Handle<wgpu::TextureView> {
     fn into_bind_group_resource(self) -> BindGroupResource {
         BindGroupResource::Texture(self)
     }
 }
 
-impl IntoBindGroupResource for SamplerHandle {
+impl IntoBindGroupResource for Handle<wgpu::Sampler> {
     fn into_bind_group_resource(self) -> BindGroupResource {
         BindGroupResource::Sampler(self)
     }
@@ -760,12 +755,12 @@ bind_group_resources_tuple!(recursion_dummy, A, B, C, D, E, F, G, H, I, J, K, L,
 
 pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
-    pub bind_group_layouts: Vec<BindGroupLayoutHandle>,
+    pub bind_group_layouts: Vec<Handle<wgpu::BindGroupLayout>>,
 }
 
 enum BindGroupLayout {
     Descriptor(Vec<wgpu::BindGroupLayoutEntry>),
-    Handle(BindGroupLayoutHandle),
+    Handle(Handle<wgpu::BindGroupLayout>),
 }
 
 pub struct RenderPipelineBuilder<'a> {
@@ -935,7 +930,7 @@ impl<'a> RenderPipelineBuilder<'a> {
         }
     }
 
-    pub fn with_bind_group_layout(mut self, index: usize, handle: BindGroupLayoutHandle) -> Self {
+    pub fn with_bind_group_layout(mut self, index: usize, handle: Handle<wgpu::BindGroupLayout>) -> Self {
         if self.bind_group_layouts.len() <= index {
             self.bind_group_layouts.resize_with(index + 1, || None);
         }
@@ -963,7 +958,7 @@ impl<'a> RenderPipelineBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> RenderPipelineHandle {
+    pub fn build(self) -> Handle<RenderPipeline> {
         let vertex_entry_name = self.shader.entry_points[self.vertex_entry].name.clone();
         let fragment_entry_name = self.shader.entry_points[self.fragment_entry].name.clone();
 
@@ -1052,7 +1047,7 @@ impl<'a> RenderPipelineBuilder<'a> {
 
 pub struct ComputePipeline {
     pub pipeline: wgpu::ComputePipeline,
-    pub bind_group_layouts: Vec<BindGroupLayoutHandle>,
+    pub bind_group_layouts: Vec<Handle<wgpu::BindGroupLayout>>,
 }
 
 pub struct ComputePipelineBuilder<'a> {
@@ -1121,7 +1116,7 @@ impl<'a> ComputePipelineBuilder<'a> {
         }
     }
 
-    pub fn build(self) -> ComputePipelineHandle {
+    pub fn build(self) -> Handle<ComputePipeline> {
         let entry = self.shader.entry_points[self.entry].name.clone();
 
         let module = self.renderer.device.create_shader_module(wgpu::ShaderModuleDescriptor {

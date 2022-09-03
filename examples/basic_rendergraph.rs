@@ -1,6 +1,6 @@
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{PolystripDevice, RenderPassTarget, TextureHandle};
+use polystrip::{Handle, PolystripDevice, RenderPassTarget};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -41,7 +41,7 @@ fn main() {
             let mut graph = RenderGraph::new(&mut renderer);
             graph.add_render_node(pipeline).build(
                 RenderPassTarget::new()
-                    .with_color(TextureHandle::RENDER_TARGET, wgpu::Color::BLACK),
+                    .with_color(Handle::RENDER_TARGET, wgpu::Color::BLACK),
                 |pass, [], ()| {
                     pass.draw(0..3, 0..1);
                 },

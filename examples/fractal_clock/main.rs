@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{
-    BufferHandle, ComputePipelineHandle, PolystripDevice, RenderPassTarget, RenderPipelineHandle,
-    Renderer, TextureHandle,
-};
+use polystrip::{Handle, PolystripDevice, RenderPassTarget, Renderer, RenderPipeline, ComputePipeline};
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -80,14 +77,14 @@ struct Pipelines {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
 
-    index_buffer: BufferHandle,
-    camera_buffer: BufferHandle,
-    clock_buffer: BufferHandle,
+    index_buffer: Handle<wgpu::Buffer>,
+    camera_buffer: Handle<wgpu::Buffer>,
+    clock_buffer: Handle<wgpu::Buffer>,
 
-    fractal_render_pipeline: RenderPipelineHandle,
-    clock_render_pipeline: RenderPipelineHandle,
-    vertices_compute_pipeline: ComputePipelineHandle,
-    indices_compute_pipeline: ComputePipelineHandle,
+    fractal_render_pipeline: Handle<RenderPipeline>,
+    clock_render_pipeline: Handle<RenderPipeline>,
+    vertices_compute_pipeline: Handle<ComputePipeline>,
+    indices_compute_pipeline: Handle<ComputePipeline>,
 
     width: u32,
     height: u32,
@@ -428,7 +425,7 @@ impl Pipelines {
                     RenderPassTarget::new()
                         .with_msaa_color(
                             resolve_texture,
-                            TextureHandle::RENDER_TARGET,
+                            Handle::RENDER_TARGET,
                             wgpu::Color {
                                 r: 0.01,
                                 g: 0.01,
@@ -457,7 +454,7 @@ impl Pipelines {
                 RenderPassTarget::new()
                     .with_msaa_color(
                         resolve_texture,
-                        TextureHandle::RENDER_TARGET,
+                        Handle::RENDER_TARGET,
                         wgpu::Color {
                             r: 0.01,
                             g: 0.01,

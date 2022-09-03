@@ -1,9 +1,8 @@
 use fxhash::FxHashSet;
 
 use crate::{
-    BindGroupHandle, BindGroupLayoutHandle, BufferHandle, ComputePipelineHandle,
-    IntoBindGroupResources, RenderPassTarget, RenderPipeline, RenderPipelineHandle, RenderTarget,
-    Renderer, TextureHandle, ComputePipeline,
+    ComputePipeline, Handle, IntoBindGroupResources, RenderPassTarget, RenderPipeline,
+    RenderTarget, Renderer,
 };
 
 pub struct RenderPassResources<'pass> {
@@ -12,11 +11,11 @@ pub struct RenderPassResources<'pass> {
 }
 
 impl<'pass> RenderPassResources<'pass> {
-    pub fn get_buffer(&self, handle: BufferHandle) -> &'pass wgpu::Buffer {
+    pub fn get_buffer(&self, handle: Handle<wgpu::Buffer>) -> &'pass wgpu::Buffer {
         self.resources.buffers.get(&handle.id).unwrap()
     }
 
-    pub fn get_texture(&self, handle: TextureHandle) -> &'pass wgpu::TextureView {
+    pub fn get_texture(&self, handle: Handle<wgpu::TextureView>) -> &'pass wgpu::TextureView {
         if handle.id == usize::MAX {
             self.output_texture
         } else {
@@ -25,23 +24,23 @@ impl<'pass> RenderPassResources<'pass> {
         }
     }
 
-    pub fn get_bind_group(&self, handle: BindGroupHandle) -> &'pass wgpu::BindGroup {
+    pub fn get_bind_group(&self, handle: Handle<wgpu::BindGroup>) -> &'pass wgpu::BindGroup {
         &self.resources.bind_groups.get(&handle.id).unwrap().0
     }
 
-    pub fn get_render_pipeline(&self, handle: RenderPipelineHandle) -> &'pass RenderPipeline {
+    pub fn get_render_pipeline(&self, handle: Handle<RenderPipeline>) -> &'pass RenderPipeline {
         self.resources.render_pipelines.get(&handle.id).unwrap()
     }
 
-    pub fn get_compute_pipeline(&self, handle: ComputePipelineHandle) -> &'pass ComputePipeline {
+    pub fn get_compute_pipeline(&self, handle: Handle<ComputePipeline>) -> &'pass ComputePipeline {
         self.resources.compute_pipelines.get(&handle.id).unwrap()
     }
 }
 
 pub struct RenderGraph<'r, 'node> {
     renderer: &'r mut Renderer,
-    intermediate_buffers: FxHashSet<BufferHandle>,
-    intermediate_textures: FxHashSet<TextureHandle>,
+    intermediate_buffers: FxHashSet<Handle<wgpu::Buffer>>,
+    intermediate_textures: FxHashSet<Handle<wgpu::TextureView>>,
     nodes: Vec<Box<dyn GraphNodeImpl<'node> + 'node>>,
 }
 
@@ -63,12 +62,18 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         self.renderer
     }
 
-    pub fn add_intermediate_buffer(&mut self, descriptor: wgpu::BufferDescriptor) -> BufferHandle {
+    pub fn add_intermediate_buffer(
+        &mut self,
+        descriptor: wgpu::BufferDescriptor,
+    ) -> Handle<wgpu::Buffer> {
         let mut hash_descriptor = descriptor.map_label(fxhash::hash64);
         let id = loop {
             match self.renderer.temp_buffers.get(&hash_descriptor) {
                 Some(&id) => {
-                    if self.intermediate_buffers.insert(BufferHandle { id }) {
+                    if self.intermediate_buffers.insert(Handle::<wgpu::Buffer> {
+                        id,
+                        _marker: std::marker::PhantomData,
+                    }) {
                         break Some(id);
                     }
                 }
@@ -77,15 +82,24 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             hash_descriptor.label = hash_descriptor.label.wrapping_add(1);
         };
         match id {
-            Some(id) => BufferHandle { id },
+            Some(id) => Handle::<wgpu::Buffer> {
+                id,
+                _marker: std::marker::PhantomData,
+            },
             None => {
                 let buffer = self.renderer.device.create_buffer(&descriptor);
                 let id = self.renderer.next_buffer_id();
                 let old = self.renderer.buffers.insert(id, buffer);
                 debug_assert!(old.is_none());
-                self.intermediate_buffers.insert(BufferHandle { id });
+                self.intermediate_buffers.insert(Handle::<wgpu::Buffer> {
+                    id,
+                    _marker: std::marker::PhantomData,
+                });
                 self.renderer.temp_buffers.insert(hash_descriptor, id);
-                BufferHandle { id }
+                Handle::<wgpu::Buffer> {
+                    id,
+                    _marker: std::marker::PhantomData,
+                }
             }
         }
     }
@@ -93,12 +107,18 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     pub fn add_intermediate_texture(
         &mut self,
         descriptor: wgpu::TextureDescriptor,
-    ) -> TextureHandle {
+    ) -> Handle<wgpu::TextureView> {
         let mut hash_descriptor = descriptor.map_label(fxhash::hash64);
         let id = loop {
             match self.renderer.temp_textures.get(&hash_descriptor) {
                 Some(&id) => {
-                    if self.intermediate_textures.insert(TextureHandle { id }) {
+                    if self
+                        .intermediate_textures
+                        .insert(Handle::<wgpu::TextureView> {
+                            id,
+                            _marker: std::marker::PhantomData,
+                        })
+                    {
                         break Some(id);
                     }
                 }
@@ -107,24 +127,41 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             hash_descriptor.label = hash_descriptor.label.wrapping_add(1);
         };
         match id {
-            Some(id) => TextureHandle { id },
+            Some(id) => Handle::<wgpu::TextureView> {
+                id,
+                _marker: std::marker::PhantomData,
+            },
             None => {
                 let texture = self.renderer.device.create_texture(&descriptor);
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let id = self.renderer.next_texture_id();
                 let old = self.renderer.textures.insert(id, (texture, view));
                 debug_assert!(old.is_none());
-                self.intermediate_textures.insert(TextureHandle { id });
+                self.intermediate_textures
+                    .insert(Handle::<wgpu::TextureView> {
+                        id,
+                        _marker: std::marker::PhantomData,
+                    });
                 self.renderer.temp_textures.insert(hash_descriptor, id);
-                TextureHandle { id }
+                Handle::<wgpu::TextureView> {
+                    id,
+                    _marker: std::marker::PhantomData,
+                }
             }
         }
     }
 
     pub fn add_node<'a>(
         &'a mut self,
-    ) -> NodeBuilder<'a, 'r, 'node, [BufferHandle; 0], [TextureHandle; 0], [BindGroupHandle; 0], ()>
-    {
+    ) -> NodeBuilder<
+        'a,
+        'r,
+        'node,
+        [Handle<wgpu::Buffer>; 0],
+        [Handle<wgpu::TextureView>; 0],
+        [Handle<wgpu::BindGroup>; 0],
+        (),
+    > {
         NodeBuilder {
             graph: self,
             rw_buffers: vec![],
@@ -139,8 +176,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
     pub fn add_render_node<'a>(
         &'a mut self,
-        pipeline: RenderPipelineHandle,
-    ) -> RenderNodeBuilder<'a, 'r, 'node, [BufferHandle; 0], ()> {
+        pipeline: Handle<RenderPipeline>,
+    ) -> RenderNodeBuilder<'a, 'r, 'node, [Handle<wgpu::Buffer>; 0], ()> {
         RenderNodeBuilder {
             graph: self,
             pipeline,
@@ -152,8 +189,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
     pub fn add_compute_node<'a>(
         &'a mut self,
-        pipeline: ComputePipelineHandle,
-    ) -> ComputeNodeBuilder<'a, 'r, 'node, [BufferHandle; 0], ()> {
+        pipeline: Handle<ComputePipeline>,
+    ) -> ComputeNodeBuilder<'a, 'r, 'node, [Handle<wgpu::Buffer>; 0], ()> {
         ComputeNodeBuilder {
             graph: self,
             pipeline,
@@ -186,7 +223,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
         let mut used_buffers = FxHashSet::default();
         let mut used_textures = FxHashSet::default();
-        used_textures.insert(TextureHandle::RENDER_TARGET);
+        used_textures.insert(Handle::RENDER_TARGET);
         let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
         for mut node in self.nodes.into_iter().rev() {
             if node.cull(&mut used_buffers, &mut used_textures) {
@@ -299,7 +336,9 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             } => (pipeline, bind_groups),
                             _ => unreachable!(),
                         };
-                        pass.set_pipeline(&resources.get_compute_pipeline(pipeline_handle).pipeline);
+                        pass.set_pipeline(
+                            &resources.get_compute_pipeline(pipeline_handle).pipeline,
+                        );
                         for (i, handle) in bind_groups.into_iter().enumerate() {
                             pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
                         }
@@ -322,14 +361,22 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         output.present();
 
         self.renderer.temp_buffers.retain(|_, &mut id| {
-            let pred = self.intermediate_buffers.contains(&BufferHandle { id });
+            let pred = self.intermediate_buffers.contains(&Handle::<wgpu::Buffer> {
+                id,
+                _marker: std::marker::PhantomData,
+            });
             if !pred {
                 debug_assert!(self.renderer.buffers.remove(&id).is_some());
             }
             pred
         });
         self.renderer.temp_textures.retain(|_, &mut id| {
-            let pred = self.intermediate_textures.contains(&TextureHandle { id });
+            let pred = self
+                .intermediate_textures
+                .contains(&Handle::<wgpu::TextureView> {
+                    id,
+                    _marker: std::marker::PhantomData,
+                });
             if !pred {
                 self.renderer.textures.remove(&id);
             }
@@ -340,8 +387,8 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
 pub struct NodeBuilder<'a, 'r, 'node, B, T, G, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
-    rw_buffers: Vec<BufferHandle>,
-    rw_textures: Vec<TextureHandle>,
+    rw_buffers: Vec<Handle<wgpu::Buffer>>,
+    rw_textures: Vec<Handle<wgpu::TextureView>>,
     no_cull: bool,
     buffers: B,
     textures: T,
@@ -351,15 +398,16 @@ pub struct NodeBuilder<'a, 'r, 'node, B, T, G, P> {
 
 impl<'a, 'r, 'node, B, T, G, P> NodeBuilder<'a, 'r, 'node, B, T, G, P>
 where
-    B: ResourceArray<BufferHandle> + 'node,
-    T: ResourceArray<TextureHandle> + 'node,
-    G: ResourceArray<BindGroupHandle> + 'node,
+    B: ResourceArray<Handle<wgpu::Buffer>> + 'node,
+    T: ResourceArray<Handle<wgpu::TextureView>> + 'node,
+    G: ResourceArray<Handle<wgpu::BindGroup>> + 'node,
     P: RenderPassthrough + 'node,
 {
     pub fn with_buffer(
         self,
-        handle: BufferHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, T, G, P> {
+        handle: Handle<wgpu::Buffer>,
+    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<Handle<wgpu::Buffer>>>::ExtendOne, T, G, P>
+    {
         NodeBuilder {
             graph: self.graph,
             rw_buffers: self.rw_buffers,
@@ -374,8 +422,9 @@ where
 
     pub fn with_buffer_rw(
         mut self,
-        handle: BufferHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, T, G, P> {
+        handle: Handle<wgpu::Buffer>,
+    ) -> NodeBuilder<'a, 'r, 'node, <B as ResourceArray<Handle<wgpu::Buffer>>>::ExtendOne, T, G, P>
+    {
         self.rw_buffers.push(handle);
         NodeBuilder {
             graph: self.graph,
@@ -391,8 +440,16 @@ where
 
     pub fn with_texture(
         self,
-        handle: TextureHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, B, <T as ResourceArray<TextureHandle>>::ExtendOne, G, P> {
+        handle: Handle<wgpu::TextureView>,
+    ) -> NodeBuilder<
+        'a,
+        'r,
+        'node,
+        B,
+        <T as ResourceArray<Handle<wgpu::TextureView>>>::ExtendOne,
+        G,
+        P,
+    > {
         NodeBuilder {
             graph: self.graph,
             rw_buffers: self.rw_buffers,
@@ -407,8 +464,16 @@ where
 
     pub fn with_texture_rw(
         mut self,
-        handle: TextureHandle,
-    ) -> NodeBuilder<'a, 'r, 'node, B, <T as ResourceArray<TextureHandle>>::ExtendOne, G, P> {
+        handle: Handle<wgpu::TextureView>,
+    ) -> NodeBuilder<
+        'a,
+        'r,
+        'node,
+        B,
+        <T as ResourceArray<Handle<wgpu::TextureView>>>::ExtendOne,
+        G,
+        P,
+    > {
         self.rw_textures.push(handle);
         NodeBuilder {
             graph: self.graph,
@@ -424,9 +489,10 @@ where
 
     pub fn with_bind_group(
         self,
-        layout: BindGroupLayoutHandle,
+        layout: Handle<wgpu::BindGroupLayout>,
         resources: impl IntoBindGroupResources,
-    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<Handle<wgpu::BindGroup>>>::ExtendOne, P>
+    {
         let handle = self.graph.renderer.add_bind_group(layout, resources);
         NodeBuilder {
             graph: self.graph,
@@ -442,9 +508,10 @@ where
 
     pub fn with_bind_group_rw(
         mut self,
-        layout: BindGroupLayoutHandle,
+        layout: Handle<wgpu::BindGroupLayout>,
         resources: impl IntoBindGroupResources,
-    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<BindGroupHandle>>::ExtendOne, P> {
+    ) -> NodeBuilder<'a, 'r, 'node, B, T, <G as ResourceArray<Handle<wgpu::BindGroup>>>::ExtendOne, P>
+    {
         let resources = resources.into_entries();
         for (_, entry) in &resources {
             match entry {
@@ -502,9 +569,9 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::CommandEncoder,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
+                <T as ResourceArray<Handle<wgpu::TextureView>>>::Fetched<'pass>,
+                <G as ResourceArray<Handle<wgpu::BindGroup>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -537,12 +604,12 @@ enum RequestedState {
     Encoder,
     RenderPass {
         target: Option<RenderPassTarget>,
-        pipeline: RenderPipelineHandle,
-        bind_groups: Vec<BindGroupHandle>,
+        pipeline: Handle<RenderPipeline>,
+        bind_groups: Vec<Handle<wgpu::BindGroup>>,
     },
     ComputePass {
-        pipeline: ComputePipelineHandle,
-        bind_groups: Vec<BindGroupHandle>,
+        pipeline: Handle<ComputePipeline>,
+        bind_groups: Vec<Handle<wgpu::BindGroup>>,
     },
 }
 
@@ -577,24 +644,23 @@ impl<'b, 'pass> EncoderOrPass<'b, 'pass> {
 
 struct GraphNode<
     'node,
-    B: ResourceArray<BufferHandle>,
-    T: ResourceArray<TextureHandle>,
-    G: ResourceArray<BindGroupHandle>,
+    B: ResourceArray<Handle<wgpu::Buffer>>,
+    T: ResourceArray<Handle<wgpu::TextureView>>,
+    G: ResourceArray<Handle<wgpu::BindGroup>>,
     P: RenderPassthrough,
 > {
     inner: Option<GraphNodeInner<'node, B, T, G, P>>,
 }
 
-#[allow(clippy::type_complexity)]
 struct GraphNodeInner<
     'node,
-    B: ResourceArray<BufferHandle>,
-    T: ResourceArray<TextureHandle>,
-    G: ResourceArray<BindGroupHandle>,
+    B: ResourceArray<Handle<wgpu::Buffer>>,
+    T: ResourceArray<Handle<wgpu::TextureView>>,
+    G: ResourceArray<Handle<wgpu::BindGroup>>,
     P: RenderPassthrough,
 > {
-    rw_buffers: Vec<BufferHandle>,
-    rw_textures: Vec<TextureHandle>,
+    rw_buffers: Vec<Handle<wgpu::Buffer>>,
+    rw_textures: Vec<Handle<wgpu::TextureView>>,
     no_cull: bool,
     buffers: B,
     textures: T,
@@ -603,9 +669,9 @@ struct GraphNodeInner<
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 EncoderOrPass<'b, 'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
-                <T as ResourceArray<TextureHandle>>::Fetched<'pass>,
-                <G as ResourceArray<BindGroupHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
+                <T as ResourceArray<Handle<wgpu::TextureView>>>::Fetched<'pass>,
+                <G as ResourceArray<Handle<wgpu::BindGroup>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -613,21 +679,22 @@ struct GraphNodeInner<
 
 pub struct RenderNodeBuilder<'a, 'r, 'node, B, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
-    pipeline: RenderPipelineHandle,
-    bind_groups: Vec<BindGroupHandle>,
+    pipeline: Handle<RenderPipeline>,
+    bind_groups: Vec<Handle<wgpu::BindGroup>>,
     buffers: B,
     passthrough: P,
 }
 
 impl<'a, 'r, 'node, B, P> RenderNodeBuilder<'a, 'r, 'node, B, P>
 where
-    B: ResourceArray<BufferHandle> + 'node,
+    B: ResourceArray<Handle<wgpu::Buffer>> + 'node,
     P: RenderPassthrough + 'node,
 {
     pub fn with_buffer(
         self,
-        handle: BufferHandle,
-    ) -> RenderNodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, P> {
+        handle: Handle<wgpu::Buffer>,
+    ) -> RenderNodeBuilder<'a, 'r, 'node, <B as ResourceArray<Handle<wgpu::Buffer>>>::ExtendOne, P>
+    {
         RenderNodeBuilder {
             graph: self.graph,
             pipeline: self.pipeline,
@@ -670,7 +737,7 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::RenderPass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -687,21 +754,21 @@ where
     }
 }
 
-struct RenderGraphNode<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
+struct RenderGraphNode<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough> {
     inner: Option<RenderGraphNodeInner<'node, B, P>>,
 }
 
 #[allow(clippy::type_complexity)]
-struct RenderGraphNodeInner<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
-    pipeline: RenderPipelineHandle,
-    bind_groups: Vec<BindGroupHandle>,
+struct RenderGraphNodeInner<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough> {
+    pipeline: Handle<RenderPipeline>,
+    bind_groups: Vec<Handle<wgpu::BindGroup>>,
     buffers: B,
     passthrough: P,
     render_pass: Option<RenderPassTarget>,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 &'b mut wgpu::RenderPass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -709,21 +776,22 @@ struct RenderGraphNodeInner<'node, B: ResourceArray<BufferHandle>, P: RenderPass
 
 pub struct ComputeNodeBuilder<'a, 'r, 'node, B, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
-    pipeline: ComputePipelineHandle,
-    bind_groups: Vec<BindGroupHandle>,
+    pipeline: Handle<ComputePipeline>,
+    bind_groups: Vec<Handle<wgpu::BindGroup>>,
     buffers: B,
     passthrough: P,
 }
 
 impl<'a, 'r, 'node, B, P> ComputeNodeBuilder<'a, 'r, 'node, B, P>
 where
-    B: ResourceArray<BufferHandle> + 'node,
+    B: ResourceArray<Handle<wgpu::Buffer>> + 'node,
     P: RenderPassthrough + 'node,
 {
     pub fn with_buffer(
         self,
-        handle: BufferHandle,
-    ) -> ComputeNodeBuilder<'a, 'r, 'node, <B as ResourceArray<BufferHandle>>::ExtendOne, P> {
+        handle: Handle<wgpu::Buffer>,
+    ) -> ComputeNodeBuilder<'a, 'r, 'node, <B as ResourceArray<Handle<wgpu::Buffer>>>::ExtendOne, P>
+    {
         ComputeNodeBuilder {
             graph: self.graph,
             pipeline: self.pipeline,
@@ -766,7 +834,7 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::ComputePass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
@@ -782,20 +850,20 @@ where
     }
 }
 
-struct ComputeGraphNode<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
+struct ComputeGraphNode<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough> {
     inner: Option<ComputeGraphNodeInner<'node, B, P>>,
 }
 
 #[allow(clippy::type_complexity)]
-struct ComputeGraphNodeInner<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough> {
-    pipeline: ComputePipelineHandle,
-    bind_groups: Vec<BindGroupHandle>,
+struct ComputeGraphNodeInner<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough> {
+    pipeline: Handle<ComputePipeline>,
+    bind_groups: Vec<Handle<wgpu::BindGroup>>,
     buffers: B,
     passthrough: P,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
                 &'b mut wgpu::ComputePass<'pass>,
-                <B as ResourceArray<BufferHandle>>::Fetched<'pass>,
+                <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     >,
@@ -805,8 +873,8 @@ trait GraphNodeImpl<'node> {
     fn requested_state(&mut self) -> RequestedState;
     fn cull(
         &self,
-        used_buffers: &mut FxHashSet<BufferHandle>,
-        used_textures: &mut FxHashSet<TextureHandle>,
+        used_buffers: &mut FxHashSet<Handle<wgpu::Buffer>>,
+        used_textures: &mut FxHashSet<Handle<wgpu::TextureView>>,
     ) -> bool;
     fn exec<'pass>(
         &mut self,
@@ -818,9 +886,9 @@ trait GraphNodeImpl<'node> {
 
 impl<
         'node,
-        B: ResourceArray<BufferHandle>,
-        T: ResourceArray<TextureHandle>,
-        G: ResourceArray<BindGroupHandle>,
+        B: ResourceArray<Handle<wgpu::Buffer>>,
+        T: ResourceArray<Handle<wgpu::TextureView>>,
+        G: ResourceArray<Handle<wgpu::BindGroup>>,
         P: RenderPassthrough + 'node,
     > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
 {
@@ -830,8 +898,8 @@ impl<
 
     fn cull(
         &self,
-        used_buffers: &mut FxHashSet<BufferHandle>,
-        used_textures: &mut FxHashSet<TextureHandle>,
+        used_buffers: &mut FxHashSet<Handle<wgpu::Buffer>>,
+        used_textures: &mut FxHashSet<Handle<wgpu::TextureView>>,
     ) -> bool {
         let inner = self.inner.as_ref().unwrap();
         if inner.no_cull
@@ -872,8 +940,8 @@ impl<
     }
 }
 
-impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphNodeImpl<'node>
-    for RenderGraphNode<'node, B, P>
+impl<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough + 'node>
+    GraphNodeImpl<'node> for RenderGraphNode<'node, B, P>
 {
     fn requested_state(&mut self) -> RequestedState {
         let inner = self.inner.as_mut().unwrap();
@@ -886,8 +954,8 @@ impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphN
 
     fn cull(
         &self,
-        _used_buffers: &mut FxHashSet<BufferHandle>,
-        _used_textures: &mut FxHashSet<TextureHandle>,
+        _used_buffers: &mut FxHashSet<Handle<wgpu::Buffer>>,
+        _used_textures: &mut FxHashSet<Handle<wgpu::TextureView>>,
     ) -> bool {
         true //TODO!
     }
@@ -908,8 +976,8 @@ impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphN
     }
 }
 
-impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphNodeImpl<'node>
-    for ComputeGraphNode<'node, B, P>
+impl<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough + 'node>
+    GraphNodeImpl<'node> for ComputeGraphNode<'node, B, P>
 {
     fn requested_state(&mut self) -> RequestedState {
         let inner = self.inner.as_ref().unwrap();
@@ -921,8 +989,8 @@ impl<'node, B: ResourceArray<BufferHandle>, P: RenderPassthrough + 'node> GraphN
 
     fn cull(
         &self,
-        _used_buffers: &mut FxHashSet<BufferHandle>,
-        _used_textures: &mut FxHashSet<TextureHandle>,
+        _used_buffers: &mut FxHashSet<Handle<wgpu::Buffer>>,
+        _used_textures: &mut FxHashSet<Handle<wgpu::TextureView>>,
     ) -> bool {
         true //TODO!
     }
@@ -1064,7 +1132,7 @@ pub trait RenderResource {
     fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a>;
 }
 
-impl RenderResource for BufferHandle {
+impl RenderResource for Handle<wgpu::Buffer> {
     type Resource<'a> = &'a wgpu::Buffer;
 
     fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
@@ -1072,7 +1140,7 @@ impl RenderResource for BufferHandle {
     }
 }
 
-impl RenderResource for TextureHandle {
+impl RenderResource for Handle<wgpu::TextureView> {
     type Resource<'a> = &'a wgpu::TextureView;
 
     fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
@@ -1080,7 +1148,7 @@ impl RenderResource for TextureHandle {
     }
 }
 
-impl RenderResource for BindGroupHandle {
+impl RenderResource for Handle<wgpu::BindGroup> {
     type Resource<'a> = &'a wgpu::BindGroup;
 
     fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
