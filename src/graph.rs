@@ -1,4 +1,34 @@
 //! A basic render graph implementation.
+//!
+//! A render graph, implemented by the [`RenderGraph`] type, is a sequence of render nodes,
+//! each with their own inputs, outputs, and required state. A render graph collects these
+//! nodes, analyzes their dependencies, and optimises the number of discrete render/compute
+//! passes required to execute them.
+//!
+//! In polystrip, nodes are constructed and added to a graph with the various `NodeBuilder` types.
+//! These accept a varadic number of resource handles that will be fetched and passed to the
+//! execution closure (Note that due to type system limitations, a maximum of 32 elements is
+//! imposed on buffers, textures, and bind groups and a maximum of 12 is imposed on passthrough
+//! resources).
+//!
+//! ```no_run
+//! # use pollster::FutureExt;
+//! # use polystrip::graph::RenderGraph;
+//! # let device = polystrip::PolystripDevice::new_from_env().block_on();
+//! # let mut renderer = polystrip::Renderer::new(device.device.clone(), device.queue);
+//! # let descriptor = wgpu::BufferDescriptor {
+//! #     label: None, size: 0, usage: wgpu::BufferUsages::empty(), mapped_at_creation: false
+//! # };
+//! # let source_handle = renderer.insert_buffer(device.device.create_buffer(&descriptor));
+//! # let dest_handle = renderer.insert_buffer(device.device.create_buffer(&descriptor));
+//! let mut graph = RenderGraph::new(&mut renderer);
+//! graph.add_node()
+//!     .with_buffer(source_handle)
+//!     .with_buffer_rw(dest_handle)
+//!     .build(|encoder, [source, dest], [], [], ()| {
+//!         encoder.copy_buffer_to_buffer(source, 0, dest, 256, 256);
+//!     });
+//! ```
 
 use fxhash::FxHashSet;
 
@@ -7,6 +37,9 @@ use crate::{
     RenderTarget, Renderer,
 };
 
+/// Resources accessible to a [`GraphNode`] while it is being executed.
+///
+/// Contains a reference to the base graph's [`Renderer`], as well as to the output texture.
 pub struct RenderPassResources<'pass> {
     resources: &'pass Renderer,
     output_texture: &'pass wgpu::TextureView,
@@ -39,6 +72,9 @@ impl<'pass> RenderPassResources<'pass> {
     }
 }
 
+/// A simple, single-use render graph
+///
+/// See module-level docs for more details.
 pub struct RenderGraph<'r, 'node> {
     renderer: &'r mut Renderer,
     intermediate_buffers: FxHashSet<Handle<wgpu::Buffer>>,
@@ -47,6 +83,7 @@ pub struct RenderGraph<'r, 'node> {
 }
 
 impl<'r, 'node> RenderGraph<'r, 'node> {
+    /// Create a new render graph
     pub fn new(renderer: &'r mut Renderer) -> RenderGraph<'r, 'node> {
         RenderGraph {
             renderer,
@@ -56,14 +93,23 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Get an immutable reference to the [`Renderer`] used to create this graph.
     pub fn renderer(&self) -> &Renderer {
         self.renderer
     }
 
+    /// Get a mutable reference to the [`Renderer`] used to create this graph.
     pub fn renderer_mut(&mut self) -> &mut Renderer {
         self.renderer
     }
 
+    /// Add an intermediate buffer to the graph.
+    ///
+    /// The same buffers are reused between graphs if they have the same descriptors. Creating
+    /// multiple buffers with the same descriptor is possible within the same render graph. Cached
+    /// buffers are deallocated if they are not used.
+    ///
+    /// The returned handle should not be used outside of the context of this graph.
     pub fn add_intermediate_buffer(
         &mut self,
         descriptor: wgpu::BufferDescriptor,
@@ -106,6 +152,13 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Add an intermediate texture to the graph.
+    ///
+    /// The same textures are reused between graphs if they have the same descriptors. Creating
+    /// multiple textures with the same descriptor is possible within the same render graph. Cached
+    /// textures are deallocated if they are not used.
+    ///
+    /// The returned handle should not be used outside of the context of this graph.
     pub fn add_intermediate_texture(
         &mut self,
         descriptor: wgpu::TextureDescriptor,
@@ -153,6 +206,12 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Add a command encoder node to the graph.
+    ///
+    /// A command encoder node takes an [`&wgpu::CommandEncoder`](wgpu::CommandEncoder) as its
+    /// operand, and will not be combined with any other nodes.
+    ///
+    /// See [`NodeBuilder`] for more details.
     pub fn add_node<'a>(
         &'a mut self,
     ) -> NodeBuilder<
@@ -176,6 +235,12 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Add a render pass node to the graph.
+    ///
+    /// A render pass node takes a [`&wgpu::RenderPass`](wgpu::RenderPass) as its operand, and will
+    /// be combined with adjacent nodes that share a [`RenderPassTarget`].
+    ///
+    /// See [`RenderNodeBuilder`] for more details.
     pub fn add_render_node<'a>(
         &'a mut self,
         pipeline: Handle<RenderPipeline>,
@@ -189,6 +254,12 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Add a compute pass node to the graph.
+    ///
+    /// A compute pass node takes a [`&wgpu::ComputePass`](wgpu::ComputePass) as its operand, and will
+    /// be combined with adjacent compute pass nodes.
+    ///
+    /// See [`ComputeNodeBuilder`] for more details.
     pub fn add_compute_node<'a>(
         &'a mut self,
         pipeline: Handle<ComputePipeline>,
@@ -202,6 +273,16 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         }
     }
 
+    /// Execute the render graph with the supplied render target.
+    ///
+    /// Nodes are executed in the order they were added. Nodes may be culled if their output cannot
+    /// be determined to be used.
+    ///
+    /// [`Handle<wgpu::TextureView>::RENDER_TARGET`][Handle::RENDER_TARGET] will refer to the
+    /// supplied render target for all accesses by this render graph's nodes.
+    ///
+    /// Any intermediate resources that were not used after executing (resources used by culled
+    /// nodes are treated as not used) will be deallocated after executing.
     pub fn execute(self, target: &mut impl RenderTarget) {
         let output = target.get_current_view();
 
@@ -387,6 +468,9 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     }
 }
 
+/// A builder for an [`EncoderGraphNode`], to be added to a [`RenderGraph`].
+///
+/// See module docs for more details.
 pub struct NodeBuilder<'a, 'r, 'node, B, T, G, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
     rw_buffers: Vec<Handle<wgpu::Buffer>>,
@@ -405,6 +489,18 @@ where
     G: ResourceArray<Handle<wgpu::BindGroup>> + 'node,
     P: RenderPassthrough + 'node,
 {
+    /// Add a read-only buffer as a dependency. This buffer will be treated as an input for the
+    /// purposes of dependency tracking.
+    ///
+    /// The buffer will be fetched from the `Renderer` and passed in the second parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_buffer(handle)
+    ///     .build(|encoder, [buffer], [], [], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_buffer(
         self,
         handle: Handle<wgpu::Buffer>,
@@ -422,6 +518,18 @@ where
         }
     }
 
+    /// Add a mutable buffer as a dependency. This buffer will be treated as an input and an output
+    /// for the purposes of dependency tracking.
+    ///
+    /// The buffer will be fetched from the `Renderer` and passed in the second parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_buffer_rw(handle)
+    ///     .build(|encoder, [buffer], [], [], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_buffer_rw(
         mut self,
         handle: Handle<wgpu::Buffer>,
@@ -440,6 +548,18 @@ where
         }
     }
 
+    /// Add a read-only texture as a dependency. This texture will be treated as an input for the
+    /// purposes of dependency tracking.
+    ///
+    /// The texture will be fetched from the `Renderer` and passed in the third parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_texture(handle)
+    ///     .build(|encoder, [], [texture], [], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_texture(
         self,
         handle: Handle<wgpu::TextureView>,
@@ -464,6 +584,18 @@ where
         }
     }
 
+    /// Add a mutable texture as a dependency. This texture will be treated as an input and an
+    /// output for the purposes of dependency tracking.
+    ///
+    /// The texture will be fetched from the `Renderer` and passed in the third parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_texture_rw(handle)
+    ///     .build(|encoder, [], [texture], [], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_texture_rw(
         mut self,
         handle: Handle<wgpu::TextureView>,
@@ -489,6 +621,21 @@ where
         }
     }
 
+    /// Add a bind group as a dependency. The resources used in this bind group will be treated as
+    /// inputs for the purposes of dependency tracking.
+    ///
+    /// The bind group will be fetched from the `Renderer` and passed in the fourth parameter of
+    /// the closure.
+    ///
+    /// See [`IntoBindGroupResources`] for more details.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_bind_group(layout, (buffer_handle,))
+    ///     .build(|encoder, [], [], [bind_group], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_bind_group(
         self,
         layout: Handle<wgpu::BindGroupLayout>,
@@ -508,6 +655,21 @@ where
         }
     }
 
+    /// Add a bind group as a dependency. The resources used in this bind group will be treated as
+    /// inputs and outputs for the purposes of dependency tracking.
+    ///
+    /// The bind group will be fetched from the `Renderer` and passed in the fourth parameter of
+    /// the closure.
+    ///
+    /// See [`IntoBindGroupResources`] for more details.
+    ///
+    /// ```ignore
+    /// graph.add_node()
+    ///     .with_bind_group(layout, (buffer_handle,))
+    ///     .build(|encoder, [], [], [bind_group], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_bind_group_rw(
         mut self,
         layout: Handle<wgpu::BindGroupLayout>,
@@ -543,6 +705,20 @@ where
         }
     }
 
+    /// Add passthrough data to the node.
+    ///
+    /// This data will be reborrowed with lifetime `'pass` and passed to the fifth parameter of the
+    /// closure.
+    ///
+    /// ```ignore
+    /// let buffer = device.create_buffer(&wgpu::BufferDescriptor { .. });
+    /// graph.add_node()
+    ///     .with_passthrough(&buffer)
+    ///     .build(|encoder, [], [], [], (buffer,)| {
+    ///         // Trying to use `buffer` without the passthrough mechanism would have failed because
+    ///         // nothing guarantees 'node outlives 'pass.
+    ///     })
+    /// ```
     pub fn with_passthrough<A: 'node>(
         self,
         item: &'node A,
@@ -562,11 +738,29 @@ where
         }
     }
 
+    /// Mark this node as external, preventing it from being culled after dependency tracking.
     pub fn with_external_output(mut self) -> Self {
         self.no_cull = true;
         self
     }
 
+    /// Build the node and add it to the graph.
+    ///
+    /// The closure is given a [`&wgpu::CommandEncoder`](wgpu::CommandEncoder) and references to
+    /// the requested resources. The parameters for the closure can be named as follows:
+    ///
+    /// ```text
+    /// fn exec(
+    ///     encoder: &'b mut wgpu::CommandEncoder,
+    ///     buffers: [&'pass wgpu::Buffer; _],
+    ///     textures: [&'pass wgpu::TextureView; _],
+    ///     bind_groups: [&'pass wgpu::BindGroup; _],
+    ///     passthrough: (T₁, T₂, …, Tₙ),
+    /// ) -> ()
+    /// ```
+    ///
+    /// The closure may be skipped if dependency tracking marks this node as unused. To force this
+    /// node to be executed, see [`Self::with_external_output`].
     pub fn build<F>(self, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
@@ -577,8 +771,8 @@ where
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
-        self.graph.nodes.push(Box::new(GraphNode {
-            inner: Some(GraphNodeInner {
+        self.graph.nodes.push(Box::new(EncoderGraphNode {
+            inner: Some(EncoderGraphNodeInner {
                 rw_buffers: self.rw_buffers,
                 rw_textures: self.rw_textures,
                 no_cull: self.no_cull,
@@ -644,17 +838,17 @@ impl<'b, 'pass> EncoderOrPass<'b, 'pass> {
     }
 }
 
-struct GraphNode<
+struct EncoderGraphNode<
     'node,
     B: ResourceArray<Handle<wgpu::Buffer>>,
     T: ResourceArray<Handle<wgpu::TextureView>>,
     G: ResourceArray<Handle<wgpu::BindGroup>>,
     P: RenderPassthrough,
 > {
-    inner: Option<GraphNodeInner<'node, B, T, G, P>>,
+    inner: Option<EncoderGraphNodeInner<'node, B, T, G, P>>,
 }
 
-struct GraphNodeInner<
+struct EncoderGraphNodeInner<
     'node,
     B: ResourceArray<Handle<wgpu::Buffer>>,
     T: ResourceArray<Handle<wgpu::TextureView>>,
@@ -679,6 +873,11 @@ struct GraphNodeInner<
     >,
 }
 
+/// A builder for a [`RenderGraphNode`].
+///
+/// A `RenderGraphNode` is tied to a single [`RenderPassTarget`], [`wgpu::RenderPipeline`]
+/// and set of [`wgpu::BindGroup`]s. Adjacent nodes sharing the same target will execute in the
+/// same pass.
 pub struct RenderNodeBuilder<'a, 'r, 'node, B, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
     pipeline: Handle<RenderPipeline>,
@@ -692,6 +891,18 @@ where
     B: ResourceArray<Handle<wgpu::Buffer>> + 'node,
     P: RenderPassthrough + 'node,
 {
+    /// Add a read-only buffer as a dependency. This buffer will be treated as an input for the
+    /// purposes of dependency tracking.
+    ///
+    /// The buffer will be fetched from the `Renderer` and passed in the second parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_render_node(pipeline_handle)
+    ///     .with_buffer(handle)
+    ///     .build(|render_pass, [buffer], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_buffer(
         self,
         handle: Handle<wgpu::Buffer>,
@@ -706,6 +917,23 @@ where
         }
     }
 
+    /// Add a bind group as a dependency. The resources used in this bind group will be treated as
+    /// inputs for the purposes of dependency tracking.
+    ///
+    /// Added bind groups will be set up before the node's execution in the order they were added.
+    ///
+    /// See [`IntoBindGroupResources`] for more details.
+    ///
+    /// ```ignore
+    /// graph.add_render_node(pipeline_handle)
+    ///     .with_bind_group((buffer_handle,))
+    ///     .with_bind_group((texture_handle, sampler_handle))
+    ///     .build(|render_pass, [], ()| {
+    ///         // Bind group set 0 is (buffer_handle)
+    ///         // Bind group set 1 is (texture_handle, sampler_handle)
+    ///         render_pass.draw(0..3, 0..1);
+    ///     })
+    /// ```
     pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
         self.bind_groups.push(
             self.graph.renderer.add_bind_group(
@@ -719,6 +947,20 @@ where
         self
     }
 
+    /// Add passthrough data to the node.
+    ///
+    /// This data will be reborrowed with lifetime `'pass` and passed to the fifth parameter of the
+    /// closure.
+    ///
+    /// ```ignore
+    /// let buffer = device.create_buffer(&wgpu::BufferDescriptor { .. });
+    /// graph.add_render_node()
+    ///     .with_passthrough(&buffer)
+    ///     .build(|encoder, [], (buffer,)| {
+    ///         // Trying to use `buffer` without the passthrough mechanism would have failed because
+    ///         // nothing guarantees 'node outlives 'pass.
+    ///     })
+    /// ```
     pub fn with_passthrough<A: 'node>(
         self,
         item: &'node A,
@@ -735,6 +977,23 @@ where
         }
     }
 
+    /// Build the node and add it to the graph.
+    ///
+    /// The closure is given a [`&wgpu::RenderPass`](wgpu::RenderPass) and references to
+    /// the requested resources. The parameters for the closure can be named as follows:
+    ///
+    /// ```text
+    /// fn exec(
+    ///     encoder: &'b mut wgpu::CommandEncoder,
+    ///     buffers: [&'pass wgpu::Buffer; _],
+    ///     passthrough: (T₁, T₂, …, Tₙ),
+    /// ) -> ()
+    /// ```
+    ///
+    /// Additionally, the render pass will have been set up with the requested render pass
+    /// target, pipeline, and bind groups.
+    ///
+    /// The closure may be skipped if dependency tracking marks this node as unused.
     pub fn build<F>(self, render_pass: RenderPassTarget, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
@@ -776,6 +1035,10 @@ struct RenderGraphNodeInner<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: Re
     >,
 }
 
+/// A builder for a [`ComputeGraphNode`].
+///
+/// A `ComputeGraphNode` is tied to a single [`wgpu::ComputePipeline`] and set of
+/// [`wgpu::BindGroup`]s. Adjacent compute passes will execute in the same pass.
 pub struct ComputeNodeBuilder<'a, 'r, 'node, B, P> {
     graph: &'a mut RenderGraph<'r, 'node>,
     pipeline: Handle<ComputePipeline>,
@@ -789,6 +1052,18 @@ where
     B: ResourceArray<Handle<wgpu::Buffer>> + 'node,
     P: RenderPassthrough + 'node,
 {
+    /// Add a read-only buffer as a dependency. This buffer will be treated as an input for the
+    /// purposes of dependency tracking.
+    ///
+    /// The buffer will be fetched from the `Renderer` and passed in the second parameter of the closure.
+    ///
+    /// ```ignore
+    /// graph.add_render_node(pipeline_handle)
+    ///     .with_buffer(handle)
+    ///     .build(|render_pass, [buffer], ()| {
+    ///         // ...
+    ///     })
+    /// ```
     pub fn with_buffer(
         self,
         handle: Handle<wgpu::Buffer>,
@@ -803,6 +1078,23 @@ where
         }
     }
 
+    /// Add a bind group as a dependency. The resources used in this bind group will be treated as
+    /// inputs for the purposes of dependency tracking.
+    ///
+    /// Added bind groups will be set up before the node's execution in the order they were added.
+    ///
+    /// See [`IntoBindGroupResources`] for more details.
+    ///
+    /// ```ignore
+    /// graph.add_render_node(pipeline_handle)
+    ///     .with_bind_group((buffer_handle,))
+    ///     .with_bind_group((texture_handle, sampler_handle))
+    ///     .build(|render_pass, [], ()| {
+    ///         // Bind group set 0 is (buffer_handle)
+    ///         // Bind group set 1 is (texture_handle, sampler_handle)
+    ///         render_pass.draw(0..3, 0..1);
+    ///     })
+    /// ```
     pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
         self.bind_groups.push(
             self.graph.renderer.add_bind_group(
@@ -816,6 +1108,20 @@ where
         self
     }
 
+    /// Add passthrough data to the node.
+    ///
+    /// This data will be reborrowed with lifetime `'pass` and passed to the fifth parameter of the
+    /// closure.
+    ///
+    /// ```ignore
+    /// let buffer = device.create_buffer(&wgpu::BufferDescriptor { .. });
+    /// graph.add_render_node()
+    ///     .with_passthrough(&buffer)
+    ///     .build(|encoder, [], (buffer,)| {
+    ///         // Trying to use `buffer` without the passthrough mechanism would have failed because
+    ///         // nothing guarantees 'node outlives 'pass.
+    ///     })
+    /// ```
     pub fn with_passthrough<A: 'node>(
         self,
         item: &'node A,
@@ -832,6 +1138,23 @@ where
         }
     }
 
+    /// Build the node and add it to the graph.
+    ///
+    /// The closure is given a [`&wgpu::RenderPass`](wgpu::RenderPass) and references to
+    /// the requested resources. The parameters for the closure can be named as follows:
+    ///
+    /// ```text
+    /// fn exec(
+    ///     encoder: &'b mut wgpu::CommandEncoder,
+    ///     buffers: [&'pass wgpu::Buffer; _],
+    ///     passthrough: (T₁, T₂, …, Tₙ),
+    /// ) -> ()
+    /// ```
+    ///
+    /// Additionally, the render pass will have been set up with the requested render pass
+    /// target, pipeline, and bind groups.
+    ///
+    /// The closure may be skipped if dependency tracking marks this node as unused.
     pub fn build<F>(self, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
@@ -892,7 +1215,7 @@ impl<
         T: ResourceArray<Handle<wgpu::TextureView>>,
         G: ResourceArray<Handle<wgpu::BindGroup>>,
         P: RenderPassthrough + 'node,
-    > GraphNodeImpl<'node> for GraphNode<'node, B, T, G, P>
+    > GraphNodeImpl<'node> for EncoderGraphNode<'node, B, T, G, P>
 {
     fn requested_state(&mut self) -> RequestedState {
         RequestedState::Encoder
@@ -1018,17 +1341,23 @@ mod sealed {
 }
 use sealed::Sealed;
 
+/// (*internal*) A tuple of passthrough resources that can be extended by one element.
 pub trait ExtendTuple<T>: Sealed {
     type ExtendOne;
 
     fn extend_one(self, _: T) -> Self::ExtendOne;
 }
 
+/// (*internal*) A tuple of resources that can be borrowed at a shorter lifetime.
 pub trait RenderPassthrough: Sealed {
     type Reborrowed<'a>
     where
         Self: 'a;
 
+    /// # Safety
+    /// It must be valid to create a shared reference from the borrowed data that lives for the bound
+    /// lifetime. If you don't know what that means off the top of your head, you probably shouldn't
+    /// be touching this method.
     unsafe fn reborrow<'a>(self) -> Self::Reborrowed<'a>;
 }
 
@@ -1128,6 +1457,7 @@ macro_rules! impl_extend_tuple {
 }
 impl_extend_tuple!(A, B, C, D, E, F, G, H, I, J, K, L,);
 
+/// (*internal*) A [`Handle<T>`] to be resolved upon node execution.
 pub trait RenderResource {
     type Resource<'a>;
 
@@ -1158,6 +1488,7 @@ impl RenderResource for Handle<wgpu::BindGroup> {
     }
 }
 
+/// (*internal*) An array of [`Handle<T>`] to be resolved upon node execution.
 pub trait ResourceArray<T: RenderResource>: Sealed {
     type Fetched<'a>;
     type ExtendOne;

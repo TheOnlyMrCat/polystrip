@@ -1,6 +1,6 @@
 [package]
 name = "polystrip"
-description = "A 2D accelerated graphics rendering library"
+description = "A powerful, flexible wrapper around wgpu"
 keywords = ["gamedev", "graphics", "rendering"]
 categories = ["game-development", "graphics", "rendering::engine"]
 version = "0.7.0"

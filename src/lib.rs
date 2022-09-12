@@ -1,3 +1,28 @@
+//! A powerful, flexible wrapper around [`wgpu`].
+//!
+//! Polystrip seeks to fill the gap between the high-boilerplate, high-control API of `wgpu`, and
+//! the more restricted (in code style) but less-boilerplate-heavy APIs of game engines. In effect,
+//! it's just another opinionated graphics library.
+//!
+//! In exchange for flexibility, resources must be managed by a central [`Renderer`]. This pattern
+//! is necessary for polystrip to be able to identify identical resources.
+//!
+//! # Features:
+//! Polystrip can [read and analyze wgsl shaders](RenderPipelineBuilder) to construct a
+//! [`wgpu::RenderPipeline`] from the shader source itself. It creates (and memoizes) bind group
+//! layouts and makes a best effort to generate vertex attributes.
+//!
+//! Polystrip's [render graph](graph) is designed to not only take the pain out of having a central
+//! resource manager, but also to add flexibility to the pattern:
+//! - Buffers and textures whose results are merely intermediate to the graph can be
+//!   [created and managed by the graph itself](graph::RenderGraph::add_intermediate_buffer).
+//! - Bind groups can be [entirely managed by the graph](graph::RenderNodeBuilder), meaning you only
+//!   have to specify the buffers, textures, and samplers that make up the bindings.
+//!
+//! Excellent flexibility is offered in that all underlying `wgpu` types are exposed by the API. No
+//! operation forces you to construct or manipulate `wgpu` resources with `polystrip` methods; a
+//! workaround is always possible.
+
 #![feature(generic_associated_types)] // Can also experiment with #![feature(generic_const_exprs)]
 #![allow(clippy::type_complexity)]
 
@@ -229,7 +254,7 @@ impl RenderTarget for WindowTarget {
 /// A non-owning handle to a render resource.
 ///
 /// Handles are created by adding or inserting a resource into a [`Renderer`]. The referenced
-/// resource can be retrieved through one of the `Renderer::get_*` methods.
+/// resource can be retrieved through one of the various `Renderer::get_*` methods.
 pub struct Handle<T> {
     id: usize,
     _marker: std::marker::PhantomData<*mut T>,
@@ -261,6 +286,7 @@ impl<T> Hash for Handle<T> {
 }
 
 impl Handle<wgpu::TextureView> {
+    /// The render target of the currently executing [`GraphNode`](graph::GraphNode)
     pub const RENDER_TARGET: Handle<wgpu::TextureView> = Handle { id: usize::MAX, _marker: std::marker::PhantomData };
 }
 
@@ -388,38 +414,59 @@ impl Renderer {
     }
 
     /// Retrieve a `Buffer` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_buffer(&self, handle: Handle<wgpu::Buffer>) -> &wgpu::Buffer {
         self.buffers.get(&handle.id).unwrap()
     }
 
     /// Retrieve a `Texture` and its corresponding `TextureView` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_texture(&self, handle: Handle<wgpu::TextureView>) -> (&wgpu::Texture, &wgpu::TextureView) {
         let (texture, view) = self.textures.get(&handle.id).unwrap();
         (texture, view)
     }
 
     /// Retrieve a `Sampler` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_sampler(&self, handle: Handle<wgpu::Sampler>) -> &wgpu::Sampler {
         self.samplers.get(&handle.id).unwrap()
     }
 
     /// Retrieve a `BindGroupLayout` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_bind_group_layout(&self, handle: Handle<wgpu::BindGroupLayout>) -> &wgpu::BindGroupLayout {
         self.bind_group_layouts.get(&handle.id).unwrap()
     }
 
     /// Retrieve a `BindGroup` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_bind_group(&self, handle: Handle<wgpu::BindGroup>) -> &wgpu::BindGroup {
         let (bind_group, _) = self.bind_groups.get(&handle.id).unwrap();
         bind_group
     }
 
     /// Retrieve a `RenderPipeline` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_render_pipeline(&self, handle: Handle<RenderPipeline>) -> &RenderPipeline {
         self.render_pipelines.get(&handle.id).unwrap()
     }
 
     /// Retrieve a `ComputePipeline` from this renderer.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
     pub fn get_compute_pipeline(&self, handle: Handle<ComputePipeline>) -> &ComputePipeline {
         self.compute_pipelines.get(&handle.id).unwrap()
     }
@@ -450,11 +497,21 @@ impl Renderer {
         Handle::<wgpu::BindGroupLayout> { id, _marker: std::marker::PhantomData }
     }
 
-    //TODO: Document exactly what `resources` can be
     /// Create a new `BindGroup` from the specified set of resources.
     ///
     /// If a bind group has already been created from this set of resources, the cached one will be
     /// returned. Otherwise a new one will be created.
+    ///
+    /// ```ignore
+    /// let buffer_bind_group = renderer.add_bind_group(
+    ///     layout_handle,
+    ///     (buffer_handle,),
+    /// );
+    /// let texture_bind_group = renderer.add_bind_group(
+    ///     layout_handle,
+    ///     (texture_handle, sampler_handle),
+    /// );
+    /// ```
     pub fn add_bind_group(
         &mut self,
         layout: Handle<wgpu::BindGroupLayout>,
@@ -669,25 +726,41 @@ impl Renderer {
     }
 }
 
+/// The attachments of a render pass, with resource handles.
+///
+/// Corresponds to [`wgpu::RenderPipelineDescriptor`], but uses resource [`Handle`]s instead of
+/// references.
 #[derive(Default)]
 pub struct RenderPassTarget {
     pub color: Vec<RenderPassColorTarget>,
     pub depth: Option<RenderPassDepthTarget>,
 }
 
+/// A color attachment to a render pass, with resource handles.
+///
+/// Corresponds to [`wgpu::RenderPassColorAttachment`], but uses resource [`Handle`]s instead of
+/// references.
 pub struct RenderPassColorTarget {
+    /// The view to use as an attachment.
     pub handle: Handle<wgpu::TextureView>,
+    /// If `handle` is multisampled, the single-sample view that will receive the resolved output.
     pub resolve: Option<Handle<wgpu::TextureView>>,
     pub clear: wgpu::Color,
 }
 
+/// A depth attachment to a render pass, with resource handles.
+///
+/// Corresponds to [`wgpu::RenderPassDepthStencilAttachment`], but uses a resource [`Handle`]
+/// instead of a reference.
 pub struct RenderPassDepthTarget {
+    /// The view to use as an attachment.
     pub handle: Handle<wgpu::TextureView>,
     pub depth_clear: Option<f32>,
     pub stencil_clear: Option<u32>,
 }
 
 impl RenderPassTarget {
+    /// Create a new, empty `RenderPassTarget` for builder-style construction.
     pub fn new() -> RenderPassTarget {
         Self {
             color: vec![],
@@ -695,6 +768,7 @@ impl RenderPassTarget {
         }
     }
 
+    /// Add a color attachment to this target
     pub fn with_color(mut self, handle: Handle<wgpu::TextureView>, clear: wgpu::Color) -> Self {
         self.color.push(RenderPassColorTarget {
             handle,
@@ -704,6 +778,9 @@ impl RenderPassTarget {
         self
     }
 
+    /// Add a color attachment with a resolve texture to this target.
+    ///
+    /// `handle` should have a `sample_count > 1`, and `resolve` should have a `sample_count = 1`.
     pub fn with_msaa_color(
         mut self,
         handle: Handle<wgpu::TextureView>,
@@ -718,6 +795,7 @@ impl RenderPassTarget {
         self
     }
 
+    /// Set the depth attachment of this target.
     pub fn with_depth(mut self, handle: Handle<wgpu::TextureView>, clear: f32) -> Self {
         self.depth = Some(RenderPassDepthTarget {
             handle,
@@ -729,6 +807,10 @@ impl RenderPassTarget {
 }
 
 impl RenderPassTarget {
+    /// Check whether this target can be combined with the other target.
+    ///
+    /// This is used internally to combine compatible [`RenderGraphNode`](graph::RenderGraphNode)s
+    /// into the same `wgpu::RenderPass`.
     pub fn is_compatible_with(&self, other: &RenderPassTarget) -> bool {
         for (left, right) in self.color.iter().zip(other.color.iter()) {
             if (left.handle, left.resolve) != (right.handle, right.resolve) {
@@ -740,6 +822,9 @@ impl RenderPassTarget {
     }
 }
 
+/// The segment of a buffer handle to bind.
+///
+/// Corresponds to [`wgpu::BufferBinding`], but uses a buffer [`Handle`] instead of a reference.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BufferBinding {
     pub buffer: Handle<wgpu::Buffer>,
@@ -747,6 +832,9 @@ pub struct BufferBinding {
     pub size: Option<NonZeroU64>,
 }
 
+/// Resource handle that can be bound to a pipeline
+///
+/// Corresponds to [`wgpu::BindingResource`], but uses resource [`Handle`]s instead of references.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum BindGroupResource {
     Buffer(BufferBinding),
@@ -757,8 +845,13 @@ pub enum BindGroupResource {
     SamplerArray(Vec<Handle<wgpu::Sampler>>),
 }
 
-type BindGroupResources = Vec<(u32, BindGroupResource)>;
+/// An owned collection of [`BindGroupResource`]s to have a bind group created from.
+pub type BindGroupResources = Vec<(u32, BindGroupResource)>;
 
+/// Resource that can be trivially converted to a [`BindGroupResource`].
+///
+/// This trait is used by [`Renderer::add_bind_group`] to facilitate easy construction of bind
+/// groups.
 pub trait IntoBindGroupResource {
     fn into_bind_group_resource(self) -> BindGroupResource;
 }
@@ -791,6 +884,11 @@ impl IntoBindGroupResource for Handle<wgpu::Sampler> {
     }
 }
 
+/// Convert a tuple of `impl IntoBindGroupResource` into an owned collection.
+///
+/// This trait is used by [`Renderer::add_bind_group`] to facilitate easy constrction of bind
+/// groups from types that implement [`IntoBindGroupResource`]. It is implemented on all tuples up
+/// to length 12.
 pub trait IntoBindGroupResources {
     fn into_entries(self) -> BindGroupResources;
 }
@@ -829,7 +927,10 @@ macro_rules! bind_group_resources_tuple {
 }
 bind_group_resources_tuple!(recursion_dummy, A, B, C, D, E, F, G, H, I, J, K, L,);
 
-/// A render pipeline and its associated bind group layouts
+/// A render pipeline and its associated bind group layouts.
+///
+/// Can be constructed manually and inserted with [`Renderer::insert_render_pipeline`], or can be
+/// created from shader source code with a [`RenderPipelineBuilder`].
 pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layouts: Vec<Handle<wgpu::BindGroupLayout>>,
@@ -854,6 +955,24 @@ enum BindGroupLayout {
 ///
 /// This type cannot be created directly, and must be constructed from a `Renderer` with the
 /// [`Renderer::add_render_pipeline_from_wgsl`] method.
+///
+/// # Limitations
+///
+/// This builder naively assumes there is only one shader in the input module. It will expect one
+/// `@vertex` and one `@fragment` entry point and will use those to build the pipeline.
+///
+/// The builder assumes there is only one vertex buffer supplying vertex attributes, and there is
+/// currently no mechanism to change this behaviour.
+///
+/// The builder marks float textures and non-comparison samplers as filterable to cover most use
+/// cases. If this behaviour is not desirable, bind groups layouts can be overriden with the
+/// [`with_bind_group_layout`](`RenderPipelineBuilder::with_bind_group_layout`) method.
+///
+/// If your pipeline cannot be constructed using this builder, a
+/// [`polystrip::RenderPipeline`](RenderPipeline) can be constructed and inserted manually with
+/// [`Renderer::insert_render_pipeline`].
+///
+/// See also [`ComputePipelineBuilder`]
 pub struct RenderPipelineBuilder<'a> {
     renderer: &'a mut Renderer,
     shader: naga::Module,
@@ -1160,6 +1279,17 @@ pub struct ComputePipeline {
 ///
 /// This type cannot be created directly, and must be constructed from a `Renderer` with the
 /// [`Renderer::add_compute_pipeline_from_wgsl`] method.
+///
+/// # Limitations
+///
+/// This builder naively assumes there is only one shader in the input module. This means the
+/// builder will only look for the first `@compute` entry point it finds, and will assume all
+/// declared global variables belong to it.
+///
+/// If this behaviour is not desirable, a [`ComputePipeline`] can be constructed and inserted
+/// manually with [`Renderer::insert_compute_pipeline`].
+///
+/// See also [`RenderPipelineBuilder`]
 pub struct ComputePipelineBuilder<'a> {
     renderer: &'a mut Renderer,
     shader: naga::Module,
@@ -1415,6 +1545,10 @@ fn vertex_format_from_type(inner: &naga::TypeInner) -> wgpu::VertexFormat {
     }
 }
 
+/// Scan an expression for global variable usages.
+///
+/// Used internally to determine which shader stages a bind group must be visible to in a
+/// `RenderPipeline` layout.
 fn scan_expression(
     expression: &naga::Expression,
     global_stages: &mut FxHashMap<naga::Handle<naga::GlobalVariable>, wgpu::ShaderStages>,
