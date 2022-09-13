@@ -153,33 +153,6 @@ impl PolystripDevice {
     }
 }
 
-pub enum OutputTexture {
-    Surface {
-        texture: wgpu::SurfaceTexture,
-        view: wgpu::TextureView,
-    },
-    View(wgpu::TextureView),
-}
-
-impl OutputTexture {
-    pub fn view(&self) -> &wgpu::TextureView {
-        match self {
-            Self::Surface { view, .. } => view,
-            Self::View(view) => view,
-        }
-    }
-
-    pub fn present(self) {
-        if let Self::Surface { texture, .. } = self {
-            texture.present()
-        }
-    }
-}
-
-pub trait RenderTarget {
-    fn get_current_view(&mut self) -> OutputTexture;
-}
-
 /// A `wgpu::Surface` configured for rendering.
 pub struct WindowTarget {
     device: Arc<wgpu::Device>,
@@ -228,6 +201,12 @@ impl WindowTarget {
     /// Resize and reconfigure the surface.
     ///
     /// This should be called in your window's event loop every time the window is resized.
+    ///
+    /// ```
+    /// Event::WindowEvent { event: WindowEvent::Resized(new_size), .. } => {
+    ///     window.resize(new_size.into());
+    /// }
+    /// ```
     pub fn resize(&mut self, (width, height): (u32, u32)) {
         self.config.width = width;
         self.config.height = height;
@@ -241,13 +220,15 @@ impl WindowTarget {
         self.config.present_mode = present_mode;
         self.surface.configure(&self.device, &self.config);
     }
-}
 
-impl RenderTarget for WindowTarget {
-    fn get_current_view(&mut self) -> OutputTexture {
-        let texture = self.surface.get_current_texture().unwrap();
-        let view = texture.texture.create_view(&Default::default());
-        OutputTexture::Surface { texture, view }
+    /// Returns the next texture to be presented by the swapchain for drawing.
+    ///
+    /// If a SurfaceTexture referencing this surface is alive when the swapchain is recreated,
+    /// recreating the swapchain will panic.
+    ///
+    /// See [`wgpu::Surface::get_current_texture`] for more details
+    pub fn get_current_texture(&self) -> Result<wgpu::SurfaceTexture, wgpu::SurfaceError> {
+        self.surface.get_current_texture()
     }
 }
 
@@ -285,11 +266,6 @@ impl<T> Hash for Handle<T> {
     }
 }
 
-impl Handle<wgpu::TextureView> {
-    /// The render target of the currently executing [`GraphNode`](graph::GraphNode)
-    pub const RENDER_TARGET: Handle<wgpu::TextureView> = Handle { id: usize::MAX, _marker: std::marker::PhantomData };
-}
-
 /// Core resource manager for render resources.
 ///
 /// Most interactions with `polystrip` will involve a `Renderer`, which enables the library to keep
@@ -300,7 +276,7 @@ pub struct Renderer {
     queue: Arc<wgpu::Queue>,
     buffers: FxHashMap<usize, wgpu::Buffer>,
     temp_buffers: FxHashMap<wgpu_types::BufferDescriptor<u64>, usize>,
-    textures: FxHashMap<usize, (wgpu::Texture, wgpu::TextureView)>,
+    textures: FxHashMap<usize, (Option<wgpu::Texture>, wgpu::TextureView)>,
     temp_textures: FxHashMap<wgpu_types::TextureDescriptor<u64>, usize>,
     samplers: FxHashMap<usize, wgpu::Sampler>,
     bind_group_layout_descriptors: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, usize>,
@@ -354,7 +330,10 @@ impl Renderer {
     pub fn insert_buffer(&mut self, buffer: wgpu::Buffer) -> Handle<wgpu::Buffer> {
         let id = self.next_buffer_id();
         self.buffers.insert(id, buffer);
-        Handle::<wgpu::Buffer> { id, _marker: std::marker::PhantomData }
+        Handle::<wgpu::Buffer> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Insert an existing `Texture` and corresponding `TextureView` into the renderer.
@@ -366,8 +345,11 @@ impl Renderer {
         view: wgpu::TextureView,
     ) -> Handle<wgpu::TextureView> {
         let id = self.next_texture_id();
-        self.textures.insert(id, (texture, view));
-        Handle::<wgpu::TextureView> { id, _marker: std::marker::PhantomData }
+        self.textures.insert(id, (Some(texture), view));
+        Handle::<wgpu::TextureView> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Insert an existing `Sampler` into the renderer.
@@ -376,7 +358,10 @@ impl Renderer {
     pub fn insert_sampler(&mut self, sampler: wgpu::Sampler) -> Handle<wgpu::Sampler> {
         let id = self.next_sampler_id();
         self.samplers.insert(id, sampler);
-        Handle::<wgpu::Sampler> { id, _marker: std::marker::PhantomData }
+        Handle::<wgpu::Sampler> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Insert an existing `BindGroupLayout` into the renderer.
@@ -388,7 +373,10 @@ impl Renderer {
     ) -> Handle<wgpu::BindGroupLayout> {
         let id = self.next_bind_group_layout_id();
         self.bind_group_layouts.insert(id, layout);
-        Handle::<wgpu::BindGroupLayout> { id, _marker: std::marker::PhantomData }
+        Handle::<wgpu::BindGroupLayout> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Insert an existing `RenderPipeline` into the renderer.
@@ -399,7 +387,10 @@ impl Renderer {
     pub fn insert_render_pipeline(&mut self, pipeline: RenderPipeline) -> Handle<RenderPipeline> {
         let id = self.next_render_pipeline_id();
         self.render_pipelines.insert(id, pipeline);
-        Handle::<RenderPipeline> { id, _marker: std::marker::PhantomData }
+        Handle::<RenderPipeline> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Insert an existing `ComputePipeline` into the renderer.
@@ -407,10 +398,16 @@ impl Renderer {
     /// Pipeline must have been created from the same device as this `Renderer`, and the contained
     /// BindGroupLayouts must correspond with the PipelineLayout from which the pipeline was
     /// created.
-    pub fn insert_compute_pipeline(&mut self, pipeline: ComputePipeline) -> Handle<ComputePipeline> {
+    pub fn insert_compute_pipeline(
+        &mut self,
+        pipeline: ComputePipeline,
+    ) -> Handle<ComputePipeline> {
         let id = self.next_compute_pipeline_id();
         self.compute_pipelines.insert(id, pipeline);
-        Handle::<ComputePipeline> { id, _marker: std::marker::PhantomData }
+        Handle::<ComputePipeline> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Retrieve a `Buffer` from this renderer.
@@ -425,9 +422,12 @@ impl Renderer {
     ///
     /// # Panics
     /// Panics if the associated resource no longer exists.
-    pub fn get_texture(&self, handle: Handle<wgpu::TextureView>) -> (&wgpu::Texture, &wgpu::TextureView) {
+    pub fn get_texture(
+        &self,
+        handle: Handle<wgpu::TextureView>,
+    ) -> (Option<&wgpu::Texture>, &wgpu::TextureView) {
         let (texture, view) = self.textures.get(&handle.id).unwrap();
-        (texture, view)
+        (texture.as_ref(), view)
     }
 
     /// Retrieve a `Sampler` from this renderer.
@@ -442,7 +442,10 @@ impl Renderer {
     ///
     /// # Panics
     /// Panics if the associated resource no longer exists.
-    pub fn get_bind_group_layout(&self, handle: Handle<wgpu::BindGroupLayout>) -> &wgpu::BindGroupLayout {
+    pub fn get_bind_group_layout(
+        &self,
+        handle: Handle<wgpu::BindGroupLayout>,
+    ) -> &wgpu::BindGroupLayout {
         self.bind_group_layouts.get(&handle.id).unwrap()
     }
 
@@ -482,7 +485,10 @@ impl Renderer {
     ) -> Handle<wgpu::BindGroupLayout> {
         let layout = layout.into();
         if let Some(index) = self.bind_group_layout_descriptors.get(layout.as_ref()) {
-            return Handle::<wgpu::BindGroupLayout> { id: *index, _marker: std::marker::PhantomData };
+            return Handle::<wgpu::BindGroupLayout> {
+                id: *index,
+                _marker: std::marker::PhantomData,
+            };
         }
         let id = self.next_bind_group_layout_id();
         let bind_group_layout =
@@ -494,7 +500,10 @@ impl Renderer {
         self.bind_group_layouts.insert(id, bind_group_layout);
         self.bind_group_layout_descriptors
             .insert(layout.into_owned(), id);
-        Handle::<wgpu::BindGroupLayout> { id, _marker: std::marker::PhantomData }
+        Handle::<wgpu::BindGroupLayout> {
+            id,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Create a new `BindGroup` from the specified set of resources.
@@ -519,28 +528,40 @@ impl Renderer {
     ) -> Handle<wgpu::BindGroup> {
         let key = resources.into_entries();
         match self.bind_group_descriptors.get(&key) {
-            Some(&id) => Handle::<wgpu::BindGroup> { id, _marker: std::marker::PhantomData },
+            Some(&id) => Handle::<wgpu::BindGroup> {
+                id,
+                _marker: std::marker::PhantomData,
+            },
             None => {
                 let id = self.insert_bind_group(layout, key.clone());
                 self.bind_group_descriptors.insert(key, id);
-                Handle::<wgpu::BindGroup> { id, _marker: std::marker::PhantomData }
+                Handle::<wgpu::BindGroup> {
+                    id,
+                    _marker: std::marker::PhantomData,
+                }
             }
         }
     }
-    
+
     /// Create a new `RenderPipeline` from wgsl source code.
     ///
     /// Bind group layouts and vertex attributes will be inferred from the shader source code. See
     /// [`RenderPipelineBuilder`] for more details.
-    pub fn add_render_pipeline_from_wgsl(&mut self, shader_source: &str) -> RenderPipelineBuilder<'_> {
+    pub fn add_render_pipeline_from_wgsl(
+        &mut self,
+        shader_source: &str,
+    ) -> RenderPipelineBuilder<'_> {
         RenderPipelineBuilder::from_wgsl(self, shader_source)
     }
-    
+
     /// Create a new `ComputePipeline` from wgsl source code.
     ///
     /// Bind group layouts will be inferred from the shader source code. See
     /// [`ComputePipelineBuilder`] for more details.
-    pub fn add_compute_pipeline_from_wgsl(&mut self, shader_source: &str) -> ComputePipelineBuilder<'_> {
+    pub fn add_compute_pipeline_from_wgsl(
+        &mut self,
+        shader_source: &str,
+    ) -> ComputePipelineBuilder<'_> {
         ComputePipelineBuilder::from_wgsl(self, shader_source)
     }
 }
@@ -549,13 +570,18 @@ impl Renderer {
     /// Schedule a data write into `buffer` starting at `offset`.
     ///
     /// See [`wgpu::Queue::write_buffer`] for more details.
-    pub fn write_buffer(&self, handle: Handle<wgpu::Buffer>, offset: wgpu::BufferAddress, data: &[u8]) {
+    pub fn write_buffer(
+        &self,
+        handle: Handle<wgpu::Buffer>,
+        offset: wgpu::BufferAddress,
+        data: &[u8],
+    ) {
         self.queue
             .write_buffer(self.get_buffer(handle), offset, data)
     }
 
     /// Schedule a data write into `buffer` starting at `offset` via the returned [`QueueWriteBufferView`][wgpu::QueueWriteBufferView].
-    /// 
+    ///
     /// See [`wgpu::Queue::write_buffer_with`] for more details.
     pub fn write_buffer_with(
         &self,
@@ -611,7 +637,7 @@ impl Renderer {
         self.next_render_pipeline += 1;
         id
     }
-    
+
     fn next_compute_pipeline_id(&mut self) -> usize {
         let id = self.next_compute_pipeline;
         self.next_compute_pipeline += 1;
@@ -818,7 +844,8 @@ impl RenderPassTarget {
             }
         }
 
-        self.depth.as_ref().map(|target| target.handle) == other.depth.as_ref().map(|target| target.handle)
+        self.depth.as_ref().map(|target| target.handle)
+            == other.depth.as_ref().map(|target| target.handle)
     }
 }
 
@@ -1141,7 +1168,11 @@ impl<'a> RenderPipelineBuilder<'a> {
     }
 
     /// Override the automatically-derived bind group layout specified by `index`.
-    pub fn with_bind_group_layout(mut self, index: usize, handle: Handle<wgpu::BindGroupLayout>) -> Self {
+    pub fn with_bind_group_layout(
+        mut self,
+        index: usize,
+        handle: Handle<wgpu::BindGroupLayout>,
+    ) -> Self {
         if self.bind_group_layouts.len() <= index {
             self.bind_group_layouts.resize_with(index + 1, || None);
         }
@@ -1357,7 +1388,11 @@ impl<'a> ComputePipelineBuilder<'a> {
     }
 
     /// Override the automatically-derived bind group layout specified by `index`.
-    pub fn with_bind_group_layout(mut self, index: usize, handle: Handle<wgpu::BindGroupLayout>) -> Self {
+    pub fn with_bind_group_layout(
+        mut self,
+        index: usize,
+        handle: Handle<wgpu::BindGroupLayout>,
+    ) -> Self {
         if self.bind_group_layouts.len() <= index {
             self.bind_group_layouts.resize_with(index + 1, || None);
         }
@@ -1369,11 +1404,14 @@ impl<'a> ComputePipelineBuilder<'a> {
     pub fn build(self) -> Handle<ComputePipeline> {
         let entry = self.shader.entry_points[self.entry].name.clone();
 
-        let module = self.renderer.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Naga(self.shader),
-        });
-        
+        let module = self
+            .renderer
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Naga(self.shader),
+            });
+
         let bind_group_layouts = self
             .bind_group_layouts
             .into_iter()
@@ -1399,12 +1437,15 @@ impl<'a> ComputePipelineBuilder<'a> {
                     push_constant_ranges: &[],
                 });
 
-        let pipeline = self.renderer.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: &entry,
-        });
+        let pipeline =
+            self.renderer
+                .device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(&pipeline_layout),
+                    module: &module,
+                    entry_point: &entry,
+                });
 
         self.renderer.insert_compute_pipeline(ComputePipeline {
             pipeline,

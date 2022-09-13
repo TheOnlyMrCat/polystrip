@@ -33,44 +33,8 @@
 use fxhash::FxHashSet;
 
 use crate::{
-    ComputePipeline, Handle, IntoBindGroupResources, RenderPassTarget, RenderPipeline,
-    RenderTarget, Renderer,
+    ComputePipeline, Handle, IntoBindGroupResources, RenderPassTarget, RenderPipeline, Renderer,
 };
-
-/// Resources accessible to a [`GraphNode`] while it is being executed.
-///
-/// Contains a reference to the base graph's [`Renderer`], as well as to the output texture.
-pub struct RenderPassResources<'pass> {
-    resources: &'pass Renderer,
-    output_texture: &'pass wgpu::TextureView,
-}
-
-impl<'pass> RenderPassResources<'pass> {
-    pub fn get_buffer(&self, handle: Handle<wgpu::Buffer>) -> &'pass wgpu::Buffer {
-        self.resources.buffers.get(&handle.id).unwrap()
-    }
-
-    pub fn get_texture(&self, handle: Handle<wgpu::TextureView>) -> &'pass wgpu::TextureView {
-        if handle.id == usize::MAX {
-            self.output_texture
-        } else {
-            let (_, view) = self.resources.textures.get(&handle.id).unwrap();
-            view
-        }
-    }
-
-    pub fn get_bind_group(&self, handle: Handle<wgpu::BindGroup>) -> &'pass wgpu::BindGroup {
-        &self.resources.bind_groups.get(&handle.id).unwrap().0
-    }
-
-    pub fn get_render_pipeline(&self, handle: Handle<RenderPipeline>) -> &'pass RenderPipeline {
-        self.resources.render_pipelines.get(&handle.id).unwrap()
-    }
-
-    pub fn get_compute_pipeline(&self, handle: Handle<ComputePipeline>) -> &'pass ComputePipeline {
-        self.resources.compute_pipelines.get(&handle.id).unwrap()
-    }
-}
 
 /// A simple, single-use render graph
 ///
@@ -79,6 +43,7 @@ pub struct RenderGraph<'r, 'node> {
     renderer: &'r mut Renderer,
     intermediate_buffers: FxHashSet<Handle<wgpu::Buffer>>,
     intermediate_textures: FxHashSet<Handle<wgpu::TextureView>>,
+    temporary_textures: FxHashSet<Handle<wgpu::TextureView>>,
     nodes: Vec<Box<dyn GraphNodeImpl<'node> + 'node>>,
 }
 
@@ -89,6 +54,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             renderer,
             intermediate_buffers: FxHashSet::default(),
             intermediate_textures: FxHashSet::default(),
+            temporary_textures: FxHashSet::default(),
             nodes: Vec::new(),
         }
     }
@@ -190,7 +156,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                 let texture = self.renderer.device.create_texture(&descriptor);
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let id = self.renderer.next_texture_id();
-                let old = self.renderer.textures.insert(id, (texture, view));
+                let old = self.renderer.textures.insert(id, (Some(texture), view));
                 debug_assert!(old.is_none());
                 self.intermediate_textures
                     .insert(Handle::<wgpu::TextureView> {
@@ -203,6 +169,33 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                     _marker: std::marker::PhantomData,
                 }
             }
+        }
+    }
+
+    /// Add a temporary texture view to the graph.
+    ///
+    /// The returned handle will be deallocated when this graph is dropped. This method is mainly
+    /// useful to allow a texture view created from a [`wgpu::SurfaceTexture`] to be used as a
+    /// render target.
+    ///
+    /// ```ignore
+    /// graph.add_temporary_texture_view(
+    ///     surface_texture.texture.create_view(Default::default())
+    /// );
+    /// ```
+    pub fn add_temporary_texture_view(
+        &mut self,
+        view: wgpu::TextureView,
+    ) -> Handle<wgpu::TextureView> {
+        let id = self.renderer.next_texture_id();
+        self.renderer.textures.insert(id, (None, view));
+        self.temporary_textures.insert(Handle::<wgpu::TextureView> {
+            id,
+            _marker: std::marker::PhantomData,
+        });
+        Handle::<wgpu::TextureView> {
+            id,
+            _marker: std::marker::PhantomData,
         }
     }
 
@@ -278,14 +271,9 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
     /// Nodes are executed in the order they were added. Nodes may be culled if their output cannot
     /// be determined to be used.
     ///
-    /// [`Handle<wgpu::TextureView>::RENDER_TARGET`][Handle::RENDER_TARGET] will refer to the
-    /// supplied render target for all accesses by this render graph's nodes.
-    ///
-    /// Any intermediate resources that were not used after executing (resources used by culled
-    /// nodes are treated as not used) will be deallocated after executing.
-    pub fn execute(self, target: &mut impl RenderTarget) {
-        let output = target.get_current_view();
-
+    /// Any intermediate resources that were not added to this graph, and any temporary resources that
+    /// were added to this graph will be deallocated after executing.
+    pub fn execute(self) {
         let mut encoder =
             self.renderer
                 .device
@@ -306,7 +294,6 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
 
         let mut used_buffers = FxHashSet::default();
         let mut used_textures = FxHashSet::default();
-        used_textures.insert(Handle::RENDER_TARGET);
         let mut pruned_nodes = Vec::with_capacity(self.nodes.len());
         for mut node in self.nodes.into_iter().rev() {
             if node.cull(&mut used_buffers, &mut used_textures) {
@@ -348,10 +335,6 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
         for group in pruned_nodes.into_iter().rev() {
             match group.compatibility {
                 PassState::RenderPass(target) => {
-                    let resources = RenderPassResources {
-                        resources: self.renderer,
-                        output_texture: output.view(),
-                    };
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: None,
                         color_attachments: &target
@@ -359,10 +342,10 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             .into_iter()
                             .map(|target| {
                                 Some(wgpu::RenderPassColorAttachment {
-                                    view: resources.get_texture(target.handle),
+                                    view: self.renderer.get_texture(target.handle).1,
                                     resolve_target: target
                                         .resolve
-                                        .map(|handle| resources.get_texture(handle)),
+                                        .map(|handle| self.renderer.get_texture(handle).1),
                                     ops: wgpu::Operations {
                                         load: if cleared_views.insert(target.handle) {
                                             wgpu::LoadOp::Clear(target.clear)
@@ -376,7 +359,7 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             .collect::<Vec<_>>(),
                         depth_stencil_attachment: target.depth.map(|target| {
                             wgpu::RenderPassDepthStencilAttachment {
-                                view: resources.get_texture(target.handle),
+                                view: self.renderer.get_texture(target.handle).1,
                                 depth_ops: target.depth_clear.map(|value| wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(value),
                                     store: true,
@@ -397,18 +380,20 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             } => (pipeline, bind_groups),
                             _ => unreachable!(),
                         };
-                        pass.set_pipeline(&resources.get_render_pipeline(pipeline_handle).pipeline);
+                        pass.set_pipeline(
+                            &self.renderer.get_render_pipeline(pipeline_handle).pipeline,
+                        );
                         for (i, handle) in bind_groups.into_iter().enumerate() {
-                            pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
+                            pass.set_bind_group(
+                                i as u32,
+                                self.renderer.get_bind_group(handle),
+                                &[],
+                            );
                         }
-                        node.exec(EncoderOrPass::RenderPass(&mut pass), &resources);
+                        node.exec(EncoderOrPass::RenderPass(&mut pass), self.renderer);
                     }
                 }
                 PassState::ComputePass => {
-                    let resources = RenderPassResources {
-                        resources: self.renderer,
-                        output_texture: output.view(),
-                    };
                     let mut pass =
                         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
                     for mut node in group.nodes.into_iter().rev() {
@@ -420,28 +405,27 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
                             _ => unreachable!(),
                         };
                         pass.set_pipeline(
-                            &resources.get_compute_pipeline(pipeline_handle).pipeline,
+                            &self.renderer.get_compute_pipeline(pipeline_handle).pipeline,
                         );
                         for (i, handle) in bind_groups.into_iter().enumerate() {
-                            pass.set_bind_group(i as u32, resources.get_bind_group(handle), &[]);
+                            pass.set_bind_group(
+                                i as u32,
+                                self.renderer.get_bind_group(handle),
+                                &[],
+                            );
                         }
-                        node.exec(EncoderOrPass::ComputePass(&mut pass), &resources);
+                        node.exec(EncoderOrPass::ComputePass(&mut pass), self.renderer);
                     }
                 }
                 PassState::Encoder => {
-                    let resources = RenderPassResources {
-                        resources: self.renderer,
-                        output_texture: output.view(),
-                    };
                     for mut node in group.nodes.into_iter().rev() {
-                        node.exec(EncoderOrPass::Encoder(&mut encoder), &resources);
+                        node.exec(EncoderOrPass::Encoder(&mut encoder), self.renderer);
                     }
                 }
             }
         }
 
         self.renderer.queue.submit([encoder.finish()]);
-        output.present();
 
         self.renderer.temp_buffers.retain(|_, &mut id| {
             let pred = self.intermediate_buffers.contains(&Handle::<wgpu::Buffer> {
@@ -465,6 +449,10 @@ impl<'r, 'node> RenderGraph<'r, 'node> {
             }
             pred
         });
+
+        for texture in self.temporary_textures {
+            self.renderer.textures.remove(&texture.id);
+        }
     }
 }
 
@@ -1201,11 +1189,8 @@ trait GraphNodeImpl<'node> {
         used_buffers: &mut FxHashSet<Handle<wgpu::Buffer>>,
         used_textures: &mut FxHashSet<Handle<wgpu::TextureView>>,
     ) -> bool;
-    fn exec<'pass>(
-        &mut self,
-        encoder_or_pass: EncoderOrPass<'_, 'pass>,
-        resources: &'pass RenderPassResources,
-    ) where
+    fn exec<'pass>(&mut self, encoder_or_pass: EncoderOrPass<'_, 'pass>, renderer: &'pass Renderer)
+    where
         'node: 'pass;
 }
 
@@ -1242,11 +1227,8 @@ impl<
         }
     }
 
-    fn exec<'pass>(
-        &mut self,
-        encoder_or_pass: EncoderOrPass<'_, 'pass>,
-        renderer: &'pass RenderPassResources,
-    ) where
+    fn exec<'pass>(&mut self, encoder_or_pass: EncoderOrPass<'_, 'pass>, renderer: &'pass Renderer)
+    where
         'node: 'pass,
     {
         let inner = self.inner.take().unwrap();
@@ -1285,16 +1267,13 @@ impl<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough + 'node
         true //TODO!
     }
 
-    fn exec<'pass>(
-        &mut self,
-        encoder_or_pass: EncoderOrPass<'_, 'pass>,
-        resources: &'pass RenderPassResources,
-    ) where
+    fn exec<'pass>(&mut self, encoder_or_pass: EncoderOrPass<'_, 'pass>, renderer: &'pass Renderer)
+    where
         'node: 'pass,
     {
         let inner = self.inner.take().unwrap();
         let pass = encoder_or_pass.unwrap_render_pass();
-        (inner.exec)(pass, inner.buffers.fetch_resources(resources), unsafe {
+        (inner.exec)(pass, inner.buffers.fetch_resources(renderer), unsafe {
             // SAFETY: As above
             inner.passthrough.reborrow()
         })
@@ -1320,16 +1299,13 @@ impl<'node, B: ResourceArray<Handle<wgpu::Buffer>>, P: RenderPassthrough + 'node
         true //TODO!
     }
 
-    fn exec<'pass>(
-        &mut self,
-        encoder_or_pass: EncoderOrPass<'_, 'pass>,
-        resources: &'pass RenderPassResources,
-    ) where
+    fn exec<'pass>(&mut self, encoder_or_pass: EncoderOrPass<'_, 'pass>, renderer: &'pass Renderer)
+    where
         'node: 'pass,
     {
         let inner = self.inner.take().unwrap();
         let pass = encoder_or_pass.unwrap_compute_pass();
-        (inner.exec)(pass, inner.buffers.fetch_resources(resources), unsafe {
+        (inner.exec)(pass, inner.buffers.fetch_resources(renderer), unsafe {
             // SAFETY: As above
             inner.passthrough.reborrow()
         })
@@ -1461,30 +1437,30 @@ impl_extend_tuple!(A, B, C, D, E, F, G, H, I, J, K, L,);
 pub trait RenderResource {
     type Resource<'a>;
 
-    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a>;
+    fn fetch_resource(self, renderer: &Renderer) -> Self::Resource<'_>;
 }
 
 impl RenderResource for Handle<wgpu::Buffer> {
     type Resource<'a> = &'a wgpu::Buffer;
 
-    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
-        resources.get_buffer(self)
+    fn fetch_resource(self, renderer: &Renderer) -> Self::Resource<'_> {
+        renderer.get_buffer(self)
     }
 }
 
 impl RenderResource for Handle<wgpu::TextureView> {
     type Resource<'a> = &'a wgpu::TextureView;
 
-    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
-        resources.get_texture(self)
+    fn fetch_resource(self, renderer: &Renderer) -> Self::Resource<'_> {
+        renderer.get_texture(self).1
     }
 }
 
 impl RenderResource for Handle<wgpu::BindGroup> {
     type Resource<'a> = &'a wgpu::BindGroup;
 
-    fn fetch_resource<'a>(self, resources: &'a RenderPassResources) -> Self::Resource<'a> {
-        resources.get_bind_group(self)
+    fn fetch_resource(self, renderer: &Renderer) -> Self::Resource<'_> {
+        renderer.get_bind_group(self)
     }
 }
 
@@ -1494,7 +1470,7 @@ pub trait ResourceArray<T: RenderResource>: Sealed {
     type ExtendOne;
 
     fn as_slice(&self) -> &[T];
-    fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a>;
+    fn fetch_resources(self, renderer: &Renderer) -> Self::Fetched<'_>;
     fn extend_one(self, _: T) -> Self::ExtendOne;
 }
 
@@ -1508,7 +1484,7 @@ impl<T: RenderResource> ResourceArray<T> for [T; 0] {
         self
     }
 
-    fn fetch_resources<'a>(self, _resources: &'a RenderPassResources) -> Self::Fetched<'a> {
+    fn fetch_resources(self, _renderer: &Renderer) -> Self::Fetched<'_> {
         []
     }
 
@@ -1536,8 +1512,8 @@ macro_rules! impl_resource_array {
                 self
             }
 
-            fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a> {
-                self.map(|element| <T as RenderResource>::fetch_resource(element, resources))
+            fn fetch_resources<'a>(self, renderer: &'a Renderer) -> Self::Fetched<'a> {
+                self.map(|element| <T as RenderResource>::fetch_resource(element, renderer))
             }
 
             fn extend_one(self, element: T) -> Self::ExtendOne {
@@ -1556,8 +1532,8 @@ macro_rules! impl_resource_array {
                 self
             }
 
-            fn fetch_resources<'a>(self, resources: &'a RenderPassResources) -> Self::Fetched<'a> {
-                self.map(|element| <T as RenderResource>::fetch_resource(element, resources))
+            fn fetch_resources<'a>(self, renderer: &'a Renderer) -> Self::Fetched<'a> {
+                self.map(|element| <T as RenderResource>::fetch_resource(element, renderer))
             }
 
             fn extend_one(self, element: T) -> Self::ExtendOne {

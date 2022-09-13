@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{Handle, PolystripDevice, RenderPassTarget, Renderer, RenderPipeline, ComputePipeline};
+use polystrip::{
+    ComputePipeline, Handle, PolystripDevice, RenderPassTarget, RenderPipeline, Renderer,
+};
 use time::{OffsetDateTime, UtcOffset};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
@@ -66,8 +68,13 @@ fn main() {
 
         Event::MainEventsCleared => {
             let mut graph = RenderGraph::new(&mut renderer);
-            pipelines.render_to(&mut graph);
-            graph.execute(&mut window);
+            let surface_texture = window.get_current_texture().unwrap();
+            let surface_view = graph.add_temporary_texture_view(
+                surface_texture.texture.create_view(&Default::default()),
+            );
+            pipelines.render_to(&mut graph, surface_view);
+            graph.execute();
+            surface_texture.present();
         }
         _ => {}
     })
@@ -284,7 +291,11 @@ impl Pipelines {
         renderer.write_buffer(self.camera_buffer, 0, bytemuck::cast_slice(&matrix));
     }
 
-    fn render_to<'node>(&'node self, graph: &mut RenderGraph<'_, 'node>) {
+    fn render_to<'node>(
+        &'node self,
+        graph: &mut RenderGraph<'_, 'node>,
+        target: Handle<wgpu::TextureView>,
+    ) {
         let (hr, min, sec, ms) = OffsetDateTime::now_utc()
             .to_offset(local_timezone())
             .to_hms_milli();
@@ -425,7 +436,7 @@ impl Pipelines {
                     RenderPassTarget::new()
                         .with_msaa_color(
                             resolve_texture,
-                            Handle::RENDER_TARGET,
+                            target,
                             wgpu::Color {
                                 r: 0.01,
                                 g: 0.01,
@@ -454,7 +465,7 @@ impl Pipelines {
                 RenderPassTarget::new()
                     .with_msaa_color(
                         resolve_texture,
-                        Handle::RENDER_TARGET,
+                        target,
                         wgpu::Color {
                             r: 0.01,
                             g: 0.01,

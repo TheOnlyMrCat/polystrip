@@ -1,6 +1,6 @@
 use pollster::FutureExt;
 use polystrip::graph::RenderGraph;
-use polystrip::{Handle, PolystripDevice, RenderPassTarget};
+use polystrip::{PolystripDevice, RenderPassTarget};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
@@ -22,7 +22,9 @@ fn main() {
     };
 
     let mut renderer = wgpu_device.create_renderer();
-    let pipeline = renderer.add_render_pipeline_from_wgsl(SHADER_SOURCE).build();
+    let pipeline = renderer
+        .add_render_pipeline_from_wgsl(SHADER_SOURCE)
+        .build();
 
     el.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -39,14 +41,18 @@ fn main() {
         }
         Event::MainEventsCleared => {
             let mut graph = RenderGraph::new(&mut renderer);
+            let surface_texture = window.get_current_texture().unwrap();
+            let surface_view = graph.add_temporary_texture_view(
+                surface_texture.texture.create_view(&Default::default()),
+            );
             graph.add_render_node(pipeline).build(
-                RenderPassTarget::new()
-                    .with_color(Handle::RENDER_TARGET, wgpu::Color::BLACK),
+                RenderPassTarget::new().with_color(surface_view, wgpu::Color::BLACK),
                 |pass, [], ()| {
                     pass.draw(0..3, 0..1);
                 },
             );
-            graph.execute(&mut window);
+            graph.execute();
+            surface_texture.present();
         }
         _ => {}
     })
