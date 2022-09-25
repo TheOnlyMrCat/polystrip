@@ -740,6 +740,7 @@ where
     /// ```text
     /// fn exec(
     ///     encoder: &'b mut wgpu::CommandEncoder,
+    ///     renderer: &'pass Renderer,
     ///     buffers: [&'pass wgpu::Buffer; _],
     ///     textures: [&'pass wgpu::TextureView; _],
     ///     bind_groups: [&'pass wgpu::BindGroup; _],
@@ -753,6 +754,7 @@ where
     where
         F: for<'b, 'pass> FnOnce(
                 &'b mut wgpu::CommandEncoder,
+                &'pass Renderer,
                 <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <T as ResourceArray<Handle<wgpu::TextureView>>>::Fetched<'pass>,
                 <G as ResourceArray<Handle<wgpu::BindGroup>>>::Fetched<'pass>,
@@ -768,17 +770,7 @@ where
                 textures: self.textures,
                 passthrough: self.passthrough,
                 bind_groups: self.bind_groups,
-                exec: Box::new(
-                    move |encoder, buffers, textures, bind_groups, passthrough| {
-                        (exec)(
-                            encoder.unwrap_encoder(),
-                            buffers,
-                            textures,
-                            bind_groups,
-                            passthrough,
-                        )
-                    },
-                ),
+                exec: Box::new(exec),
             }),
         }));
     }
@@ -852,7 +844,8 @@ struct EncoderGraphNodeInner<
     passthrough: P,
     exec: Box<
         dyn for<'b, 'pass> FnOnce(
-                EncoderOrPass<'b, 'pass>,
+                &'b mut wgpu::CommandEncoder,
+                &'pass Renderer,
                 <B as ResourceArray<Handle<wgpu::Buffer>>>::Fetched<'pass>,
                 <T as ResourceArray<Handle<wgpu::TextureView>>>::Fetched<'pass>,
                 <G as ResourceArray<Handle<wgpu::BindGroup>>>::Fetched<'pass>,
@@ -1233,7 +1226,8 @@ impl<
     {
         let inner = self.inner.take().unwrap();
         (inner.exec)(
-            encoder_or_pass,
+            encoder_or_pass.unwrap_encoder(),
+            renderer,
             inner.buffers.fetch_resources(renderer),
             inner.textures.fetch_resources(renderer),
             inner.bind_groups.fetch_resources(renderer),

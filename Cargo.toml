@@ -27,3 +27,4 @@ pollster = "0.2.5"
 time = { version = "0.3.7", features = ["local-offset"] }
 bytemuck = { version = "1.10.0", features = ["derive"] }
 libc = "0.2.126"
+rand = "0.8.5"
