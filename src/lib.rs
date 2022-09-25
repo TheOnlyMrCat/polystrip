@@ -23,7 +23,6 @@
 //! operation forces you to construct or manipulate `wgpu` resources with `polystrip` methods; a
 //! workaround is always possible.
 
-#![feature(generic_associated_types)] // Can also experiment with #![feature(generic_const_exprs)]
 #![allow(clippy::type_complexity)]
 
 pub mod graph;
