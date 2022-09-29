@@ -9,11 +9,6 @@ repository = "https://github.com/TheOnlyMrCat/polystrip"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 
-[features]
-default = ["gon"]
-gon = []
-tui = []
-
 [dependencies]
 wgpu = { version = "0.13.1", features = ["naga"] }
 wgpu-types = "0.13.0"
