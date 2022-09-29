@@ -1429,10 +1429,13 @@ impl_extend_tuple!(A, B, C, D, E, F, G, H, I, J, K, L,);
 
 /// (*internal*) A [`Handle<T>`] to be resolved upon node execution.
 pub trait RenderResource {
+pub trait RenderResource: Sealed {
     type Resource<'a>;
 
     fn fetch_resource(self, renderer: &Renderer) -> Self::Resource<'_>;
 }
+
+impl<T> Sealed for Handle<T> {}
 
 impl RenderResource for Handle<wgpu::Buffer> {
     type Resource<'a> = &'a wgpu::Buffer;
