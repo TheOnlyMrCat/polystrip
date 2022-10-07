@@ -101,7 +101,7 @@ impl PolystripDevice {
     /// `handle` must be a valid object to create a [`wgpu::Surface`] upon and must remain valid for the lifetime of the
     /// returned `WindowTarget`
     pub async unsafe fn new_from_env_with_window(
-        handle: &impl raw_window_handle::HasRawWindowHandle,
+        handle: &(impl raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle),
         (width, height): (u32, u32),
         present_mode: wgpu::PresentMode,
     ) -> (PolystripDevice, WindowTarget) {
@@ -130,6 +130,7 @@ impl PolystripDevice {
             width,
             height,
             present_mode,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
         };
         surface.configure(&device, &config);
         let target = WindowTarget::from_wgpu(device.clone(), surface, config);
@@ -167,7 +168,7 @@ impl WindowTarget {
     /// returned `WindowTarget`
     pub unsafe fn new(
         device: &PolystripDevice,
-        handle: &impl raw_window_handle::HasRawWindowHandle,
+        handle: &(impl raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle),
         (width, height): (u32, u32),
         present_mode: wgpu::PresentMode,
     ) -> WindowTarget {
@@ -178,6 +179,7 @@ impl WindowTarget {
             width,
             height,
             present_mode,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
         };
         Self::from_wgpu(device.device.clone(), surface, config)
     }
@@ -1194,7 +1196,7 @@ impl<'a> RenderPipelineBuilder<'a> {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(self.shader),
+                source: wgpu::ShaderSource::Naga(Cow::Owned(self.shader)),
             });
 
         let bind_group_layouts = self
@@ -1351,7 +1353,7 @@ impl<'a> ComputePipelineBuilder<'a> {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Naga(self.shader),
+                source: wgpu::ShaderSource::Naga(Cow::Owned(self.shader)),
             });
 
         let bind_group_layouts = self
