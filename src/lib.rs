@@ -834,7 +834,7 @@ impl RenderPassTarget {
 impl RenderPassTarget {
     /// Check whether this target can be combined with the other target.
     ///
-    /// This is used internally to combine compatible [`RenderGraphNode`](graph::RenderGraphNode)s
+    /// This is used internally to combine compatible [`RenderNode`](graph::RenderNodeBuilder)s
     /// into the same `wgpu::RenderPass`.
     pub fn is_compatible_with(&self, other: &RenderPassTarget) -> bool {
         for (left, right) in self.color.iter().zip(other.color.iter()) {
@@ -1144,25 +1144,33 @@ impl<'a> RenderPipelineBuilder<'a> {
         self
     }
 
-    /// Set the step mode of the vertex buffer.
+    /// Set the step mode of the input vertex buffer.
+    ///
+    /// By default, this is set to `VertexStepMode::Vertex`.
     pub fn with_vertex_step_mode(mut self, step_mode: wgpu::VertexStepMode) -> Self {
         self.vertex_step_mode = step_mode;
         self
     }
 
     /// Set the primitive topology of the pipeline.
+    ///
+    /// By default, this is set to `PrimitiveTopology::TriangleList`
     pub fn with_primitive_topology(mut self, topology: wgpu::PrimitiveTopology) -> Self {
         self.primitive_topology = topology;
         self
     }
 
-    /// Set the depth stencil state of the pipeline.
+    /// Set the depth/stencil state of the pipeline.
+    ///
+    /// By default, the pipeline does not contain a depth/stencil state.
     pub fn with_depth_stencil(mut self, depth_stencil: wgpu::DepthStencilState) -> Self {
         self.depth_stencil = Some(depth_stencil);
         self
     }
 
     /// Set the sample count that the pipeline can render to.
+    ///
+    /// By default, this is set to 1. The sample mask is `!0` and alpha to coverage is disabled.
     ///
     /// In future, perhaps this can be automatically derived from the textures being rendered to.
     pub fn with_msaa(mut self, sample_count: u32) -> Self {
@@ -1261,6 +1269,8 @@ impl<'a> RenderPipelineBuilder<'a> {
 /// A compute pipeline and its associated bind group layouts
 pub struct ComputePipeline {
     pub pipeline: wgpu::ComputePipeline,
+    /// The bind groups associated with `pipeline`, in layout order. Used internally to bind resources
+    /// in a [`ComputeNodeBuilder`](graph::ComputeNodeBuilder)
     pub bind_group_layouts: Vec<Handle<wgpu::BindGroupLayout>>,
 }
 

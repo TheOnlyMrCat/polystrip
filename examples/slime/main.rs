@@ -118,18 +118,21 @@ fn main() {
                 });
             graph
                 .add_node()
-                .with_external_output()
-                .build(|encoder, renderer, [], [], [], ()| {
-                    encoder.copy_texture_to_texture(
-                        renderer
-                            .get_texture(canvas_primary)
-                            .0
-                            .unwrap()
-                            .as_image_copy(),
-                        renderer.get_texture(canvas_swap).0.unwrap().as_image_copy(),
-                        texture_size,
-                    );
-                });
+                .with_texture_rw(canvas_primary)
+                .with_texture_rw(canvas_swap)
+                .build(
+                    |encoder, renderer, [], [_primary_view, _swap_view], [], ()| {
+                        encoder.copy_texture_to_texture(
+                            renderer
+                                .get_texture(canvas_primary)
+                                .0
+                                .unwrap()
+                                .as_image_copy(),
+                            renderer.get_texture(canvas_swap).0.unwrap().as_image_copy(),
+                            texture_size,
+                        );
+                    },
+                );
             graph
                 .add_compute_node(agent_pipeline)
                 .with_bind_group((agent_buffer, time_buffer))
