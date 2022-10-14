@@ -33,7 +33,8 @@
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    ComputePipeline, Handle, IntoBindGroupResources, RenderPassTarget, RenderPipeline, Renderer,
+    BindGroupResource, BufferBinding, ComputePipeline, Handle, IntoBindGroupResources,
+    RenderPassTarget, RenderPipeline, Renderer,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -626,6 +627,106 @@ impl ResourceDependencies {
         self.output_textures.push(texture);
         self
     }
+
+    pub fn add_bind_group(
+        &mut self,
+        renderer: &Renderer,
+        layout: Handle<wgpu::BindGroupLayout>,
+        bind_group: Handle<wgpu::BindGroup>,
+    ) {
+        let layout_descriptor = match renderer.get_bind_group_layout_descriptor(layout) {
+            Some(layout) => layout,
+            None => todo!(),
+        };
+        let group_descriptor = renderer.get_bind_group_descriptor(bind_group);
+        for (binding, resource) in group_descriptor {
+            match (layout_descriptor[(*binding) as usize].ty, resource) {
+                // Mutable storage buffer => input and output
+                (
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        ..
+                    },
+                    BindGroupResource::Buffer(BufferBinding { buffer: handle, .. }),
+                ) => {
+                    self.input_buffers.push(*handle);
+                    self.output_buffers.push(*handle);
+                }
+                (
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        ..
+                    },
+                    BindGroupResource::BufferArray(bindings),
+                ) => {
+                    let handles = bindings
+                        .iter()
+                        .map(|binding| binding.buffer)
+                        .collect::<Vec<_>>();
+                    self.input_buffers.extend_from_slice(&handles);
+                    self.output_buffers.extend_from_slice(&handles);
+                }
+
+                // Other buffer binding => input only
+                (_, BindGroupResource::Buffer(BufferBinding { buffer: handle, .. })) => {
+                    self.input_buffers.push(*handle);
+                }
+                (_, BindGroupResource::BufferArray(bindings)) => {
+                    self.input_buffers
+                        .extend(bindings.iter().map(|binding| binding.buffer));
+                }
+
+                // Mutable storage texture => input and output
+                (
+                    wgpu::BindingType::StorageTexture {
+                        access:
+                            wgpu::StorageTextureAccess::ReadWrite
+                            | wgpu::StorageTextureAccess::WriteOnly,
+                        ..
+                    },
+                    BindGroupResource::Texture(handle),
+                ) => {
+                    // StorageTextureAccess::WriteOnly is included here because write-only doesn't necessarily mean
+                    // it doesn't depend on the input. The only true non-input-dependent access is clearing the texture.
+                    self.input_textures.push(*handle);
+                    self.output_textures.push(*handle);
+                }
+                (
+                    wgpu::BindingType::StorageTexture {
+                        access:
+                            wgpu::StorageTextureAccess::ReadWrite
+                            | wgpu::StorageTextureAccess::WriteOnly,
+                        ..
+                    },
+                    BindGroupResource::TextureArray(handles),
+                ) => {
+                    self.input_textures.extend_from_slice(&handles);
+                    self.output_textures.extend_from_slice(&handles);
+                }
+
+                // Other buffer binding => input only
+                (_, BindGroupResource::Texture(handle)) => {
+                    self.input_textures.push(*handle);
+                }
+                (_, BindGroupResource::TextureArray(handles)) => {
+                    self.input_textures.extend_from_slice(handles);
+                }
+
+                // Other resource binding => no effect
+                _ => {}
+            }
+        }
+    }
+
+    pub fn with_bind_group(
+        mut self,
+        renderer: &Renderer,
+        layout: Handle<wgpu::BindGroupLayout>,
+        bind_group: Handle<wgpu::BindGroup>,
+    ) -> Self {
+        self.add_bind_group(renderer, layout, bind_group);
+        self
+    }
 }
 
 /// A node which is given a `&mut wgpu::CommandEncoder`.
@@ -817,28 +918,10 @@ where
         <G as ResourceArray<Handle<wgpu::BindGroup>>>::ExtendOne,
         P,
     > {
-        let resources = resources.into_entries();
-        let mut dependencies = self.dependencies;
-        for (_, resource) in &resources {
-            //TODO: Track output dependencies
-            match resource {
-                crate::BindGroupResource::Buffer(handle) => {
-                    dependencies.input_buffers.push(handle.buffer)
-                }
-                crate::BindGroupResource::BufferArray(handles) => dependencies
-                    .input_buffers
-                    .extend(handles.iter().map(|binding| binding.buffer)),
-                crate::BindGroupResource::Texture(handle) => {
-                    dependencies.input_textures.push(*handle)
-                }
-                crate::BindGroupResource::TextureArray(handles) => {
-                    dependencies.input_textures.extend_from_slice(&handles)
-                }
-                crate::BindGroupResource::Sampler(_)
-                | crate::BindGroupResource::SamplerArray(_) => {}
-            }
-        }
         let handle = self.graph.renderer.add_bind_group(layout, resources);
+        let dependencies = self
+            .dependencies
+            .with_bind_group(&self.graph.renderer, layout, handle);
         EncoderNodeBuilder {
             graph: self.graph,
             dependencies,
@@ -896,8 +979,7 @@ where
     /// ) -> ()
     /// ```
     ///
-    /// The closure may be skipped if dependency tracking marks this node as unused. To force this
-    /// node to be executed, see [`Self::with_external_output`].
+    /// The closure may be skipped if dependency tracking marks this node as unused.
     pub fn build<F>(self, exec: F)
     where
         F: for<'b, 'pass> FnOnce(
@@ -1020,16 +1102,15 @@ where
     ///     })
     /// ```
     pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
-        //TODO: Bind group resource tracking
-        self.bind_groups.push(
-            self.graph.renderer.add_bind_group(
-                self.graph
-                    .renderer
-                    .get_render_pipeline(self.pipeline)
-                    .bind_group_layouts[self.bind_groups.len()],
-                resources,
-            ),
-        );
+        let layout = self
+            .graph
+            .renderer
+            .get_render_pipeline(self.pipeline)
+            .bind_group_layouts[self.bind_groups.len()];
+        let bind_group = self.graph.renderer.add_bind_group(layout, resources);
+        self.dependencies
+            .add_bind_group(&self.graph.renderer, layout, bind_group);
+        self.bind_groups.push(bind_group);
         self
     }
 
@@ -1089,10 +1170,22 @@ where
                 <P as RenderPassthrough>::Reborrowed<'pass>,
             ) + 'node,
     {
+        let mut dependencies = self.dependencies;
+        for target in &render_pass.color {
+            dependencies.input_textures.push(target.handle);
+            dependencies.output_textures.push(target.handle);
+            if let Some(resolve) = target.resolve {
+                dependencies.output_textures.push(resolve);
+            }
+        }
+        if let Some(target) = &render_pass.depth {
+            dependencies.input_textures.push(target.handle);
+            dependencies.output_textures.push(target.handle);
+        }
         self.graph.insert_node(RenderGraphNode {
             inner: Some(RenderGraphNodeInner {
                 pipeline: self.pipeline,
-                dependencies: self.dependencies,
+                dependencies,
                 bind_groups: self.bind_groups,
                 buffers: self.buffers,
                 passthrough: self.passthrough,
@@ -1187,16 +1280,15 @@ where
     ///     })
     /// ```
     pub fn with_bind_group(mut self, resources: impl IntoBindGroupResources) -> Self {
-        //TODO: Bind group dependency tracking
-        self.bind_groups.push(
-            self.graph.renderer.add_bind_group(
-                self.graph
-                    .renderer
-                    .get_compute_pipeline(self.pipeline)
-                    .bind_group_layouts[self.bind_groups.len()],
-                resources,
-            ),
-        );
+        let layout = self
+            .graph
+            .renderer
+            .get_compute_pipeline(self.pipeline)
+            .bind_group_layouts[self.bind_groups.len()];
+        let bind_group = self.graph.renderer.add_bind_group(layout, resources);
+        self.dependencies
+            .add_bind_group(&self.graph.renderer, layout, bind_group);
+        self.bind_groups.push(bind_group);
         self
     }
 

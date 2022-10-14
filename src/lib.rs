@@ -281,7 +281,13 @@ pub struct Renderer {
     temp_textures: FxHashMap<wgpu_types::TextureDescriptor<u64>, usize>,
     samplers: FxHashMap<usize, wgpu::Sampler>,
     bind_group_layout_descriptors: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, usize>,
-    bind_group_layouts: FxHashMap<usize, wgpu::BindGroupLayout>,
+    bind_group_layouts: FxHashMap<
+        usize,
+        (
+            wgpu::BindGroupLayout,
+            Option<Vec<wgpu::BindGroupLayoutEntry>>,
+        ),
+    >,
     bind_group_descriptors: FxHashMap<Vec<(u32, BindGroupResource)>, usize>,
     bind_groups: FxHashMap<usize, (wgpu::BindGroup, Vec<(u32, BindGroupResource)>)>,
     render_pipelines: FxHashMap<usize, RenderPipeline>,
@@ -368,12 +374,15 @@ impl Renderer {
     /// Insert an existing `BindGroupLayout` into the renderer.
     ///
     /// Layout must have been allocated from the same device as this `Renderer`.
+    /// `entries` is optional, but enables more accurate dependency tracking when using bind groups
+    /// derived from this layout in a [`RenderGraph`].
     pub fn insert_bind_group_layout(
         &mut self,
         layout: wgpu::BindGroupLayout,
+        entries: Option<Vec<wgpu::BindGroupLayoutEntry>>,
     ) -> Handle<wgpu::BindGroupLayout> {
         let id = self.next_bind_group_layout_id();
-        self.bind_group_layouts.insert(id, layout);
+        self.bind_group_layouts.insert(id, (layout, entries));
         Handle::<wgpu::BindGroupLayout> {
             id,
             _marker: std::marker::PhantomData,
@@ -447,7 +456,18 @@ impl Renderer {
         &self,
         handle: Handle<wgpu::BindGroupLayout>,
     ) -> &wgpu::BindGroupLayout {
-        self.bind_group_layouts.get(&handle.id).unwrap()
+        &self.bind_group_layouts.get(&handle.id).unwrap().0
+    }
+
+    /// Retrieve a `BindGroupLayout`'s components from this renderer, if known.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
+    pub fn get_bind_group_layout_descriptor(
+        &self,
+        handle: Handle<wgpu::BindGroupLayout>,
+    ) -> &Option<Vec<wgpu::BindGroupLayoutEntry>> {
+        &self.bind_group_layouts.get(&handle.id).unwrap().1
     }
 
     /// Retrieve a `BindGroup` from this renderer.
@@ -457,6 +477,17 @@ impl Renderer {
     pub fn get_bind_group(&self, handle: Handle<wgpu::BindGroup>) -> &wgpu::BindGroup {
         let (bind_group, _) = self.bind_groups.get(&handle.id).unwrap();
         bind_group
+    }
+
+    /// Retrieve a `BindGroup`'s components from this renderer, if known.
+    ///
+    /// # Panics
+    /// Panics if the associated resource no longer exists.
+    pub fn get_bind_group_descriptor(
+        &self,
+        handle: Handle<wgpu::BindGroup>,
+    ) -> &BindGroupResources {
+        &self.bind_groups.get(&handle.id).unwrap().1
     }
 
     /// Retrieve a `RenderPipeline` from this renderer.
@@ -482,10 +513,9 @@ impl Renderer {
     /// immediately.
     pub fn add_bind_group_layout<'a>(
         &mut self,
-        layout: impl Into<Cow<'a, [wgpu::BindGroupLayoutEntry]>>,
+        layout: Vec<wgpu::BindGroupLayoutEntry>,
     ) -> Handle<wgpu::BindGroupLayout> {
-        let layout = layout.into();
-        if let Some(index) = self.bind_group_layout_descriptors.get(layout.as_ref()) {
+        if let Some(index) = self.bind_group_layout_descriptors.get(&layout) {
             return Handle::<wgpu::BindGroupLayout> {
                 id: *index,
                 _marker: std::marker::PhantomData,
@@ -498,9 +528,9 @@ impl Renderer {
                     label: None,
                     entries: &layout,
                 });
-        self.bind_group_layouts.insert(id, bind_group_layout);
-        self.bind_group_layout_descriptors
-            .insert(layout.into_owned(), id);
+        self.bind_group_layouts
+            .insert(id, (bind_group_layout, Some(layout.clone())));
+        self.bind_group_layout_descriptors.insert(layout, id);
         Handle::<wgpu::BindGroupLayout> {
             id,
             _marker: std::marker::PhantomData,
